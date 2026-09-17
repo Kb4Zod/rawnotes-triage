@@ -127,11 +127,15 @@ async function apply(){if(!mode||!sel)return;const g=id=>{const e=document.getEl
   const idx=data.live.findIndex(n=>n.file===sel);const next=data.live[idx+1]||data.live[idx-1];
   if(mode==='keep'){await load(true)}else{sel=next?next.file:null;await load(true)}}
 function projectList(){
-  $('#list').innerHTML=projects.length?projects.map((p,i)=>`<div class="row ${sel===p.name?'sel':''}" data-project="${i}" role="button" tabindex="0"><div class="t">${esc(p.name)}</div><span class="badge">${p.repo?'Git':'Folder'}</span><div class="m">${esc(p.path)}</div></div>`).join(''):'<div class="empty">No active projects yet. Promote a note to active to start one.</div>';
+  $('#list').innerHTML=projects.length?projects.map((p,i)=>`<div class="row ${sel===p.name?'sel':''}" data-project="${i}" role="button" tabindex="0"><div class="t">${esc(p.name)}</div><span style="display:flex;gap:6px;align-items:center"><span class="badge">${p.repo?'Git':'Folder'}</span><button class="act row-copy" type="button" data-path="${esc(p.abs_path)}" title="Copy full path" style="padding:1px 8px;font-size:11px">Copy</button></span><div class="m">${esc(p.path)}</div></div>`).join(''):'<div class="empty">No active projects yet. Promote a note to active to start one.</div>';
   document.querySelectorAll('[data-project]').forEach(el=>{el.onclick=()=>showProject(projects[Number(el.dataset.project)].name);el.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();el.click()}}});
+  document.querySelectorAll('.row-copy').forEach(b=>{
+    b.onclick=e=>{e.stopPropagation();copyPath(b.dataset.path,b)};
+    b.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.stopPropagation();copyPath(b.dataset.path,b)}};
+  });
 }
 async function loadProjects(){
-  mode=null;$('#hint').textContent='Active projects · j/k next/prev · select a project for details';
+  mode=null;$('#hint').textContent='Active projects · j/k next/prev · y copy path · select a project for details';
   $('#decide').innerHTML='<b>Active Projects</b> <button class="act" id="refreshProjects">Refresh</button>';
   $('#refreshProjects').onclick=loadProjects;
   $('#list').innerHTML='<div class="empty">Loading projects…</div>';
@@ -168,7 +172,8 @@ async function copyPath(path,el){
 }
 document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;mode=null;$('#hint').textContent='Keys: j/k next/prev · p promote · d durable · a archive · c keep · Enter apply';document.querySelectorAll('.tabs button').forEach(x=>x.classList.toggle('on',x===b));sel=null;load()});
 document.addEventListener('keydown',e=>{if(e.target.matches('input,textarea,select')){if(e.key==='Enter'&&e.target.tagName!=='TEXTAREA'){e.preventDefault();apply()}return}
-  if(tab==='projects'){const i=projects.findIndex(p=>p.name===sel);if(e.key==='j'&&projects[i+1])showProject(projects[i+1].name);if(e.key==='k'&&projects[i-1])showProject(projects[i-1].name);return}
+  if(tab==='projects'){const i=projects.findIndex(p=>p.name===sel);if(e.key==='j'&&projects[i+1])showProject(projects[i+1].name);if(e.key==='k'&&projects[i-1])showProject(projects[i-1].name);
+    if(e.key==='y'&&i>=0){const pathEl=$('#detailPath');if(pathEl)copyPath(projects[i].abs_path,pathEl)}return}
   if(!data)return;
   const items=tab==='live'?data.live:data.done;const i=items.findIndex(n=>n.file===sel);
   if(e.key==='j'&&items[i+1])show(items[i+1].file);else if(e.key==='k'&&items[i-1])show(items[i-1].file);
