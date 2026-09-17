@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RawNotes Triage</title>
+<style>
+:root{--bg:#f6f5f1;--panel:#fff;--ink:#1d1d1b;--mute:#6c6a63;--line:#e2e0d8;--acc:#2d63c8;--ok:#1f8a4c;--warn:#b7791f;--bad:#c0392b;--soft:#eef1f8}
+@media(prefers-color-scheme:dark){:root{--bg:#171715;--panel:#1f1f1c;--ink:#ece9e1;--mute:#9b988f;--line:#33322d;--acc:#7ea2ea;--ok:#5fc48a;--warn:#e0a94c;--bad:#ea6b5b;--soft:#26292f}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,sans-serif}
+header{display:flex;gap:16px;align-items:center;padding:10px 18px;border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
+header h1{font-size:16px;margin:0}header .stats{color:var(--mute);font-size:13px}header .stats b{color:var(--ink)}
+.inflight{padding:8px 18px;border-bottom:1px solid var(--line);display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:13px}
+.inflight .chip{border:1px solid var(--line);border-radius:14px;padding:2px 10px;background:var(--panel);cursor:pointer}
+.chip.late{border-color:var(--bad);color:var(--bad)}.chip.soon{border-color:var(--warn)}.chip.done{opacity:.55;text-decoration:line-through}
+main{display:grid;grid-template-columns:360px 1fr;height:calc(100vh - 92px)}
+@media(max-width:800px){main{grid-template-columns:1fr;height:auto}}
+aside{border-right:1px solid var(--line);overflow:auto;background:var(--panel)}
+.tabs{display:flex;border-bottom:1px solid var(--line)}.tabs button{flex:1;border:0;background:none;padding:8px;color:var(--mute);cursor:pointer;font:inherit}
+.tabs button.on{color:var(--ink);border-bottom:2px solid var(--acc)}
+.row{padding:10px 14px;border-bottom:1px solid var(--line);cursor:pointer;display:grid;grid-template-columns:1fr auto;gap:2px 8px}
+.row:hover{background:var(--soft)}.row.sel{background:var(--soft);box-shadow:inset 3px 0 var(--acc)}
+.row .t{font-weight:600}.row .m{grid-column:1/-1;color:var(--mute);font-size:12px}
+.badge{font-size:11px;padding:1px 7px;border-radius:10px;border:1px solid var(--line);color:var(--mute);height:fit-content}
+.badge.open{color:var(--acc);border-color:var(--acc)}.badge.cooking{color:var(--warn);border-color:var(--warn)}
+.badge.dead{color:var(--bad);border-color:var(--bad)}.badge.promoted{color:var(--ok);border-color:var(--ok)}
+.stale{color:var(--bad);font-weight:600}
+section{display:grid;grid-template-rows:auto 1fr;overflow:hidden}
+.decide{padding:12px 18px;border-bottom:1px solid var(--line);background:var(--panel)}
+.decide .btns{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0}
+button.act{font:inherit;padding:6px 14px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer}
+button.act:hover{background:var(--soft)}button.act.on{background:var(--acc);color:#fff;border-color:var(--acc)}
+.form{display:none;margin-top:8px;display:grid;gap:8px;grid-template-columns:auto 1fr;align-items:center;max-width:720px}
+.form label{color:var(--mute);font-size:13px}.form input,.form select,.form textarea{font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);width:100%}
+.form .go{grid-column:2;display:flex;gap:10px;align-items:center}
+.go button{background:var(--ok);color:#fff;border:0;padding:8px 18px;border-radius:6px;font:inherit;cursor:pointer}
+.go button.danger{background:var(--bad)}.go .kbd{color:var(--mute);font-size:12px}
+.toast{color:var(--ok);font-size:13px;margin-left:8px}.toast.err{color:var(--bad)}
+article{overflow:auto;padding:18px 28px;max-width:900px}
+article h1{font-size:22px}article h2{font-size:16px;margin-top:22px;border-bottom:1px solid var(--line)}article h3{font-size:14px}
+article pre{background:var(--soft);padding:10px;border-radius:6px;overflow:auto}article code{background:var(--soft);padding:1px 4px;border-radius:4px}
+article a{color:var(--acc)}article ul{padding-left:20px}article .meta{color:var(--mute)}
+.empty{color:var(--mute);padding:40px;text-align:center}
+</style></head><body>
+<header><h1>RawNotes Triage</h1><div class="stats" id="stats"></div>
+<span style="flex:1"></span><span class="stats" id="hint">Keys: j/k next/prev · p promote · d durable · a archive · c keep · Enter apply</span></header>
+<div class="inflight" id="inflight"></div>
+<main>
+<aside><div class="tabs"><button class="on" data-tab="live">Backlog</button><button data-tab="done">Done</button><button data-tab="projects">Active Projects</button></div><div id="list"></div></aside>
+<section>
+<div class="decide" id="decide"><div class="empty">Pick a note to review.</div></div>
+<article id="view"><div class="empty">Oldest first. Decide one, move on.</div></article>
+</section></main>
+<script>
+let data=null,tab='live',sel=null,mode=null,projects=[],projectRequest=0;
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function md(src){ // small markdown renderer: headings, lists, code, bold/italic, links
+  const out=[];let inCode=false,inList=false,para=[];
+  const inline=s=>esc(s).replace(/`([^`]+)`/g,'<code>$1</code>').replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/(^|\W)\*(?!\s)(.+?)\*(?=\W|$)/g,'$1<i>$2</i>')
+    .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g,'<a href="$2" target="_blank">$1</a>').replace(/(^|\s)(https?:\/\/[^\s<]+)/g,'$1<a href="$2" target="_blank">$2</a>');
+  const flush=()=>{if(para.length){out.push('<p>'+inline(para.join(' '))+'</p>');para=[]}if(inList){out.push('</ul>');inList=false}};
+  for(const raw of src.split('\n')){
+    if(raw.startsWith('```')){flush();inCode=!inCode;out.push(inCode?'<pre>':'</pre>');continue}
+    if(inCode){out.push(esc(raw));continue}
+    const h=raw.match(/^(#{1,4})\s+(.*)/);if(h){flush();out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`);continue}
+    const li=raw.match(/^\s*[-*]\s+(.*)/);if(li){if(para.length){out.push('<p>'+inline(para.join(' '))+'</p>');para=[]}if(!inList){out.push('<ul>');inList=true}out.push('<li>'+inline(li[1].replace(/<!--.*?-->/g,''))+'</li>');continue}
+    if(raw.trim()===''){flush();continue}
+    if(inList&&/^\s{2,}/.test(raw)){out[out.length-1]=out[out.length-1].replace(/<\/li>$/,' '+inline(raw.trim())+'</li>');continue}
+    para.push(raw)}
+  flush();return out.join('\n')}
+async function load(keep){if(tab==='projects')return loadProjects();const requestedTab=tab;const r=await fetch('/api/notes');data=await r.json();if(tab!==requestedTab)return;
+  const live=data.live;const stale=live.filter(n=>n.stale).length;
+  $('#stats').innerHTML=`<b>${live.length}</b> live · <b>${live.filter(n=>n.status==='open').length}</b> open · <b>${live.filter(n=>n.status==='cooking').length}</b> cooking · <b>${data.done.length}</b> done`+(stale?` · <span class="stale">${stale} stale (&gt;60d)</span>`:'');
+  renderInflight();renderList();
+  if(!keep||!live.find(n=>n.file===sel)){sel=tab==='live'&&live.length?live[0].file:null}
+  if(sel)show(sel);else{$('#view').innerHTML='<div class="empty">Backlog empty. Go build something.</div>';$('#decide').innerHTML='<div class="empty">Nothing to decide.</div>'}}
+function renderInflight(){const el=$('#inflight');const f=data.inflight;
+  if(!f.length){el.innerHTML='<span style="color:var(--mute)">In flight: nothing promoted yet. Promote a note to start the clock.</span>';return}
+  el.innerHTML='<b>In flight:</b> '+f.map(x=>{const cls=x.done?'done':x.days_left<0?'late':x.days_left<=2?'soon':'';
+    const when=x.done?'done':x.days_left<0?`${-x.days_left}d late`:x.days_left===0?'due today':`${x.days_left}d left`;
+    return `<span class="chip ${cls}" title="${x.path}" onclick="openPath('${x.path}')">${esc(x.title)} · ${x.dest} · ${when}</span>`}).join('')}
+function openPath(p){fetch('/api/open',{method:'POST',body:JSON.stringify({path:data.notes_dir+'/../'+p})})}
+function renderList(){if(tab==='projects'){projectList();return}const items=tab==='live'?data.live:data.done;
+  $('#list').innerHTML=items.length?items.map(n=>`<div class="row ${n.file===sel?'sel':''}" data-f="${n.file}">
+    <div class="t">${esc(n.title)}</div><span class="badge ${n.status}">${n.status}</span>
+    <div class="m">${n.date} · <span class="${n.stale?'stale':''}">${n.age??'?'}d old</span> · ${n.type}${n.stale?' · STALE':''}</div></div>`).join(''):'<div class="empty">Nothing here.</div>';
+  document.querySelectorAll('.row').forEach(r=>r.onclick=()=>show(r.dataset.f))}
+async function show(f){sel=f;mode=null;renderList();
+  const r=await fetch('/api/note?f='+encodeURIComponent(f));const j=await r.json();
+  const n=(tab==='live'?data.live:data.done).find(x=>x.file===f)||{};
+  if(tab==='projects'||sel!==f)return;
+  $('#view').innerHTML=`<div class="meta">${esc(f)}</div>`+md(j.text||j.error||'');
+  $('#view').scrollTop=0;renderDecide(n)}
+function renderDecide(n){const d=$('#decide');
+  if(tab!=='live'){d.innerHTML=`<div class="empty">Archived capture — read only.</div>`;return}
+  const slug=n.file.replace(/^\d{4}-\d{2}-\d{2}-/,'').replace(/\.md$/,'');
+  d.innerHTML=`<div><b>${esc(n.title)}</b> <span class="badge ${n.status}">${n.status}</span> <span style="color:var(--mute)">${n.age}d old</span></div>
+  <div class="btns">
+    <button class="act" data-m="promote">Promote → build it</button>
+    <button class="act" data-m="durable">Durable → reference only</button>
+    <button class="act" data-m="archive">Archive → no longer useful</button>
+    <button class="act" data-m="keep">Keep cooking</button>
+  </div>
+  <div class="form" id="form" style="display:none"></div>`;
+  document.querySelectorAll('.act').forEach(b=>b.onclick=()=>setMode(b.dataset.m,slug))}
+function setMode(m,slug){mode=m;document.querySelectorAll('.act').forEach(b=>b.classList.toggle('on',b.dataset.m===m));
+  const f=$('#form');f.style.display='grid';const F={
+  promote:`<label>Destination</label><select id="dest"><option value="active">active — real project, ship it</option><option value="experiments">experiments — spike / prototype</option><option value="learning">learning — study material</option><option value="templates">templates — reusable scaffold</option></select>
+    <label>Folder / file name</label><input id="slug" value="${slug}">
+    <label>Due in (days)</label><input id="due" type="number" value="7" min="1" max="30" style="width:90px">
+    <label>Definition of done</label><input id="note" placeholder="What does shipped look like? One sentence." autofocus>
+    <div class="go"><button onclick="apply()">Promote</button><span class="kbd">copies note to ../&lt;dest&gt;, stamps due date, moves capture to done/</span></div>`,
+  durable:`<label>File name</label><input id="slug" value="${slug}">
+    <label>Why keep it</label><input id="note" placeholder="optional: what this is a reference for" autofocus>
+    <div class="go"><button onclick="apply()">Save to maintained/</button><span class="kbd">reference notes live in ../maintained</span></div>`,
+  archive:`<label>Why not</label><input id="note" placeholder="one line: why this died" autofocus>
+    <div class="go"><button class="danger" onclick="apply()">Archive</button><span class="kbd">status: dead, moved to done/</span></div>`,
+  keep:`<label>Status</label><select id="status"><option value="cooking">cooking — I'm working it</option><option value="open">open — still just a question</option></select>
+    <label>Next step</label><input id="note" placeholder="optional: the one thing to do next" autofocus>
+    <div class="go"><button onclick="apply()">Keep</button><span class="kbd">leaves it in the backlog</span></div>`}[m];
+  f.innerHTML=F;const i=f.querySelector('input[autofocus]');if(i)i.focus()}
+async function apply(){if(!mode||!sel)return;const g=id=>{const e=document.getElementById(id);return e?e.value:undefined};
+  const body={file:sel,action:mode,note:g('note'),dest:g('dest'),slug:g('slug'),due_days:g('due'),status:g('status')};
+  const r=await fetch('/api/action',{method:'POST',body:JSON.stringify(body)});const j=await r.json();
+  const go=$('.go');if(!go)return;let t=go.querySelector('.toast');if(!t){t=document.createElement('span');t.className='toast';go.appendChild(t)}
+  if(j.error){t.className='toast err';t.textContent=j.error;return}
+  t.textContent=j.msg;
+  const idx=data.live.findIndex(n=>n.file===sel);const next=data.live[idx+1]||data.live[idx-1];
+  if(mode==='keep'){await load(true)}else{sel=next?next.file:null;await load(true)}}
+function projectList(){
+  $('#list').innerHTML=projects.length?projects.map((p,i)=>`<div class="row ${sel===p.name?'sel':''}" data-project="${i}" role="button" tabindex="0"><div class="t">${esc(p.name)}</div><span class="badge">${p.repo?'Git':'Folder'}</span><div class="m">${esc(p.path)}</div></div>`).join(''):'<div class="empty">No active projects yet. Promote a note to active to start one.</div>';
+  document.querySelectorAll('[data-project]').forEach(el=>{el.onclick=()=>showProject(projects[Number(el.dataset.project)].name);el.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();el.click()}}});
+}
+async function loadProjects(){
+  mode=null;$('#hint').textContent='Active projects · j/k next/prev · select a project for details';
+  $('#decide').innerHTML='<b>Active Projects</b> <button class="act" id="refreshProjects">Refresh</button>';
+  $('#refreshProjects').onclick=loadProjects;
+  $('#list').innerHTML='<div class="empty">Loading projects…</div>';
+  try{const r=await fetch('/api/projects');if(!r.ok)throw Error('Could not load active projects.');const j=await r.json();if(tab!=='projects')return;
+    projects=j.projects;projectList();
+    if(projects.length)await showProject(projects.some(p=>p.name===sel)?sel:projects[0].name);
+    else $('#view').innerHTML='<div class="empty">Your active project folders will appear here.</div>';
+  }catch(e){if(tab==='projects'){$('#list').innerHTML='<div class="empty">Projects unavailable.</div>';$('#view').textContent=e.message}}
+}
+async function showProject(name){
+  sel=name;mode=null;projectList();const request=++projectRequest;
+  $('#view').innerHTML='<div class="empty">Loading repository activity…</div>';
+  try{const r=await fetch('/api/project?name='+encodeURIComponent(name));if(!r.ok)throw Error('Could not load this project.');const p=await r.json();
+    if(tab!=='projects'||request!==projectRequest)return;
+    const link=(url,label)=>/^https:\/\/github\.com\//.test(url||'')?`<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>`:esc(label);
+    const commits=items=>items.map(c=>`<li>${esc(c.title)} <span class="meta">· ${esc(c.date)} · ${esc(c.sha)}</span></li>`).join('');
+    $('#view').innerHTML=`<div class="meta">${esc(p.path)}${p.branch?' · '+esc(p.branch):''}</div><h1>${esc(p.name)}</h1>
+      ${p.remote?'<p>'+link(p.remote,'View repository ↗')+'</p>':''}
+      <h2>Repository summary</h2><p style="white-space:pre-wrap">${esc(p.summary)}</p>${p.summary_source?`<div class="meta">Excerpt from ${esc(p.summary_source)}</div>`:''}
+      <h2>Recent pull requests</h2>${p.pr_status?`<p class="meta">${esc(p.pr_status)}</p>`:`<ul>${p.prs.map(pr=>`<li>${link(pr.url,'#'+pr.number+' '+pr.title)} <span class="badge">${esc(pr.mergedAt?'MERGED':pr.state)}</span> <span class="meta">${esc(pr.updatedAt.slice(0,10))}</span></li>`).join('')}</ul>`}
+      <h2>Features added</h2><p class="meta">Feature commits on the current branch, from the latest 100 commits.</p>${p.features.length?'<ul>'+commits(p.features)+'</ul>':'<p class="meta">No commits labeled feat: or feat(scope): found.</p>'}
+      <h2>Recent commits</h2>${p.commits.length?'<ul>'+commits(p.commits)+'</ul>':'<p class="meta">No Git history available.</p>'}`;
+    $('#view').scrollTop=0;
+  }catch(e){if(tab==='projects'&&request===projectRequest)$('#view').textContent=e.message}
+}
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;mode=null;$('#hint').textContent='Keys: j/k next/prev · p promote · d durable · a archive · c keep · Enter apply';document.querySelectorAll('.tabs button').forEach(x=>x.classList.toggle('on',x===b));sel=null;load()});
+document.addEventListener('keydown',e=>{if(e.target.matches('input,textarea,select')){if(e.key==='Enter'&&e.target.tagName!=='TEXTAREA'){e.preventDefault();apply()}return}
+  if(tab==='projects'){const i=projects.findIndex(p=>p.name===sel);if(e.key==='j'&&projects[i+1])showProject(projects[i+1].name);if(e.key==='k'&&projects[i-1])showProject(projects[i-1].name);return}
+  if(!data)return;
+  const items=tab==='live'?data.live:data.done;const i=items.findIndex(n=>n.file===sel);
+  if(e.key==='j'&&items[i+1])show(items[i+1].file);else if(e.key==='k'&&items[i-1])show(items[i-1].file);
+  else if(tab==='live'&&sel){const slug=sel.replace(/^\d{4}-\d{2}-\d{2}-/,'').replace(/\.md$/,'');
+    if(e.key==='p')setMode('promote',slug);else if(e.key==='d')setMode('durable',slug);else if(e.key==='a')setMode('archive',slug);else if(e.key==='c')setMode('keep',slug);else if(e.key==='Enter')apply()}});
+load();
+</script></body></html>
