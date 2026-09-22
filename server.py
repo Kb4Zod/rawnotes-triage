@@ -106,7 +106,7 @@ def inflight():
 def active_projects():
     base = os.path.join(PROJECTS, "active")
     if not os.path.isdir(base): return []
-    return [{"name": name, "path": "active/" + name,
+    return [{"name": name, "path": "active/" + name, "abs_path": os.path.join(base, name),
              "repo": os.path.exists(os.path.join(base, name, ".git"))}
             for name in sorted(os.listdir(base), key=str.casefold)
             if not name.startswith(".") and os.path.isdir(os.path.join(base, name))]
@@ -114,7 +114,7 @@ def active_projects():
 def project_detail(name):
     if name not in {p["name"] for p in active_projects()}: raise ValueError("unknown project")
     path = os.path.join(PROJECTS, "active", name)
-    result = {"name": name, "path": "active/" + name, "summary": "No README or project notes yet.",
+    result = {"name": name, "path": "active/" + name, "abs_path": path, "summary": "No README or project notes yet.",
               "summary_source": None, "commits": [], "features": [], "prs": [],
               "pr_status": "No Git repository in this project.", "branch": "", "remote": ""}
     files = {f.lower(): f for f in sorted(os.listdir(path))}

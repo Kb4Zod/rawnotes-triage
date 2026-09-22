@@ -37,6 +37,7 @@ article{overflow:auto;padding:18px 28px;max-width:900px}
 article h1{font-size:22px}article h2{font-size:16px;margin-top:22px;border-bottom:1px solid var(--line)}article h3{font-size:14px}
 article pre{background:var(--soft);padding:10px;border-radius:6px;overflow:auto}article code{background:var(--soft);padding:1px 4px;border-radius:4px}
 article a{color:var(--acc)}article ul{padding-left:20px}article .meta{color:var(--mute)}
+.copy-path{cursor:pointer}.copy-path:hover{text-decoration:underline}
 .empty{color:var(--mute);padding:40px;text-align:center}
 </style></head><body>
 <header><h1>RawNotes Triage</h1><div class="stats" id="stats"></div>
@@ -147,14 +148,23 @@ async function showProject(name){
     if(tab!=='projects'||request!==projectRequest)return;
     const link=(url,label)=>/^https:\/\/github\.com\//.test(url||'')?`<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>`:esc(label);
     const commits=items=>items.map(c=>`<li>${esc(c.title)} <span class="meta">· ${esc(c.date)} · ${esc(c.sha)}</span></li>`).join('');
-    $('#view').innerHTML=`<div class="meta">${esc(p.path)}${p.branch?' · '+esc(p.branch):''}</div><h1>${esc(p.name)}</h1>
+    $('#view').innerHTML=`<div class="meta"><span class="copy-path" id="detailPath" tabindex="0" role="button" title="Click to copy full path" data-path="${esc(p.abs_path)}">${esc(p.abs_path)}</span>${p.branch?' · '+esc(p.branch):''}</div><h1>${esc(p.name)}</h1>
       ${p.remote?'<p>'+link(p.remote,'View repository ↗')+'</p>':''}
       <h2>Repository summary</h2><p style="white-space:pre-wrap">${esc(p.summary)}</p>${p.summary_source?`<div class="meta">Excerpt from ${esc(p.summary_source)}</div>`:''}
       <h2>Recent pull requests</h2>${p.pr_status?`<p class="meta">${esc(p.pr_status)}</p>`:`<ul>${p.prs.map(pr=>`<li>${link(pr.url,'#'+pr.number+' '+pr.title)} <span class="badge">${esc(pr.mergedAt?'MERGED':pr.state)}</span> <span class="meta">${esc(pr.updatedAt.slice(0,10))}</span></li>`).join('')}</ul>`}
       <h2>Features added</h2><p class="meta">Feature commits on the current branch, from the latest 100 commits.</p>${p.features.length?'<ul>'+commits(p.features)+'</ul>':'<p class="meta">No commits labeled feat: or feat(scope): found.</p>'}
       <h2>Recent commits</h2>${p.commits.length?'<ul>'+commits(p.commits)+'</ul>':'<p class="meta">No Git history available.</p>'}`;
     $('#view').scrollTop=0;
+    const pathEl=$('#detailPath');
+    if(pathEl){const go=()=>copyPath(pathEl.dataset.path,pathEl);pathEl.onclick=go;pathEl.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go()}}}
   }catch(e){if(tab==='projects'&&request===projectRequest)$('#view').textContent=e.message}
+}
+async function copyPath(path,el){
+  try{await navigator.clipboard.writeText(path)}catch(e){return}
+  if(!el)return;
+  if(el.dataset.orig===undefined)el.dataset.orig=el.textContent;
+  clearTimeout(el._copyTimer);el.textContent='Copied';
+  el._copyTimer=setTimeout(()=>{el.textContent=el.dataset.orig},1000);
 }
 document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;mode=null;$('#hint').textContent='Keys: j/k next/prev · p promote · d durable · a archive · c keep · Enter apply';document.querySelectorAll('.tabs button').forEach(x=>x.classList.toggle('on',x===b));sel=null;load()});
 document.addEventListener('keydown',e=>{if(e.target.matches('input,textarea,select')){if(e.key==='Enter'&&e.target.tagName!=='TEXTAREA'){e.preventDefault();apply()}return}
