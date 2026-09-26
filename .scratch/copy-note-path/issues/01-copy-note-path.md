@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done (PR #4)
 
 - [ ] `/api/notes` returns `abs_path` for every live and done note = `<notes dir>/<file>` (done notes under `<notes dir>/done/`); `file` unchanged
 - [ ] Each Backlog/Done row has a Copy button (same look as the project rows) that copies `abs_path`, shows "Copied" ~1 s, and does not select the row on click or Enter/Space; keyboard-focusable
