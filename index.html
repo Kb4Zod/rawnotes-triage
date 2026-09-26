@@ -41,7 +41,7 @@ article a{color:var(--acc)}article ul{padding-left:20px}article .meta{color:var(
 .empty{color:var(--mute);padding:40px;text-align:center}
 </style></head><body>
 <header><h1>RawNotes Triage</h1><div class="stats" id="stats"></div>
-<span style="flex:1"></span><span class="stats" id="hint">Keys: j/k next/prev · p promote · d durable · a archive · c keep · Enter apply</span></header>
+<span style="flex:1"></span><span class="stats" id="hint">Keys: j/k next/prev · p promote · d durable · a archive · c keep · y copy path · Enter apply</span></header>
 <div class="inflight" id="inflight"></div>
 <main>
 <aside><div class="tabs"><button class="on" data-tab="live">Backlog</button><button data-tab="done">Done</button><button data-tab="projects">Active Projects</button></div><div id="list"></div></aside>
@@ -81,15 +81,21 @@ function renderInflight(){const el=$('#inflight');const f=data.inflight;
 function openPath(p){fetch('/api/open',{method:'POST',body:JSON.stringify({path:data.notes_dir+'/../'+p})})}
 function renderList(){if(tab==='projects'){projectList();return}const items=tab==='live'?data.live:data.done;
   $('#list').innerHTML=items.length?items.map(n=>`<div class="row ${n.file===sel?'sel':''}" data-f="${n.file}">
-    <div class="t">${esc(n.title)}</div><span class="badge ${n.status}">${n.status}</span>
+    <div class="t">${esc(n.title)}</div><span style="display:flex;gap:6px;align-items:center"><span class="badge ${n.status}">${n.status}</span><button class="act row-copy" type="button" data-path="${esc(n.abs_path)}" title="Copy full path" style="padding:1px 8px;font-size:11px">Copy</button></span>
     <div class="m">${n.date} · <span class="${n.stale?'stale':''}">${n.age??'?'}d old</span> · ${n.type}${n.stale?' · STALE':''}</div></div>`).join(''):'<div class="empty">Nothing here.</div>';
-  document.querySelectorAll('.row').forEach(r=>r.onclick=()=>show(r.dataset.f))}
+  document.querySelectorAll('.row').forEach(r=>r.onclick=()=>show(r.dataset.f));
+  document.querySelectorAll('.row-copy').forEach(b=>{
+    b.onclick=e=>{e.stopPropagation();copyPath(b.dataset.path,b)};
+    b.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.stopPropagation();copyPath(b.dataset.path,b)}};
+  })}
 async function show(f){sel=f;mode=null;renderList();
   const r=await fetch('/api/note?f='+encodeURIComponent(f));const j=await r.json();
   const n=(tab==='live'?data.live:data.done).find(x=>x.file===f)||{};
   if(tab==='projects'||sel!==f)return;
-  $('#view').innerHTML=`<div class="meta">${esc(f)}</div>`+md(j.text||j.error||'');
-  $('#view').scrollTop=0;renderDecide(n)}
+  $('#view').innerHTML=`<div class="meta"><span class="copy-path" id="detailPath" tabindex="0" role="button" title="Click to copy full path" data-path="${esc(n.abs_path||'')}">${esc(n.abs_path||f)}</span></div>`+md(j.text||j.error||'');
+  $('#view').scrollTop=0;renderDecide(n);
+  const pathEl=$('#detailPath');
+  if(pathEl&&n.abs_path){const go=()=>copyPath(pathEl.dataset.path,pathEl);pathEl.onclick=go;pathEl.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.stopPropagation();go()}}}}
 function renderDecide(n){const d=$('#decide');
   if(tab!=='live'){d.innerHTML=`<div class="empty">Archived capture — read only.</div>`;return}
   const slug=n.file.replace(/^\d{4}-\d{2}-\d{2}-/,'').replace(/\.md$/,'');
@@ -101,8 +107,8 @@ function renderDecide(n){const d=$('#decide');
     <button class="act" data-m="keep">Keep cooking</button>
   </div>
   <div class="form" id="form" style="display:none"></div>`;
-  document.querySelectorAll('.act').forEach(b=>b.onclick=()=>setMode(b.dataset.m,slug))}
-function setMode(m,slug){mode=m;document.querySelectorAll('.act').forEach(b=>b.classList.toggle('on',b.dataset.m===m));
+  document.querySelectorAll('#decide .act').forEach(b=>b.onclick=()=>setMode(b.dataset.m,slug))}
+function setMode(m,slug){mode=m;document.querySelectorAll('#decide .act').forEach(b=>b.classList.toggle('on',b.dataset.m===m));
   const f=$('#form');f.style.display='grid';const F={
   promote:`<label>Destination</label><select id="dest"><option value="active">active — real project, ship it</option><option value="experiments">experiments — spike / prototype</option><option value="learning">learning — study material</option><option value="templates">templates — reusable scaffold</option></select>
     <label>Folder / file name</label><input id="slug" value="${slug}">
@@ -170,13 +176,14 @@ async function copyPath(path,el){
   clearTimeout(el._copyTimer);el.textContent='Copied';
   el._copyTimer=setTimeout(()=>{el.textContent=el.dataset.orig},1000);
 }
-document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;mode=null;$('#hint').textContent='Keys: j/k next/prev · p promote · d durable · a archive · c keep · Enter apply';document.querySelectorAll('.tabs button').forEach(x=>x.classList.toggle('on',x===b));sel=null;load()});
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;mode=null;$('#hint').textContent='Keys: j/k next/prev · p promote · d durable · a archive · c keep · y copy path · Enter apply';document.querySelectorAll('.tabs button').forEach(x=>x.classList.toggle('on',x===b));sel=null;load()});
 document.addEventListener('keydown',e=>{if(e.target.matches('input,textarea,select')){if(e.key==='Enter'&&e.target.tagName!=='TEXTAREA'){e.preventDefault();apply()}return}
   if(tab==='projects'){const i=projects.findIndex(p=>p.name===sel);if(e.key==='j'&&projects[i+1])showProject(projects[i+1].name);if(e.key==='k'&&projects[i-1])showProject(projects[i-1].name);
     if(e.key==='y'&&i>=0){const pathEl=$('#detailPath');if(pathEl)copyPath(projects[i].abs_path,pathEl)}return}
   if(!data)return;
   const items=tab==='live'?data.live:data.done;const i=items.findIndex(n=>n.file===sel);
   if(e.key==='j'&&items[i+1])show(items[i+1].file);else if(e.key==='k'&&items[i-1])show(items[i-1].file);
+  else if(e.key==='y'){const pathEl=$('#detailPath');if(i>=0&&pathEl&&items[i].abs_path)copyPath(items[i].abs_path,pathEl)}
   else if(tab==='live'&&sel){const slug=sel.replace(/^\d{4}-\d{2}-\d{2}-/,'').replace(/\.md$/,'');
     if(e.key==='p')setMode('promote',slug);else if(e.key==='d')setMode('durable',slug);else if(e.key==='a')setMode('archive',slug);else if(e.key==='c')setMode('keep',slug);else if(e.key==='Enter')apply()}});
 load();

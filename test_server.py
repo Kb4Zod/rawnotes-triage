@@ -91,6 +91,31 @@ class ApiTestCase(unittest.TestCase):
         detail = self.get("/api/project?name=" + urllib.parse.quote(name))
         self.assertEqual(detail["abs_path"], os.path.join(self.tmp, "active", name))
 
+    def make_note(self, name, sub=""):
+        d = os.path.join(self.notes, sub) if sub else self.notes
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, name), "w", encoding="utf-8") as f:
+            f.write("# A note\n\n- status: open\n")
+
+    def test_live_note_includes_abs_path(self):
+        self.make_note("2026-01-02-idea.md")
+        note = self.get("/api/notes")["live"][0]
+        self.assertEqual(note["file"], "2026-01-02-idea.md")
+        self.assertEqual(note["abs_path"], os.path.join(self.notes, "2026-01-02-idea.md"))
+        self.assertTrue(os.path.isabs(note["abs_path"]))
+
+    def test_done_note_includes_abs_path_under_done(self):
+        self.make_note("2026-01-03-old.md", "done")
+        note = self.get("/api/notes")["done"][0]
+        self.assertEqual(note["file"], "done/2026-01-03-old.md")
+        self.assertEqual(note["abs_path"], os.path.join(self.notes, "done", "2026-01-03-old.md"))
+
+    def test_note_abs_path_with_spaces_and_special_chars(self):
+        name = "2026-01-04-my note (v2) & more.md"
+        self.make_note(name)
+        note = self.get("/api/notes")["live"][0]
+        self.assertEqual(note["abs_path"], os.path.join(self.notes, name))
+
 
 if __name__ == "__main__":
     unittest.main()

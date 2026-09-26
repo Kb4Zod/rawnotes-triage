@@ -60,7 +60,7 @@ def summarize(path, sub=""):
     except ValueError: age = None
     body = re.search(r"## What's the question.*?\n\n(.+?)(?:\n\n|\n## )", text, re.S)
     return {
-        "file": (sub + "/" if sub else "") + fname, "title": title_of(text, fname),
+        "file": (sub + "/" if sub else "") + fname, "abs_path": path, "title": title_of(text, fname),
         "date": date, "age": age, "status": field(text, "status") or "?",
         "type": field(text, "type") or "?",
         "stale": age is not None and age > STALE_DAYS and field(text, "status") in ("open", ""),
