@@ -13,12 +13,15 @@ rawtriage-web --no-browser
 No dependencies beyond python3. `server.py` is the API + file mover,
 `index.html` is the UI, `triage.log` records every action.
 
+**Version:** shown in the page heading. When you change the app, bump
+`VERSION` in `server.py` and add an entry to `CHANGELOG.md`.
+
 ## Decisions per note
 
 | Button   | What happens |
 |----------|--------------|
 | Promote  | Copy to `../active/<slug>/NOTES.md` or `../experiments/<slug>/NOTES.md` (learning/templates get a flat `<slug>.md`). Stamps `promoted:` and `due:` dates and a `## Plan` block with your definition of done. Capture is marked promoted and moved to `done/`. |
-| Durable  | Copy to `../maintained/<slug>.md` as a reference note. Capture to `done/`. |
+| Durable  | Copy to `../reference/<slug>.md` as a reference note, with YAML frontmatter so Obsidian can read it. Capture to `done/`. Add it to `../reference/README.md`. |
 | Archive  | `status: dead`, your one-line reason under `## Outcome`, moved to `done/`. |
 | Keep     | Set `open` or `cooking`, optionally add a next-step line. Stays in the backlog. |
 

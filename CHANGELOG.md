@@ -1,0 +1,21 @@
+# Changelog
+
+The version shows in the page heading ("RawNotes Triage version X.XX") and
+in the startup line. Bump `VERSION` in `server.py` and add an entry here
+with every change. Versions 1.00-1.03 were numbered after the fact from git history.
+
+## 1.04 — 2026-10-06
+- Version number shown in the page heading, browser tab title, and startup line.
+
+## 1.03 — 2026-10-02
+- Durable now copies to `../reference/<slug>.md` (was `../maintained/`) and adds
+  YAML frontmatter so Obsidian shows Properties.
+
+## 1.02 — 2026-09-25
+- Copy note path: row Copy button, detail line, `y` key.
+
+## 1.01 — 2026-09-17
+- Active Projects: click-to-copy project path, per-row copy buttons, `y` key.
+
+## 1.00 — 2026-09-17
+- First version: triage site with Promote / Durable / Archive / Keep, the in-flight strip, and the Active Projects tab.

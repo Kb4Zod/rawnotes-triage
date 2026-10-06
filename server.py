@@ -6,7 +6,7 @@ Usage: python3 server.py [--port 8765] [--notes ~/Projects/RawNotes]
 Actions (all move real files, nothing is deleted):
   promote  -> copy note into ../experiments|active|learning|templates,
               stamp promoted/due dates, move capture to done/
-  durable  -> copy note into ../maintained/<slug>.md, move capture to done/
+  durable  -> copy note into ../reference/<slug>.md (YAML frontmatter), move capture to done/
   archive  -> status: dead, reason in ## Outcome, move to done/
   keep     -> status open|cooking, optional next-step line
 """
@@ -14,6 +14,7 @@ import argparse, json, os, re, shutil, subprocess, datetime as dt
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
+VERSION = "1.04"  # bump on every change; history in CHANGELOG.md
 HERE = os.path.dirname(os.path.abspath(__file__))
 NOTES = os.path.expanduser("~/Projects/RawNotes")
 PROJECTS = None
@@ -159,6 +160,19 @@ def project_detail(name):
             except ValueError: pass
     return result
 
+def reference_copy(text, fname, why=""):
+    """Turn the '- key: value' header into YAML frontmatter, so Obsidian shows it as Properties."""
+    lines = text.split("\n"); meta = {}; i = 1
+    while i < len(lines) and (not lines[i].strip() or re.match(r"^- (date|status|type|promoted|due):", lines[i])):
+        m = re.match(r"^- (\w+):\s*([^\s<]+)", lines[i])
+        if m: meta[m.group(1)] = m.group(2)
+        i += 1
+    fm = ["---", f"created: {meta.get('date', '')}", f"promoted: {meta.get('promoted', '')}",
+          "status: promoted", f"type: {meta.get('type', 'research')}", f"source: RawNotes/done/{fname}"]
+    if why: fm.append("why: " + json.dumps(why))
+    fm += ["tags:", "  - reference", "---", ""]
+    return "\n".join(fm + [lines[0], ""] + lines[i:])
+
 def safe_note(rel):
     """Resolve a note path from the API and refuse anything outside NOTES."""
     p = os.path.realpath(os.path.join(NOTES, rel))
@@ -207,7 +221,7 @@ def act(req):
         return {"ok": True, "msg": "Archived to done/"}
 
     if action in ("promote", "durable"):
-        dest = "maintained" if action == "durable" else req.get("dest")
+        dest = "reference" if action == "durable" else req.get("dest")
         if action == "promote" and dest not in DESTS: raise ValueError("bad destination")
         slug = re.sub(r"[^a-z0-9-]", "", (req.get("slug") or slug_of(fname)).lower()) or slug_of(fname)
         dest_dir = os.path.join(PROJECTS, dest)
@@ -219,6 +233,7 @@ def act(req):
             target = unique(os.path.join(dest_dir, slug + ".md"))
         copy = set_field(text, "status", "promoted")
         copy = set_field(copy, "promoted", t)
+        if action == "durable": copy = reference_copy(copy, fname, note)
         if action == "promote":
             due = (today() + dt.timedelta(days=int(req.get("due_days") or DUE_DAYS))).isoformat()
             copy = set_field(copy, "due", due)
@@ -246,7 +261,7 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         u = urlparse(self.path); q = parse_qs(u.query)
         try:
-            if u.path == "/": return self._send(200, open(os.path.join(HERE, "index.html"), "rb").read(), "text/html")
+            if u.path == "/": return self._send(200, open(os.path.join(HERE, "index.html"), "rb").read().replace(b"__VERSION__", VERSION.encode()), "text/html")
             if u.path == "/api/projects": return self._send(200, {"projects": active_projects()})
             if u.path == "/api/project": return self._send(200, project_detail(q.get("name", [""])[0]))
             if u.path == "/api/notes": return self._send(200, list_notes())
@@ -267,7 +282,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(); ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--notes", default=NOTES); ap.add_argument("--no-browser", action="store_true")
     a = ap.parse_args(); NOTES = os.path.abspath(os.path.expanduser(a.notes)); PROJECTS = os.path.dirname(NOTES)
-    url = f"http://127.0.0.1:{a.port}/"; print(f"rawnotes-triage: {NOTES}\n{url}  (Ctrl-C to stop)")
+    url = f"http://127.0.0.1:{a.port}/"; print(f"rawnotes-triage v{VERSION}: {NOTES}\n{url}  (Ctrl-C to stop)")
     if not a.no_browser:
         import webbrowser; webbrowser.open(url)
     try: ThreadingHTTPServer(("127.0.0.1", a.port), H).serve_forever()

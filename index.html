@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RawNotes Triage</title>
+<title>RawNotes Triage version __VERSION__</title>
 <style>
 :root{--bg:#f6f5f1;--panel:#fff;--ink:#1d1d1b;--mute:#6c6a63;--line:#e2e0d8;--acc:#2d63c8;--ok:#1f8a4c;--warn:#b7791f;--bad:#c0392b;--soft:#eef1f8}
 @media(prefers-color-scheme:dark){:root{--bg:#171715;--panel:#1f1f1c;--ink:#ece9e1;--mute:#9b988f;--line:#33322d;--acc:#7ea2ea;--ok:#5fc48a;--warn:#e0a94c;--bad:#ea6b5b;--soft:#26292f}}
@@ -40,7 +40,7 @@ article a{color:var(--acc)}article ul{padding-left:20px}article .meta{color:var(
 .copy-path{cursor:pointer}.copy-path:hover{text-decoration:underline}
 .empty{color:var(--mute);padding:40px;text-align:center}
 </style></head><body>
-<header><h1>RawNotes Triage</h1><div class="stats" id="stats"></div>
+<header><h1>RawNotes Triage version __VERSION__</h1><div class="stats" id="stats"></div>
 <span style="flex:1"></span><span class="stats" id="hint">Keys: j/k next/prev · p promote · d durable · a archive · c keep · y copy path · Enter apply</span></header>
 <div class="inflight" id="inflight"></div>
 <main>
@@ -117,7 +117,7 @@ function setMode(m,slug){mode=m;document.querySelectorAll('#decide .act').forEac
     <div class="go"><button onclick="apply()">Promote</button><span class="kbd">copies note to ../&lt;dest&gt;, stamps due date, moves capture to done/</span></div>`,
   durable:`<label>File name</label><input id="slug" value="${slug}">
     <label>Why keep it</label><input id="note" placeholder="optional: what this is a reference for" autofocus>
-    <div class="go"><button onclick="apply()">Save to maintained/</button><span class="kbd">reference notes live in ../maintained</span></div>`,
+    <div class="go"><button onclick="apply()">Save to reference/</button><span class="kbd">reference notes live in ../reference (Obsidian: Reference/)</span></div>`,
   archive:`<label>Why not</label><input id="note" placeholder="one line: why this died" autofocus>
     <div class="go"><button class="danger" onclick="apply()">Archive</button><span class="kbd">status: dead, moved to done/</span></div>`,
   keep:`<label>Status</label><select id="status"><option value="cooking">cooking — I'm working it</option><option value="open">open — still just a question</option></select>

@@ -11,3 +11,7 @@ Issues and specs live as local markdown files under `.scratch/<feature-slug>/`. 
 ### Domain docs
 
 Single-context: one `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+### Versioning
+
+Every change to the app bumps `VERSION` in `server.py` by 0.01 (e.g. 1.04 → 1.05) and adds a dated entry to `CHANGELOG.md`. The version shows in the page heading.
