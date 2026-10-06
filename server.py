@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """rawnotes-triage — local website for reviewing ~/Projects/RawNotes.
 
-Usage: python3 server.py [--port 8765] [--notes ~/Projects/RawNotes]
+Usage: python3 server.py [--port 8765] [--notes ~/Projects/RawNotes] [--restart]
+
+If a server is already on the port, warns when its version differs from this
+code; --restart stops it and starts this one.
 
 Actions (all move real files, nothing is deleted):
   promote  -> copy note into ../experiments|active|learning|templates,
@@ -14,10 +17,11 @@ import argparse, json, os, re, shutil, subprocess, datetime as dt
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
-VERSION = "1.04"  # bump on every change; history in CHANGELOG.md
+VERSION = "1.05"  # bump on every change; history in CHANGELOG.md
 HERE = os.path.dirname(os.path.abspath(__file__))
 NOTES = os.path.expanduser("~/Projects/RawNotes")
 PROJECTS = None
+STARTED = dt.datetime.now().isoformat(timespec="seconds")
 DUE_DAYS = 7
 STALE_DAYS = 60
 NOTE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-.+\.md$")
@@ -262,6 +266,7 @@ class H(BaseHTTPRequestHandler):
         u = urlparse(self.path); q = parse_qs(u.query)
         try:
             if u.path == "/": return self._send(200, open(os.path.join(HERE, "index.html"), "rb").read().replace(b"__VERSION__", VERSION.encode()), "text/html")
+            if u.path == "/api/version": return self._send(200, {"version": VERSION, "started": STARTED, "pid": os.getpid()})
             if u.path == "/api/projects": return self._send(200, {"projects": active_projects()})
             if u.path == "/api/project": return self._send(200, project_detail(q.get("name", [""])[0]))
             if u.path == "/api/notes": return self._send(200, list_notes())
@@ -278,12 +283,61 @@ class H(BaseHTTPRequestHandler):
             self._send(404, {"error": "not found"})
         except Exception as e: self._send(400, {"error": str(e)})
 
+def running_server(port):
+    """Ask whatever is on the port what it is. None = nothing there.
+    Servers older than 1.05 have no /api/version, so they report version None."""
+    import urllib.request, urllib.error
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/version", timeout=2) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError: return {"version": None, "started": None, "pid": None}
+    except (OSError, ValueError): return None
+
+def port_pid(port):
+    out = subprocess.run(["ss", "-ltnpH", f"sport = :{port}"], capture_output=True, text=True).stdout
+    m = re.search(r"pid=(\d+)", out); return int(m.group(1)) if m else None
+
+def stop_server(info, port):
+    import signal, time
+    pid = info.get("pid") or port_pid(port)
+    if not pid: raise SystemExit(f"rawtriage-web: can't find the process on port {port}; stop it by hand.")
+    os.kill(pid, signal.SIGTERM)
+    for _ in range(50):
+        if running_server(port) is None: return pid
+        time.sleep(0.1)
+    raise SystemExit(f"rawtriage-web: pid {pid} didn't stop; try kill {pid}")
+
+def notify(msg):
+    try: subprocess.Popen(["notify-send", "RawNotes Triage", msg], stderr=subprocess.DEVNULL)
+    except OSError: pass
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(); ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--notes", default=NOTES); ap.add_argument("--no-browser", action="store_true")
+    ap.add_argument("--restart", action="store_true", help="stop a server already on the port, then start this one")
     a = ap.parse_args(); NOTES = os.path.abspath(os.path.expanduser(a.notes)); PROJECTS = os.path.dirname(NOTES)
-    url = f"http://127.0.0.1:{a.port}/"; print(f"rawnotes-triage v{VERSION}: {NOTES}\n{url}  (Ctrl-C to stop)")
+    url = f"http://127.0.0.1:{a.port}/"
+    info = running_server(a.port)
+    if info and a.restart:
+        pid = stop_server(info, a.port)
+        print(f"rawtriage-web: stopped version {info['version'] or 'older than 1.05'} (pid {pid})")
+    elif info:
+        if info["version"] == VERSION:
+            print(f"rawtriage-web: version {VERSION} already running (started {info['started']}), opening it")
+        else:
+            msg = (f"An old server is already running on port {a.port}\n"
+                   f"  running:   version {info['version'] or 'older than 1.05'}"
+                   + (f"   (started {info['started']})" if info["started"] else "") + "\n"
+                   f"  this code: version {VERSION}\n"
+                   f"  -> run: rawtriage-web --restart")
+            print("rawtriage-web: " + msg); notify(msg)
+        if not a.no_browser:
+            import webbrowser; webbrowser.open(url)
+        raise SystemExit(0)
+    try: httpd = ThreadingHTTPServer(("127.0.0.1", a.port), H)
+    except OSError as e: raise SystemExit(f"rawtriage-web: port {a.port} is in use by something else ({e}); try --port N")
+    print(f"rawnotes-triage v{VERSION}: {NOTES}\n{url}  (Ctrl-C to stop)")
     if not a.no_browser:
         import webbrowser; webbrowser.open(url)
-    try: ThreadingHTTPServer(("127.0.0.1", a.port), H).serve_forever()
+    try: httpd.serve_forever()
     except KeyboardInterrupt: pass

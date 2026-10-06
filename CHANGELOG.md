@@ -4,6 +4,12 @@ The version shows in the page heading ("RawNotes Triage version X.XX") and
 in the startup line. Bump `VERSION` in `server.py` and add an entry here
 with every change. Versions 1.00-1.03 were numbered after the fact from git history.
 
+## 1.05 — 2026-10-06
+- Launcher checks for a server already on the port. If its version differs,
+  it warns in the terminal and with a desktop notification, then opens the running one.
+  `--restart` stops the old server and starts the new code. New `/api/version` endpoint.
+- Browser opens only after the server is listening. A port taken by another program gives a clear error.
+
 ## 1.04 — 2026-10-06
 - Version number shown in the page heading, browser tab title, and startup line.
 

@@ -91,6 +91,17 @@ class ApiTestCase(unittest.TestCase):
         detail = self.get("/api/project?name=" + urllib.parse.quote(name))
         self.assertEqual(detail["abs_path"], os.path.join(self.tmp, "active", name))
 
+    def test_version_endpoint_and_running_server(self):
+        info = self.get("/api/version")
+        self.assertEqual(info["version"], server.VERSION)
+        self.assertEqual(info["pid"], os.getpid())
+        self.assertEqual(server.running_server(self.port)["version"], server.VERSION)
+
+    def test_running_server_none_when_port_free(self):
+        import socket
+        s = socket.socket(); s.bind(("127.0.0.1", 0)); free = s.getsockname()[1]; s.close()
+        self.assertIsNone(server.running_server(free))
+
     def make_note(self, name, sub=""):
         d = os.path.join(self.notes, sub) if sub else self.notes
         os.makedirs(d, exist_ok=True)
