@@ -1,7 +1,14 @@
 # rawnotes-triage
 
-Local website for reviewing `~/Projects/RawNotes` and pushing each note to
-its next step. Goal: every promoted note is shipped or killed within
+Local website for reviewing `~/Projects/RawNotes` and pushing each note to its next step.
+
+- **Status:** active (version shown in the page heading)
+- **Stack:** Python 3 standard library (`server.py`) + one `index.html`, no dependencies
+- **Run it:** `rawtriage-web` → http://127.0.0.1:8765
+- **Repo:** github.com/Kb4Zod/rawnotes-triage (public)
+
+## Why it exists
+Notes pile up. Goal: every promoted note is shipped or killed within
 3-7 days.
 
 ```
