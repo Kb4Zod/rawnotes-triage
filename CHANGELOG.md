@@ -4,6 +4,13 @@ The version shows in the page heading ("RawNotes Triage version X.XX") and
 in the startup line. Bump `VERSION` in `server.py` and add an entry here
 with every change. Versions 1.00-1.03 were numbered after the fact from git history.
 
+## 1.07 — 2026-10-07
+- Phone layout (<=800px): backlog list and note are two pages — tap a row to open
+  the note, "← Backlog" to return. Decide buttons sit in a bar fixed to the bottom
+  with 44px tap targets; forms go single-column with 16px inputs (no iOS zoom);
+  keyboard hints hidden; long paths and code wrap inside the screen. In-flight chips
+  are read-only on phones (opening a file happens on the host machine). Desktop unchanged.
+
 ## 1.06 — 2026-10-07
 - `--host` flag (default `127.0.0.1`, unchanged). `--host 0.0.0.0` listens on every
   interface so a phone on home Wi-Fi or the tailnet can open the page. No login,

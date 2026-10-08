@@ -11,7 +11,6 @@ header h1{font-size:16px;margin:0}header .stats{color:var(--mute);font-size:13px
 .inflight .chip{border:1px solid var(--line);border-radius:14px;padding:2px 10px;background:var(--panel);cursor:pointer}
 .chip.late{border-color:var(--bad);color:var(--bad)}.chip.soon{border-color:var(--warn)}.chip.done{opacity:.55;text-decoration:line-through}
 main{display:grid;grid-template-columns:360px 1fr;height:calc(100vh - 92px)}
-@media(max-width:800px){main{grid-template-columns:1fr;height:auto}}
 aside{border-right:1px solid var(--line);overflow:auto;background:var(--panel)}
 .tabs{display:flex;border-bottom:1px solid var(--line)}.tabs button{flex:1;border:0;background:none;padding:8px;color:var(--mute);cursor:pointer;font:inherit}
 .tabs button.on{color:var(--ink);border-bottom:2px solid var(--acc)}
@@ -39,6 +38,19 @@ article pre{background:var(--soft);padding:10px;border-radius:6px;overflow:auto}
 article a{color:var(--acc)}article ul{padding-left:20px}article .meta{color:var(--mute)}
 .copy-path{cursor:pointer}.copy-path:hover{text-decoration:underline}
 .empty{color:var(--mute);padding:40px;text-align:center}
+#back{display:none}
+@media(max-width:800px){ /* phone: list and note are two pages, toggled by body.note */
+#hint{display:none}main{display:block;height:auto}aside{border-right:0}section{display:none}
+body.note aside{display:none}body.note section{display:block;overflow:visible}
+#back{display:block;margin:10px 16px;min-height:44px}
+.tabs{overflow-x:auto}.tabs button{flex:1 0 auto;min-height:44px;white-space:nowrap}
+.row{min-width:0}.row .t,.row .m{overflow-wrap:anywhere}.row-copy{min-height:32px}
+.inflight{overflow-x:auto;flex-wrap:nowrap}.inflight>b,.inflight .chip{white-space:nowrap}.inflight .chip{cursor:default}
+.decide{position:fixed;left:0;right:0;bottom:0;z-index:2;max-height:65vh;overflow:auto;border-top:1px solid var(--line);border-bottom:0;padding:10px 16px calc(10px + env(safe-area-inset-bottom))}
+.decide .btns{display:grid;grid-template-columns:1fr 1fr}.decide .btns button.act{min-height:44px;padding:6px 10px}
+.form{grid-template-columns:1fr;max-width:none}.form .go{grid-column:1;flex-wrap:wrap}.form input,.form select,.form textarea{font-size:16px;min-height:44px;width:100%!important}.go button{min-height:44px}
+article{overflow:visible;padding:14px 16px 240px;overflow-wrap:anywhere}article pre{max-width:100%}
+}
 </style></head><body>
 <header><h1>RawNotes Triage version __VERSION__</h1><div class="stats" id="stats"></div>
 <span style="flex:1"></span><span class="stats" id="hint">Keys: j/k next/prev · p promote · d durable · a archive · c keep · y copy path · Enter apply</span></header>
@@ -46,12 +58,15 @@ article a{color:var(--acc)}article ul{padding-left:20px}article .meta{color:var(
 <main>
 <aside><div class="tabs"><button class="on" data-tab="live">Backlog</button><button data-tab="done">Done</button><button data-tab="projects">Active Projects</button></div><div id="list"></div></aside>
 <section>
+<button class="act" id="back" onclick="back()">← Backlog</button>
 <div class="decide" id="decide"><div class="empty">Pick a note to review.</div></div>
 <article id="view"><div class="empty">Oldest first. Decide one, move on.</div></article>
 </section></main>
 <script>
 let data=null,tab='live',sel=null,mode=null,projects=[],projectRequest=0;
-const $=s=>document.querySelector(s);
+const $=s=>document.querySelector(s);const narrow=()=>matchMedia('(max-width:800px)').matches;
+function back(){document.body.classList.remove('note');scrollTo(0,0)}
+function page(nav){if(nav&&narrow()){document.body.classList.add('note');scrollTo(0,0)}}
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function md(src){ // small markdown renderer: headings, lists, code, bold/italic, links
   const out=[];let inCode=false,inList=false,para=[];
@@ -78,17 +93,17 @@ function renderInflight(){const el=$('#inflight');const f=data.inflight;
   el.innerHTML='<b>In flight:</b> '+f.map(x=>{const cls=x.done?'done':x.days_left<0?'late':x.days_left<=2?'soon':'';
     const when=x.done?'done':x.days_left<0?`${-x.days_left}d late`:x.days_left===0?'due today':`${x.days_left}d left`;
     return `<span class="chip ${cls}" title="${x.path}" onclick="openPath('${x.path}')">${esc(x.title)} · ${x.dest} · ${when}</span>`}).join('')}
-function openPath(p){fetch('/api/open',{method:'POST',body:JSON.stringify({path:data.notes_dir+'/../'+p})})}
+function openPath(p){if(narrow())return;fetch('/api/open',{method:'POST',body:JSON.stringify({path:data.notes_dir+'/../'+p})})}
 function renderList(){if(tab==='projects'){projectList();return}const items=tab==='live'?data.live:data.done;
   $('#list').innerHTML=items.length?items.map(n=>`<div class="row ${n.file===sel?'sel':''}" data-f="${n.file}">
     <div class="t">${esc(n.title)}</div><span style="display:flex;gap:6px;align-items:center"><span class="badge ${n.status}">${n.status}</span><button class="act row-copy" type="button" data-path="${esc(n.abs_path)}" title="Copy full path" style="padding:1px 8px;font-size:11px">Copy</button></span>
     <div class="m">${n.date} · <span class="${n.stale?'stale':''}">${n.age??'?'}d old</span> · ${n.type}${n.stale?' · STALE':''}</div></div>`).join(''):'<div class="empty">Nothing here.</div>';
-  document.querySelectorAll('.row').forEach(r=>r.onclick=()=>show(r.dataset.f));
+  document.querySelectorAll('.row').forEach(r=>r.onclick=()=>show(r.dataset.f,true));
   document.querySelectorAll('.row-copy').forEach(b=>{
     b.onclick=e=>{e.stopPropagation();copyPath(b.dataset.path,b)};
     b.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.stopPropagation();copyPath(b.dataset.path,b)}};
   })}
-async function show(f){sel=f;mode=null;renderList();
+async function show(f,nav){sel=f;mode=null;page(nav);renderList();
   const r=await fetch('/api/note?f='+encodeURIComponent(f));const j=await r.json();
   const n=(tab==='live'?data.live:data.done).find(x=>x.file===f)||{};
   if(tab==='projects'||sel!==f)return;
@@ -134,7 +149,7 @@ async function apply(){if(!mode||!sel)return;const g=id=>{const e=document.getEl
   if(mode==='keep'){await load(true)}else{sel=next?next.file:null;await load(true)}}
 function projectList(){
   $('#list').innerHTML=projects.length?projects.map((p,i)=>`<div class="row ${sel===p.name?'sel':''}" data-project="${i}" role="button" tabindex="0"><div class="t">${esc(p.name)}</div><span style="display:flex;gap:6px;align-items:center"><span class="badge">${p.repo?'Git':'Folder'}</span><button class="act row-copy" type="button" data-path="${esc(p.abs_path)}" title="Copy full path" style="padding:1px 8px;font-size:11px">Copy</button></span><div class="m">${esc(p.path)}</div></div>`).join(''):'<div class="empty">No active projects yet. Promote a note to active to start one.</div>';
-  document.querySelectorAll('[data-project]').forEach(el=>{el.onclick=()=>showProject(projects[Number(el.dataset.project)].name);el.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();el.click()}}});
+  document.querySelectorAll('[data-project]').forEach(el=>{el.onclick=()=>showProject(projects[Number(el.dataset.project)].name,true);el.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();el.click()}}});
   document.querySelectorAll('.row-copy').forEach(b=>{
     b.onclick=e=>{e.stopPropagation();copyPath(b.dataset.path,b)};
     b.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.stopPropagation();copyPath(b.dataset.path,b)}};
@@ -151,8 +166,8 @@ async function loadProjects(){
     else $('#view').innerHTML='<div class="empty">Your active project folders will appear here.</div>';
   }catch(e){if(tab==='projects'){$('#list').innerHTML='<div class="empty">Projects unavailable.</div>';$('#view').textContent=e.message}}
 }
-async function showProject(name){
-  sel=name;mode=null;projectList();const request=++projectRequest;
+async function showProject(name,nav){
+  sel=name;mode=null;page(nav);projectList();const request=++projectRequest;
   $('#view').innerHTML='<div class="empty">Loading repository activity…</div>';
   try{const r=await fetch('/api/project?name='+encodeURIComponent(name));if(!r.ok)throw Error('Could not load this project.');const p=await r.json();
     if(tab!=='projects'||request!==projectRequest)return;
@@ -176,7 +191,7 @@ async function copyPath(path,el){
   clearTimeout(el._copyTimer);el.textContent='Copied';
   el._copyTimer=setTimeout(()=>{el.textContent=el.dataset.orig},1000);
 }
-document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;mode=null;$('#hint').textContent='Keys: j/k next/prev · p promote · d durable · a archive · c keep · y copy path · Enter apply';document.querySelectorAll('.tabs button').forEach(x=>x.classList.toggle('on',x===b));sel=null;load()});
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;mode=null;back();$('#hint').textContent='Keys: j/k next/prev · p promote · d durable · a archive · c keep · y copy path · Enter apply';document.querySelectorAll('.tabs button').forEach(x=>x.classList.toggle('on',x===b));sel=null;load()});
 document.addEventListener('keydown',e=>{if(e.target.matches('input,textarea,select')){if(e.key==='Enter'&&e.target.tagName!=='TEXTAREA'){e.preventDefault();apply()}return}
   if(tab==='projects'){const i=projects.findIndex(p=>p.name===sel);if(e.key==='j'&&projects[i+1])showProject(projects[i+1].name);if(e.key==='k'&&projects[i-1])showProject(projects[i-1].name);
     if(e.key==='y'&&i>=0){const pathEl=$('#detailPath');if(pathEl)copyPath(projects[i].abs_path,pathEl)}return}
