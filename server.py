@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """rawnotes-triage — local website for reviewing ~/Projects/RawNotes.
 
-Usage: python3 server.py [--port 8765] [--notes ~/Projects/RawNotes] [--restart]
+Usage: python3 server.py [--port 8765] [--host 127.0.0.1] [--notes ~/Projects/RawNotes] [--restart]
+
+--host 0.0.0.0 listens on every interface (phone on home Wi-Fi / Tailscale).
+There is no login: only do that on a network you trust. Firewall still applies.
 
 If a server is already on the port, warns when its version differs from this
 code; --restart stops it and starts this one.
@@ -17,7 +20,7 @@ import argparse, json, os, re, shutil, subprocess, datetime as dt
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
-VERSION = "1.05"  # bump on every change; history in CHANGELOG.md
+VERSION = "1.06"  # bump on every change; history in CHANGELOG.md
 HERE = os.path.dirname(os.path.abspath(__file__))
 NOTES = os.path.expanduser("~/Projects/RawNotes")
 PROJECTS = None
@@ -313,6 +316,7 @@ def notify(msg):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(); ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--host", default="127.0.0.1", help="interface to listen on; 0.0.0.0 = all (no auth, trusted networks only)")
     ap.add_argument("--notes", default=NOTES); ap.add_argument("--no-browser", action="store_true")
     ap.add_argument("--restart", action="store_true", help="stop a server already on the port, then start this one")
     a = ap.parse_args(); NOTES = os.path.abspath(os.path.expanduser(a.notes)); PROJECTS = os.path.dirname(NOTES)
@@ -334,9 +338,10 @@ if __name__ == "__main__":
         if not a.no_browser:
             import webbrowser; webbrowser.open(url)
         raise SystemExit(0)
-    try: httpd = ThreadingHTTPServer(("127.0.0.1", a.port), H)
+    try: httpd = ThreadingHTTPServer((a.host, a.port), H)
     except OSError as e: raise SystemExit(f"rawtriage-web: port {a.port} is in use by something else ({e}); try --port N")
     print(f"rawnotes-triage v{VERSION}: {NOTES}\n{url}  (Ctrl-C to stop)")
+    if a.host != "127.0.0.1": print(f"listening on {a.host}:{a.port} for other devices (no login; trusted networks only)")
     if not a.no_browser:
         import webbrowser; webbrowser.open(url)
     try: httpd.serve_forever()

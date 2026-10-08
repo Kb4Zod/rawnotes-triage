@@ -15,6 +15,7 @@ Notes pile up. Goal: every promoted note is shipped or killed within
 rawtriage-web            # starts http://127.0.0.1:8765 and opens the browser
 rawtriage-web --port N   # different port
 rawtriage-web --no-browser
+rawtriage-web --host 0.0.0.0   # reachable from the phone (home Wi-Fi / Tailscale); no login
 rawtriage-web --restart   # stop the server already running (e.g. old version), start this one
 ```
 

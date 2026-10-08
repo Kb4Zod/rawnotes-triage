@@ -4,6 +4,11 @@ The version shows in the page heading ("RawNotes Triage version X.XX") and
 in the startup line. Bump `VERSION` in `server.py` and add an entry here
 with every change. Versions 1.00-1.03 were numbered after the fact from git history.
 
+## 1.06 — 2026-10-07
+- `--host` flag (default `127.0.0.1`, unchanged). `--host 0.0.0.0` listens on every
+  interface so a phone on home Wi-Fi or the tailnet can open the page. No login,
+  so only on trusted networks; the startup line says so.
+
 ## 1.05 — 2026-10-06
 - Launcher checks for a server already on the port. If its version differs,
   it warns in the terminal and with a desktop notification, then opens the running one.
