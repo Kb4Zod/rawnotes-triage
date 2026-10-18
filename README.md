@@ -57,7 +57,14 @@ AI-generated summaries or a guarantee that features have been released.
 For repositories with a GitHub `origin`, the tab also loads the ten most recently
 updated pull requests across all states using the optional `gh` CLI and its
 existing authentication. Missing authentication, network access, or history is
-shown explicitly. Refresh reloads the project list and selected project's activity.
+shown explicitly. Each project also shows its **definition of done** at the top (the line Promote writes into
+`NOTES.md`, a `Definition of done:` paragraph, or a "What does done look like" heading in NOTES, PROJECT,
+README or SPEC). If it is missing or still `<fill in>`, the row gets a red badge, the detail pane a red
+callout, and the tab header counts how many projects need one. **Edit** (or **Fill in**) opens a text box,
+**Review change** shows the file plus before/after, and only **Confirm and save** writes anything. The write
+is refused if the file changed since you opened it.
+
+Refresh reloads the project list and selected project's activity.
 All project inspection is read-only; no fetch, checkout, or repository edits occur.
 
 ## GitHub activity strip
@@ -68,3 +75,14 @@ the default branch of repos you own or collaborate on, so private repos are incl
 repos (like RawNotes) never show up. Commits on side branches count once merged. Uses `gh api graphql`
 and the same sign-in as the PR list, so no new setup. Cached 10 minutes (`ACTIVITY_TTL`); the
 Refresh button bypasses the cache.
+
+## Repo viewer
+
+"Review repository" (project detail) and the repo chips in the activity strip open a read-only view of the
+GitHub repo inside the page: README, files, recent commits, pull requests, open issues. The server fetches
+everything through `gh`, so a private repo needs no GitHub login in the browser, including on the phone.
+It only serves repos owned by the signed-in `gh` user and only issues GET requests. Because this page has no
+login, serving it beyond localhost (`--host 0.0.0.0`) also makes your private repo contents readable to anyone
+who can reach it; keep that to the tailnet or a trusted network.
+On a localhost bind the server also refuses requests whose `Host` is not localhost, requests from another
+origin, and non-JSON POSTs, so a web page you visit cannot drive it.

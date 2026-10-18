@@ -16,14 +16,17 @@ Actions (all move real files, nothing is deleted):
   archive  -> status: dead, reason in ## Outcome, move to done/
   keep     -> status open|cooking, optional next-step line
 """
-import argparse, json, os, re, shutil, subprocess, threading, time, datetime as dt
+import argparse, base64, json, os, re, shutil, subprocess, threading, time, urllib.parse, datetime as dt
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
-VERSION = "1.10"  # bump on every change; history in CHANGELOG.md
+VERSION = "1.13"  # bump on every change; history in CHANGELOG.md
 HERE = os.path.dirname(os.path.abspath(__file__))
 NOTES = os.path.expanduser("~/Projects/RawNotes")
 PROJECTS = None
+BIND_HOST = "127.0.0.1"  # set from --host; the Host/Origin guard depends on it
+_done_lock = threading.Lock()
 STARTED = dt.datetime.now().isoformat(timespec="seconds")
 DUE_DAYS = 7
 ACTIVITY_TTL = 600  # seconds; GitHub contribution data barely changes minute to minute
@@ -113,11 +116,105 @@ def inflight():
     out.sort(key=lambda x: (x["done"], x["days_left"] if x["days_left"] is not None else 999))
     return out
 
+DONE_FILES = ("notes.md", "project.md", "readme.md", "spec.md")  # where a project may say what done looks like
+DONE_LINE = re.compile(r"^\s*(?:[-*]\s+)?(?:\*\*)?definition of done(?:\*\*)?\s*:?\s*(?:\*\*)?\s*(.*)$", re.I)
+DONE_HEAD = re.compile(r"^#{1,4}\s*(?:definition of done|what does done look like|what done looks like|done looks like)\b[^\n]*$", re.I)
+DONE_MAX = 600
+
+def done_placeholder(text):
+    return not text or bool(re.search(r"<fill in|^(tbd|todo|\?+|_+|\.+)$", text, re.I))
+
+def find_done(path):
+    """Locate the definition of done in a project folder.
+    Returns None if nothing looks for one, else {file, start, end, kind ('line'|'head'), prefix, text, defined}:
+    lines[start:end] of `file` hold it. The first real definition wins; failing that, the first blank/placeholder one."""
+    files = {f.lower(): f for f in os.listdir(path)}
+    blank = None
+    for name in DONE_FILES:
+        if name not in files: continue
+        try:
+            with open(os.path.join(path, files[name]), encoding="utf-8", errors="replace") as fh: lines = fh.read(1000000).split("\n")
+        except OSError: continue
+        for i, line in enumerate(lines):
+            m = DONE_LINE.match(line); h = DONE_HEAD.match(line)
+            if not (m or h): continue
+            parts = [m.group(1)] if m else []; end = i + 1
+            for nxt in lines[i + 1:]:  # same paragraph / same section
+                if m and (not nxt.strip() or re.match(r"^\s*([-*]\s|#)", nxt)): break
+                if h and re.match(r"^#{1,4}\s", nxt): break
+                if h and any(parts) and not nxt.strip(): break  # first paragraph only
+                parts.append(nxt.strip()); end += 1
+            text = re.sub(r"<!--.*?-->", "", " ".join(x for x in parts if x), flags=re.S).strip()
+            text = re.sub(r"\s+", " ", text)[:DONE_MAX]
+            hit = {"file": files[name], "start": i, "end": end, "kind": "line" if m else "head",
+                   "prefix": line[:m.start(1)] if m else "", "text": text, "defined": not done_placeholder(text)}
+            if hit["defined"]: return hit
+            blank = blank or hit  # looked for it, only found a blank/placeholder
+    return blank
+
+def definition_of_done(path):
+    """What 'done' looks like for a project, as written when it was promoted (or later).
+    {"defined": bool, "text": str, "source": file or None}. Missing, empty and the '<fill in>'
+    placeholder from the Promote form all count as not defined (source = where it was left blank)."""
+    hit = find_done(path)
+    if not hit: return {"defined": False, "text": "", "source": None}
+    return {"defined": hit["defined"], "text": hit["text"] if hit["defined"] else "", "source": hit["file"]}
+
+def set_done(name, text, expected):
+    with _done_lock: return _set_done(name, text, expected)
+
+def _read_lines(target):
+    """(lines, eol): the file split on its own line ending, undecodable bytes kept as surrogates."""
+    with open(target, encoding="utf-8", errors="surrogateescape", newline="") as fh: raw = fh.read()
+    eol = "\r\n" if "\r\n" in raw else "\n"
+    return raw.split(eol), eol
+
+def _set_done(name, text, expected):
+    """Write a project's definition of done in place (or into NOTES.md's Plan if it has none).
+    `expected` is the text the user was looking at; if the file moved on since, refuse rather than overwrite."""
+    if name not in {p["name"] for p in active_projects()}: raise ValueError("unknown project")
+    text = re.sub(r"\s+", " ", text or "").strip()
+    if done_placeholder(text): raise ValueError("Write what done looks like first.")
+    if len(text) > DONE_MAX: raise ValueError(f"Keep it under {DONE_MAX} characters.")
+    path = os.path.join(PROJECTS, "active", name); hit = find_done(path)
+    now = hit["text"] if hit and hit["defined"] else ""
+    if re.sub(r"\s+", " ", expected or "").strip() != now:
+        raise ValueError("This definition changed on disk since you opened it. Refresh and try again.")
+    eol = "\n"
+    if hit:
+        target = os.path.join(path, hit["file"]); lines, eol = _read_lines(target)
+        if hit["kind"] == "line":
+            prefix = hit["prefix"] if hit["prefix"].rstrip().endswith(":") or hit["prefix"].rstrip().endswith(":**") else hit["prefix"].rstrip() + ": "
+            lines[hit["start"]:hit["end"]] = [prefix + text]
+        else:
+            tail = [""] if hit["end"] < len(lines) and lines[hit["end"]].strip() else []
+            lines[hit["start"] + 1:hit["end"]] = ["", text] + tail
+    else:
+        names = {f.lower(): f for f in os.listdir(path)}; target = os.path.join(path, names.get("notes.md", "NOTES.md"))
+        item = "- definition of done: " + text
+        if os.path.exists(target):
+            lines, eol = _read_lines(target)
+            plan = next((i for i, l in enumerate(lines) if re.match(r"^##\s+Plan\s*$", l)), None)
+            if plan is None:
+                while lines and not lines[-1].strip(): lines.pop()
+                lines += ["", "## Plan", "", item, ""]
+            else: lines.insert(plan + 2 if lines[plan + 1:plan + 2] == [""] else plan + 1, item)
+        else: lines = [f"# {name}", "", "## Plan", "", item, ""]
+    if os.path.realpath(target) != os.path.join(os.path.realpath(path), os.path.basename(os.path.realpath(target))):
+        raise ValueError("refusing to write outside the project folder")
+    tmp = target + ".triage-tmp"
+    with open(tmp, "w", encoding="utf-8", errors="surrogateescape", newline="") as fh: fh.write(eol.join(lines))
+    if os.path.exists(target): shutil.copymode(target, tmp)
+    os.replace(tmp, target)
+    log(f"done {name} -> {os.path.basename(target)}: {text[:80]}")
+    return {"ok": True, "file": os.path.basename(target), "msg": f"Saved to {os.path.basename(target)}"}
+
 def active_projects():
     base = os.path.join(PROJECTS, "active")
     if not os.path.isdir(base): return []
     return [{"name": name, "path": "active/" + name, "abs_path": os.path.join(base, name),
-             "repo": os.path.exists(os.path.join(base, name, ".git"))}
+             "repo": os.path.exists(os.path.join(base, name, ".git")),
+             "done_defined": definition_of_done(os.path.join(base, name))["defined"]}
             for name in sorted(os.listdir(base), key=str.casefold)
             if not name.startswith(".") and os.path.isdir(os.path.join(base, name))]
 
@@ -126,7 +223,8 @@ def project_detail(name):
     path = os.path.join(PROJECTS, "active", name)
     result = {"name": name, "path": "active/" + name, "abs_path": path, "summary": "No README or project notes yet.",
               "summary_source": None, "commits": [], "features": [], "prs": [],
-              "pr_status": "No Git repository in this project.", "branch": "", "remote": ""}
+              "pr_status": "No Git repository in this project.", "branch": "", "remote": "", "repo": "",
+              "done": definition_of_done(path)}
     files = {f.lower(): f for f in sorted(os.listdir(path))}
     for candidate in ("readme.md", "readme.rst", "readme.txt", "readme", "notes.md"):
         if candidate not in files: continue
@@ -150,6 +248,7 @@ def project_detail(name):
     remote = run(["git", "remote", "get-url", "origin"]) or ""
     match = re.fullmatch(r"(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)([\w.-]+/[\w.-]+?)(?:\.git)?/?", remote)
     if match: result["remote"] = "https://github.com/" + match[1]
+    if match: result["repo"] = match[1]
     history = run(["git", "log", "-100", "--format=%h%x09%cs%x09%s"])
     commits = []
     for line in (history or "").splitlines():
@@ -177,16 +276,22 @@ HISTORY_FIELDS = "id defaultBranchRef { target { ... on Commit { history(first: 
 _activity = {"at": 0.0, "data": None}
 _activity_lock = threading.Lock()
 
-def gh_graphql(query):
-    """Run a GraphQL query through the gh CLI and its existing sign-in. Returns the parsed 'data'."""
+def _gh(args, timeout=25):
+    """Run the gh CLI (your existing sign-in) and return stdout. Read-only use: callers only issue GETs and queries."""
     try:
-        proc = subprocess.run(["gh", "api", "graphql", "-f", "query=" + query], capture_output=True, text=True, timeout=25,
+        proc = subprocess.run(["gh"] + args, capture_output=True, text=True, timeout=timeout,
                               env={**os.environ, "GH_PROMPT_DISABLED": "1"})
     except FileNotFoundError: raise RuntimeError("gh is not installed")
     except subprocess.TimeoutExpired: raise RuntimeError("GitHub took too long to answer")
     if proc.returncode != 0:
-        raise RuntimeError((proc.stderr.strip().splitlines() or ["gh api failed; check `gh auth status` and the network"])[-1])
-    try: return json.loads(proc.stdout)["data"]
+        err = proc.stderr.strip() + proc.stdout.strip()
+        if "HTTP 404" in err: raise RuntimeError("Not found, or not visible to your GitHub sign-in.")
+        raise RuntimeError((err.splitlines() or ["gh failed; check `gh auth status` and the network"])[-1])
+    return proc.stdout
+
+def gh_graphql(query):
+    """Run a GraphQL query through gh. Returns the parsed 'data'."""
+    try: return json.loads(_gh(["api", "graphql", "-f", "query=" + query]))["data"]
     except (ValueError, KeyError): raise RuntimeError("unexpected answer from GitHub")
 
 def commit_days(repo_ids, uid, since, max_pages=20):
@@ -255,6 +360,84 @@ def github_activity(refresh=False):
         except RuntimeError as e:
             if _activity["data"]: return {**_activity["data"], "stale": True, "error": str(e)}
             return {"error": str(e)}
+
+# ---- read-only repo viewer: lets a private repo be reviewed inside the page, through gh, with no browser login ----
+REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+REPO_TTL = 60
+FILE_MAX = 300000
+_viewer = {"login": None}
+_rest_cache = {}
+_rest_lock = threading.Lock()
+
+def gh_rest(path):
+    """GET a GitHub REST path through gh. Cached for a minute so browsing around the repo is quick."""
+    with _rest_lock:
+        hit = _rest_cache.get(path)
+        if hit and time.time() - hit[0] < REPO_TTL: return hit[1]
+    try: data = json.loads(_gh(["api", path], timeout=20))
+    except ValueError: raise RuntimeError("unexpected answer from GitHub")
+    with _rest_lock:
+        if len(_rest_cache) > 300: _rest_cache.clear()
+        _rest_cache[path] = (time.time(), data)
+    return data
+
+def check_repo(name):
+    """Only repos owned by the signed-in gh user: the page has no login of its own, so keep it to your own work."""
+    if not REPO_RE.match(name or "") or any(not part.strip(".") for part in name.split("/")): raise ValueError("bad repository name")
+    if _viewer["login"] is None: _viewer["login"] = json.loads(_gh(["api", "user"]))["login"]
+    if name.split("/")[0].lower() != _viewer["login"].lower(): raise ValueError("Only your own repositories can be viewed here.")
+
+def repo_path_ok(path):
+    path = (path or "").strip("/")
+    if not path: return ""
+    if len(path) > 300 or "\\" in path or "\0" in path or any(seg in ("", ".", "..") for seg in path.split("/")):
+        raise ValueError("bad path")
+    return path
+
+def _entries(items):
+    out = [{"name": e["name"], "path": e["path"], "type": "dir" if e["type"] == "dir" else "file", "size": e.get("size", 0)} for e in items]
+    return sorted(out, key=lambda e: (e["type"] != "dir", e["name"].casefold()))
+
+def _b64text(d):
+    try: return base64.b64decode(d.get("content") or "").decode("utf-8")
+    except UnicodeDecodeError: return None
+
+def repo_overview(name):
+    check_repo(name); base = "repos/" + name
+    calls = {"repo": base, "tree": base + "/contents", "readme": base + "/readme", "commits": base + "/commits?per_page=15",
+             "prs": base + "/pulls?state=all&per_page=10&sort=updated&direction=desc", "issues": base + "/issues?state=open&per_page=15"}
+    with ThreadPoolExecutor(6) as ex: futs = {k: ex.submit(gh_rest, v) for k, v in calls.items()}
+    res, errs = {}, {}
+    for k, f in futs.items():
+        try: res[k] = f.result()
+        except RuntimeError as e: errs[k] = str(e)
+    if "repo" in errs: raise RuntimeError(errs["repo"])
+    d = res["repo"]; readme = res.get("readme")
+    text = _b64text(readme)[:200000] if readme and _b64text(readme) is not None else None
+    return {
+        "repo": {"name": d["full_name"], "private": d["private"], "description": d.get("description") or "", "url": d["html_url"],
+                 "default_branch": d["default_branch"], "pushed_at": (d.get("pushed_at") or "")[:10], "archived": d.get("archived", False)},
+        "tree": _entries(res.get("tree") or []),
+        "readme": {"name": readme["name"], "text": text} if text is not None else None,
+        "commits": [{"sha": c["sha"][:7], "date": c["commit"]["author"]["date"][:10], "title": c["commit"]["message"].split("\n")[0],
+                     "author": (c.get("author") or {}).get("login") or c["commit"]["author"]["name"]} for c in res.get("commits") or []],
+        "prs": [{"number": x["number"], "title": x["title"], "state": "merged" if x.get("merged_at") else x["state"],
+                 "updated": x["updated_at"][:10], "author": (x.get("user") or {}).get("login", "")} for x in res.get("prs") or []],
+        "issues": [{"number": x["number"], "title": x["title"], "updated": x["updated_at"][:10], "comments": x.get("comments", 0),
+                    "author": (x.get("user") or {}).get("login", "")} for x in res.get("issues") or [] if "pull_request" not in x],
+        "errors": {k: v for k, v in errs.items() if k != "readme"},  # a missing README is normal; the rest is worth showing
+    }
+
+def repo_path(name, path):
+    check_repo(name); path = repo_path_ok(path)
+    d = gh_rest(f"repos/{name}/contents/{urllib.parse.quote(path, safe='/')}")
+    if isinstance(d, list): return {"kind": "dir", "path": path, "entries": _entries(d)}
+    out = {"kind": "file", "path": path, "name": d["name"], "size": d.get("size", 0), "url": d.get("html_url", "")}
+    if d.get("type") != "file": return {**out, "kind": "other", "type": d.get("type")}
+    if out["size"] > FILE_MAX or not d.get("content"): return {**out, "too_large": True}
+    text = _b64text(d)
+    return {**out, "binary": True} if text is None else {**out, "text": text}
+
 
 def reference_copy(text, fname, why=""):
     """Turn the '- key: value' header into YAML frontmatter, so Obsidian shows it as Properties."""
@@ -354,23 +537,42 @@ class H(BaseHTTPRequestHandler):
         self.send_response(code); self.send_header("Content-Type", ctype + "; charset=utf-8")
         self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data)
     def log_message(self, *a): pass
+    def _refuse(self, post):
+        """Browser-attack guard (no login here, so the page you are on must not be able to drive it).
+        Loopback bind: only localhost Host names (stops DNS rebinding). Any bind: a request carrying an
+        Origin must come from this same host (stops cross-site forms), and POST bodies must be JSON."""
+        host = self.headers.get("Host", "")
+        if BIND_HOST in ("127.0.0.1", "localhost", "::1") and urlparse("//" + host).hostname not in ("127.0.0.1", "localhost", "::1"):
+            return "unexpected Host header"
+        origin = self.headers.get("Origin")
+        if origin is not None and urlparse(origin).netloc != host: return "cross-origin request refused"
+        if post and self.headers.get("Content-Type", "").split(";")[0].strip().lower() != "application/json":
+            return "Content-Type must be application/json"
+        return None
     def do_GET(self):
         u = urlparse(self.path); q = parse_qs(u.query)
+        bad = self._refuse(False)
+        if bad: return self._send(403, {"error": bad})
         try:
             if u.path == "/": return self._send(200, open(os.path.join(HERE, "index.html"), "rb").read().replace(b"__VERSION__", VERSION.encode()), "text/html")
             if u.path == "/api/version": return self._send(200, {"version": VERSION, "started": STARTED, "pid": os.getpid()})
             if u.path == "/api/projects": return self._send(200, {"projects": active_projects()})
             if u.path == "/api/project": return self._send(200, project_detail(q.get("name", [""])[0]))
             if u.path == "/api/activity": return self._send(200, github_activity(q.get("refresh") == ["1"]))
+            if u.path == "/api/repo": return self._send(200, repo_overview(q.get("name", [""])[0]))
+            if u.path == "/api/repo/path": return self._send(200, repo_path(q.get("name", [""])[0], q.get("path", [""])[0]))
             if u.path == "/api/notes": return self._send(200, list_notes())
             if u.path == "/api/note":
                 p = safe_note(q["f"][0]); return self._send(200, {"text": open(p, encoding="utf-8", errors="replace").read()})
             self._send(404, {"error": "not found"})
         except Exception as e: self._send(400, {"error": str(e)})
     def do_POST(self):
+        bad = self._refuse(True)
+        if bad: return self._send(403, {"error": bad})
         try:
             n = int(self.headers.get("Content-Length", 0)); req = json.loads(self.rfile.read(n) or b"{}")
             if urlparse(self.path).path == "/api/action": return self._send(200, act(req))
+            if urlparse(self.path).path == "/api/done": return self._send(200, set_done(req.get("name", ""), req.get("text", ""), req.get("expected", "")))
             if urlparse(self.path).path == "/api/open":
                 import subprocess; subprocess.Popen(["xdg-open", req["path"]]); return self._send(200, {"ok": True})
             self._send(404, {"error": "not found"})
@@ -409,7 +611,7 @@ if __name__ == "__main__":
     ap.add_argument("--host", default="127.0.0.1", help="interface to listen on; 0.0.0.0 = all (no auth, trusted networks only)")
     ap.add_argument("--notes", default=NOTES); ap.add_argument("--no-browser", action="store_true")
     ap.add_argument("--restart", action="store_true", help="stop a server already on the port, then start this one")
-    a = ap.parse_args(); NOTES = os.path.abspath(os.path.expanduser(a.notes)); PROJECTS = os.path.dirname(NOTES)
+    a = ap.parse_args(); BIND_HOST = a.host; NOTES = os.path.abspath(os.path.expanduser(a.notes)); PROJECTS = os.path.dirname(NOTES)
     url = f"http://127.0.0.1:{a.port}/"
     info = running_server(a.port)
     if info and a.restart:
