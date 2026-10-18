@@ -127,6 +127,76 @@ class ApiTestCase(unittest.TestCase):
         note = self.get("/api/notes")["live"][0]
         self.assertEqual(note["abs_path"], os.path.join(self.notes, name))
 
+    def stub_gh(self, *results):
+        calls = []
+        def fake(query):
+            calls.append(query)
+            r = results[min(len(calls), len(results)) - 1]
+            if isinstance(r, Exception): raise r
+            return r
+        old_gh, old_cache = server.gh_graphql, dict(server._activity)
+        server.gh_graphql = fake; server._activity.update(at=0.0, data=None)
+        def restore(): server.gh_graphql = old_gh; server._activity.update(old_cache)
+        self.addCleanup(restore)
+        return calls
+
+    def repos_answer(self):
+        repo = lambda n, priv: {"id": "ID_" + n, "nameWithOwner": "me/" + n, "isPrivate": priv, "url": "https://github.com/me/" + n,
+                                "pushedAt": server.today().isoformat() + "T00:00:00Z"}
+        return {"viewer": {"id": "U1", "login": "me", "repositories": {"nodes": [
+            repo("pub", False), repo("secret", True),
+            {**repo("old", False), "pushedAt": "2001-01-01T00:00:00Z"}]}}}  # not pushed this year: never queried
+
+    def history_answer(self, pub_days, secret_days):
+        node = lambda days: {"defaultBranchRef": {"target": {"history": {"pageInfo": {"hasNextPage": False},
+            "nodes": [{"committedDate": f"{d.isoformat()}T12:00:00Z"} for d in days]}}}}
+        return {"r0": node(pub_days), "r1": node(secret_days)}
+
+    def test_activity_counts_pushed_commits_including_private_repos(self):
+        t = server.today(); day = lambda n: t - server.dt.timedelta(days=n)
+        calls = self.stub_gh(self.repos_answer(), self.history_answer([day(1), day(1), day(2)], [day(1), day(40)]))
+        a = self.get("/api/activity")
+        self.assertEqual((a["login"], a["total"], a["active_days"], a["streak"]), ("me", 5, 3, 2))
+        self.assertEqual([(r["name"], r["count"], r["private"]) for r in a["repos"]], [("me/pub", 3, False), ("me/secret", 1, True)])
+        self.assertNotIn("ID_old", calls[1])  # repo with no push this year isn't asked for commits
+        self.assertIn('author: {id: "U1"}', calls[1])  # only your commits
+        days = {d["date"]: d for w in a["weeks"] for d in w}
+        self.assertEqual(days[day(1).isoformat()]["count"], 3); self.assertEqual(days[day(1).isoformat()]["level"], 4)
+        self.assertEqual(len(a["weeks"]), 53)
+
+    def test_activity_follows_pagination(self):
+        t = server.today()
+        page1 = self.history_answer([t], [])
+        page1["r0"]["defaultBranchRef"]["target"]["history"]["pageInfo"] = {"hasNextPage": True, "endCursor": "CUR"}
+        calls = self.stub_gh(self.repos_answer(), page1, {"r0": self.history_answer([t - server.dt.timedelta(days=3)], [])["r0"]})
+        a = self.get("/api/activity")
+        self.assertEqual(a["total"], 2)
+        self.assertIn('after: "CUR"', calls[2]); self.assertNotIn("ID_secret", calls[2])
+
+    def test_activity_empty_when_nothing_pushed(self):
+        self.stub_gh({"viewer": {"id": "U1", "login": "me", "repositories": {"nodes": []}}})
+        a = self.get("/api/activity")
+        self.assertEqual((a["total"], a["repos"], a["streak"]), (0, [], 0))
+
+    def test_activity_is_cached_until_refresh(self):
+        t = server.today()
+        hist = self.history_answer([t], [])
+        calls = self.stub_gh(self.repos_answer(), hist, self.repos_answer(), hist)
+        self.get("/api/activity"); self.get("/api/activity")
+        self.assertEqual(len(calls), 2)  # one fetch = repo list + history
+        self.get("/api/activity?refresh=1")
+        self.assertEqual(len(calls), 4)
+
+    def test_activity_error_without_cache(self):
+        self.stub_gh(RuntimeError("gh is not installed"))
+        self.assertEqual(self.get("/api/activity"), {"error": "gh is not installed"})
+
+    def test_activity_failure_keeps_last_good_data_marked_stale(self):
+        self.stub_gh(self.repos_answer(), self.history_answer([server.today()], []), RuntimeError("network down"))
+        self.get("/api/activity")
+        a = self.get("/api/activity?refresh=1")
+        self.assertTrue(a["stale"]); self.assertEqual(a["error"], "network down"); self.assertEqual(a["total"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

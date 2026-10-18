@@ -16,16 +16,18 @@ Actions (all move real files, nothing is deleted):
   archive  -> status: dead, reason in ## Outcome, move to done/
   keep     -> status open|cooking, optional next-step line
 """
-import argparse, json, os, re, shutil, subprocess, datetime as dt
+import argparse, json, os, re, shutil, subprocess, threading, time, datetime as dt
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
-VERSION = "1.07"  # bump on every change; history in CHANGELOG.md
+VERSION = "1.09"  # bump on every change; history in CHANGELOG.md
 HERE = os.path.dirname(os.path.abspath(__file__))
 NOTES = os.path.expanduser("~/Projects/RawNotes")
 PROJECTS = None
 STARTED = dt.datetime.now().isoformat(timespec="seconds")
 DUE_DAYS = 7
+ACTIVITY_TTL = 600  # seconds; GitHub contribution data barely changes minute to minute
+ACTIVITY_REPO_DAYS = 30
 STALE_DAYS = 60
 NOTE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-.+\.md$")
 DESTS = {  # promote targets: folder -> (layout)
@@ -167,6 +169,93 @@ def project_detail(name):
             except ValueError: pass
     return result
 
+# The graph is built from commits that reached GitHub (default branch of repos you own or collaborate on),
+# not from GitHub's profile calendar: that calendar hides private repos unless a profile setting is on.
+REPOS_QUERY = """{ viewer { id login repositories(first: 100, ownerAffiliations: [OWNER, COLLABORATOR], orderBy: {field: PUSHED_AT, direction: DESC}) {
+  nodes { id nameWithOwner isPrivate url pushedAt } } } }"""
+HISTORY_FIELDS = "id defaultBranchRef { target { ... on Commit { history(first: 100, since: %s, author: {id: %s}%s) { pageInfo { hasNextPage endCursor } nodes { committedDate } } } } }"
+_activity = {"at": 0.0, "data": None}
+_activity_lock = threading.Lock()
+
+def gh_graphql(query):
+    """Run a GraphQL query through the gh CLI and its existing sign-in. Returns the parsed 'data'."""
+    try:
+        proc = subprocess.run(["gh", "api", "graphql", "-f", "query=" + query], capture_output=True, text=True, timeout=25,
+                              env={**os.environ, "GH_PROMPT_DISABLED": "1"})
+    except FileNotFoundError: raise RuntimeError("gh is not installed")
+    except subprocess.TimeoutExpired: raise RuntimeError("GitHub took too long to answer")
+    if proc.returncode != 0:
+        raise RuntimeError((proc.stderr.strip().splitlines() or ["gh api failed; check `gh auth status` and the network"])[-1])
+    try: return json.loads(proc.stdout)["data"]
+    except (ValueError, KeyError): raise RuntimeError("unexpected answer from GitHub")
+
+def commit_days(repo_ids, uid, since, max_pages=20):
+    """{repo id: [local dates of your commits since `since`]} for each repo's default branch."""
+    out = {i: [] for i in repo_ids}; pending = {i: "" for i in repo_ids}
+    for _ in range(max_pages):
+        if not pending: break
+        nodes = "".join(f"r{n}: node(id: {json.dumps(i)}) {{ ... on Repository {{ {HISTORY_FIELDS % (json.dumps(since), json.dumps(uid), ', after: ' + json.dumps(c) if c else '')} }} }} "
+                        for n, (i, c) in enumerate(pending.items()))
+        data = gh_graphql("{ " + nodes + "}"); ids = list(pending); pending = {}
+        for n, i in enumerate(ids):
+            repo = data.get(f"r{n}") or {}
+            hist = (((repo.get("defaultBranchRef") or {}).get("target") or {}).get("history")) or {}
+            for c in hist.get("nodes", []):
+                out[i].append(dt.datetime.fromisoformat(c["committedDate"].replace("Z", "+00:00")).astimezone().date())
+            if hist.get("pageInfo", {}).get("hasNextPage"): pending[i] = hist["pageInfo"]["endCursor"]
+    return out
+
+def current_streak(days):
+    """Consecutive days with a push, ending today (or yesterday: today may not have started yet)."""
+    counts = [d["count"] for d in days]
+    if counts and counts[-1] == 0: counts = counts[:-1]
+    n = 0
+    for c in reversed(counts):
+        if c == 0: break
+        n += 1
+    return n
+
+def build_activity(login, repos, by_repo, today_):
+    """Calendar weeks (Sunday first, 53 of them like GitHub) plus last-30-day repo counts from commit dates."""
+    start = today_ - dt.timedelta(days=(today_.weekday() + 1) % 7 + 52 * 7)
+    per_day = {}; recent = {}; cutoff = today_ - dt.timedelta(days=ACTIVITY_REPO_DAYS)
+    for r in repos:
+        for d in by_repo.get(r["id"], []):
+            if start <= d <= today_: per_day[d] = per_day.get(d, 0) + 1
+            if d > cutoff: recent[r["id"]] = recent.get(r["id"], 0) + 1
+    top = max(per_day.values(), default=0)
+    level = lambda n: 0 if not n else min(4, -(-4 * n // top))  # quartiles of your busiest day, like GitHub
+    days = [start + dt.timedelta(days=i) for i in range((today_ - start).days + 1)]
+    weeks = [[{"date": d.isoformat(), "count": per_day.get(d, 0), "level": level(per_day.get(d, 0))} for d in days[i:i + 7]]
+             for i in range(0, len(days), 7)]
+    flat = [d for w in weeks for d in w]
+    chips = sorted(({"name": r["nameWithOwner"], "url": r["url"], "private": r["isPrivate"], "count": recent[r["id"]]}
+                    for r in repos if r["id"] in recent), key=lambda r: -r["count"])
+    return {"login": login, "total": sum(per_day.values()), "weeks": weeks,
+            "active_days": sum(1 for d in flat if d["count"]), "streak": current_streak(flat),
+            "repos": chips, "repo_days": ACTIVITY_REPO_DAYS,
+            "fetched": dt.datetime.now().isoformat(timespec="seconds")}
+
+def fetch_activity():
+    v = gh_graphql(REPOS_QUERY)["viewer"]; today_ = today()
+    year_ago = (today_ - dt.timedelta(days=366)).isoformat()
+    repos = [r for r in v["repositories"]["nodes"] if r["pushedAt"][:10] >= year_ago]  # never pushed this year = no commits to count
+    since = dt.datetime.combine(today_ - dt.timedelta(days=(today_.weekday() + 1) % 7 + 52 * 7), dt.time.min).astimezone().astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return build_activity(v["login"], repos, commit_days([r["id"] for r in repos], v["id"], since) if repos else {}, today_)
+
+def github_activity(refresh=False):
+    """Your pushed-commit graph, cached. Failures come back as {'error': ...}
+    (with the last good data, marked stale, when there is some) so the page can still render."""
+    with _activity_lock:
+        fresh = _activity["data"] and time.time() - _activity["at"] < ACTIVITY_TTL
+        if fresh and not refresh: return _activity["data"]
+        try:
+            _activity["data"] = fetch_activity(); _activity["at"] = time.time()
+            return _activity["data"]
+        except RuntimeError as e:
+            if _activity["data"]: return {**_activity["data"], "stale": True, "error": str(e)}
+            return {"error": str(e)}
+
 def reference_copy(text, fname, why=""):
     """Turn the '- key: value' header into YAML frontmatter, so Obsidian shows it as Properties."""
     lines = text.split("\n"); meta = {}; i = 1
@@ -272,6 +361,7 @@ class H(BaseHTTPRequestHandler):
             if u.path == "/api/version": return self._send(200, {"version": VERSION, "started": STARTED, "pid": os.getpid()})
             if u.path == "/api/projects": return self._send(200, {"projects": active_projects()})
             if u.path == "/api/project": return self._send(200, project_detail(q.get("name", [""])[0]))
+            if u.path == "/api/activity": return self._send(200, github_activity(q.get("refresh") == ["1"]))
             if u.path == "/api/notes": return self._send(200, list_notes())
             if u.path == "/api/note":
                 p = safe_note(q["f"][0]); return self._send(200, {"text": open(p, encoding="utf-8", errors="replace").read()})

@@ -2,15 +2,15 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>RawNotes Triage version __VERSION__</title>
 <style>
-:root{--bg:#f6f5f1;--panel:#fff;--ink:#1d1d1b;--mute:#6c6a63;--line:#e2e0d8;--acc:#2d63c8;--ok:#1f8a4c;--warn:#b7791f;--bad:#c0392b;--soft:#eef1f8}
-@media(prefers-color-scheme:dark){:root{--bg:#171715;--panel:#1f1f1c;--ink:#ece9e1;--mute:#9b988f;--line:#33322d;--acc:#7ea2ea;--ok:#5fc48a;--warn:#e0a94c;--bad:#ea6b5b;--soft:#26292f}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,sans-serif}
+:root{--bg:#f6f5f1;--panel:#fff;--ink:#1d1d1b;--mute:#6c6a63;--line:#e2e0d8;--acc:#2d63c8;--ok:#1f8a4c;--warn:#b7791f;--bad:#c0392b;--soft:#eef1f8;--g0:#ebedf0;--g1:#9be9a8;--g2:#40c463;--g3:#30a14e;--g4:#216e39}
+@media(prefers-color-scheme:dark){:root{--bg:#171715;--panel:#1f1f1c;--ink:#ece9e1;--mute:#9b988f;--line:#33322d;--acc:#7ea2ea;--ok:#5fc48a;--warn:#e0a94c;--bad:#ea6b5b;--soft:#26292f;--g0:#2a2a26;--g1:#0e4429;--g2:#006d32;--g3:#26a641;--g4:#39d353}}
+*{box-sizing:border-box}body{height:100vh;display:flex;flex-direction:column;margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,sans-serif}
 header{display:flex;gap:16px;align-items:center;padding:10px 18px;border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
 header h1{font-size:16px;margin:0}header .stats{color:var(--mute);font-size:13px}header .stats b{color:var(--ink)}
 .inflight{padding:8px 18px;border-bottom:1px solid var(--line);display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:13px}
 .inflight .chip{border:1px solid var(--line);border-radius:14px;padding:2px 10px;background:var(--panel);cursor:pointer}
 .chip.late{border-color:var(--bad);color:var(--bad)}.chip.soon{border-color:var(--warn)}.chip.done{opacity:.55;text-decoration:line-through}
-main{display:grid;grid-template-columns:360px 1fr;height:calc(100vh - 92px)}
+main{display:grid;grid-template-columns:360px 1fr;flex:1;min-height:0}
 aside{border-right:1px solid var(--line);overflow:auto;background:var(--panel)}
 .tabs{display:flex;border-bottom:1px solid var(--line)}.tabs button{flex:1;border:0;background:none;padding:8px;color:var(--mute);cursor:pointer;font:inherit}
 .tabs button.on{color:var(--ink);border-bottom:2px solid var(--acc)}
@@ -36,15 +36,30 @@ article{overflow:auto;padding:18px 28px;max-width:900px}
 article h1{font-size:22px}article h2{font-size:16px;margin-top:22px;border-bottom:1px solid var(--line)}article h3{font-size:14px}
 article pre{background:var(--soft);padding:10px;border-radius:6px;overflow:auto}article code{background:var(--soft);padding:1px 4px;border-radius:4px}
 article a{color:var(--acc)}article ul{padding-left:20px}article .meta{color:var(--mute)}
+.activity{padding:8px 18px;border-bottom:1px solid var(--line);display:flex;gap:6px 24px;flex-wrap:wrap;align-items:flex-start;font-size:12px;color:var(--mute)}
+.activity .graph{overflow-x:auto;max-width:100%;padding-bottom:2px}
+.activity .months,.activity .cells{display:grid;grid-auto-columns:10px;column-gap:3px}
+.activity .months{height:14px;line-height:14px;white-space:nowrap}
+.activity .cells{grid-template-rows:repeat(7,10px);grid-auto-flow:column;gap:3px}
+.activity .cells i{width:10px;height:10px;border-radius:2px;background:var(--g0);outline:1px solid rgba(128,128,128,.12);outline-offset:-1px}
+.activity .cells i.l1{background:var(--g1)}.activity .cells i.l2{background:var(--g2)}.activity .cells i.l3{background:var(--g3)}.activity .cells i.l4{background:var(--g4)}
+.activity .cells i.today{outline:1px solid var(--ink)}
+.activity .side{flex:1;min-width:220px}.activity .side b{color:var(--ink)}
+.activity .legend{display:inline-flex;gap:3px;align-items:center;margin-left:8px}.activity .legend i{width:10px;height:10px;border-radius:2px;display:inline-block}
+.activity .repos{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px}.activity .repos>span{white-space:nowrap}
+.activity .repos a{border:1px solid var(--line);border-radius:12px;padding:1px 9px;background:var(--panel);color:var(--ink);text-decoration:none}
+.activity .repos a:hover{border-color:var(--acc)}.activity .repos a em{font-style:normal;color:var(--mute)}
+.activity .err{color:var(--bad)}.activity button{font:inherit;font-size:11px;padding:0 8px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink);cursor:pointer}
 .copy-path{cursor:pointer}.copy-path:hover{text-decoration:underline}
 .empty{color:var(--mute);padding:40px;text-align:center}
 #back{display:none}
 @media(max-width:800px){ /* phone: list and note are two pages, toggled by body.note */
-#hint{display:none}main{display:block;height:auto}aside{border-right:0}section{display:none}
+body{height:auto;display:block}#hint{display:none}main{display:block;height:auto}aside{border-right:0}section{display:none}
 body.note aside{display:none}body.note section{display:block;overflow:visible}
 #back{display:block;margin:10px 16px;min-height:44px}
 .tabs{overflow-x:auto}.tabs button{flex:1 0 auto;min-height:44px;white-space:nowrap}
 .row{min-width:0}.row .t,.row .m{overflow-wrap:anywhere}.row-copy{min-height:32px}
+.activity{padding:8px 16px}.activity .side{min-width:0;width:100%}.activity .repos{flex-wrap:nowrap;overflow-x:auto}.activity .repos a{white-space:nowrap}
 .inflight{overflow-x:auto;flex-wrap:nowrap}.inflight>b,.inflight .chip{white-space:nowrap}.inflight .chip{cursor:default}
 .decide{position:fixed;left:0;right:0;bottom:0;z-index:2;max-height:65vh;overflow:auto;border-top:1px solid var(--line);border-bottom:0;padding:10px 16px calc(10px + env(safe-area-inset-bottom))}
 .decide .btns{display:grid;grid-template-columns:1fr 1fr}.decide .btns button.act{min-height:44px;padding:6px 10px}
@@ -54,6 +69,7 @@ article{overflow:visible;padding:14px 16px 240px;overflow-wrap:anywhere}article 
 </style></head><body>
 <header><h1>RawNotes Triage version __VERSION__</h1><div class="stats" id="stats"></div>
 <span style="flex:1"></span><span class="stats" id="hint">Keys: j/k next/prev · p promote · d durable · a archive · c keep · y copy path · Enter apply</span></header>
+<div class="activity" id="activity"><span>Loading GitHub activity…</span></div>
 <div class="inflight" id="inflight"></div>
 <main>
 <aside><div class="tabs"><button class="on" data-tab="live">Backlog</button><button data-tab="done">Done</button><button data-tab="projects">Active Projects</button></div><div id="list"></div></aside>
@@ -82,6 +98,26 @@ function md(src){ // small markdown renderer: headings, lists, code, bold/italic
     if(inList&&/^\s{2,}/.test(raw)){out[out.length-1]=out[out.length-1].replace(/<\/li>$/,' '+inline(raw.trim())+'</li>');continue}
     para.push(raw)}
   flush();return out.join('\n')}
+const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const dayOf=d=>new Date(d+'T00:00:00');
+async function loadActivity(refresh){
+  try{const r=await fetch('/api/activity'+(refresh?'?refresh=1':''));renderActivity(await r.json())}
+  catch(e){renderActivity({error:'Could not reach the triage server.'})}
+}
+function renderActivity(a){const el=$('#activity');
+  const retry='<button type="button" id="actRefresh">Refresh</button>';
+  if(!a.weeks){el.innerHTML=`<span class="err">GitHub activity unavailable: ${esc(a.error)}</span> ${retry}`;$('#actRefresh').onclick=()=>loadActivity(true);return}
+  const todayStr=new Date().toLocaleDateString('sv');let lastMonth=-1;
+  const months=a.weeks.map((w,i)=>{const m=dayOf(w[0].date).getMonth();if(m===lastMonth)return'';lastMonth=m;return`<span style="grid-column:${i+1}">${MONTHS[m]}</span>`}).join('');
+  const cells=a.weeks.map((w,i)=>w.map(d=>`<i class="l${d.level}${d.date===todayStr?' today':''}" style="grid-column:${i+1};grid-row:${dayOf(d.date).getDay()+1}" title="${d.count} commit${d.count===1?'':'s'} pushed on ${MONTHS[dayOf(d.date).getMonth()]} ${dayOf(d.date).getDate()}, ${dayOf(d.date).getFullYear()}"></i>`).join('')).join('');
+  const repos=a.repos.map(r=>`<a href="${esc(r.url)}" target="_blank" rel="noopener noreferrer" title="${esc(r.name)} · ${r.count} commit${r.count===1?'':'s'} in the last ${a.repo_days} days${r.private?' · private':''}">${r.private?'🔒 ':''}${esc(r.name.split('/').pop())} <em>${r.count}</em></a>`).join('');
+  el.innerHTML=`<div class="graph"><div class="months" style="grid-template-columns:repeat(${a.weeks.length},10px)">${months}</div><div class="cells">${cells}</div></div>
+  <div class="side"><div><b>${a.total}</b> commits pushed in the last year · <b>${a.active_days}</b> active days · streak <b>${a.streak}</b>d
+    <span class="legend">Less ${[0,1,2,3,4].map(n=>`<i style="background:var(--g${n})"></i>`).join('')} More</span> ${retry}
+    ${a.error?`<span class="err"> · showing saved data (${esc(a.error)})</span>`:''}</div>
+  <div class="repos"><span>Pushed in the last ${a.repo_days} days:</span>${repos||'<span>no commits yet</span>'}</div></div>`;
+  $('#actRefresh').onclick=()=>loadActivity(true);
+  const g=el.querySelector('.graph');g.scrollLeft=g.scrollWidth}
 async function load(keep){if(tab==='projects')return loadProjects();const requestedTab=tab;const r=await fetch('/api/notes');data=await r.json();if(tab!==requestedTab)return;
   const live=data.live;const stale=live.filter(n=>n.stale).length;
   $('#stats').innerHTML=`<b>${live.length}</b> live · <b>${live.filter(n=>n.status==='open').length}</b> open · <b>${live.filter(n=>n.status==='cooking').length}</b> cooking · <b>${data.done.length}</b> done`+(stale?` · <span class="stale">${stale} stale (&gt;60d)</span>`:'');
@@ -201,5 +237,5 @@ document.addEventListener('keydown',e=>{if(e.target.matches('input,textarea,sele
   else if(e.key==='y'){const pathEl=$('#detailPath');if(i>=0&&pathEl&&items[i].abs_path)copyPath(items[i].abs_path,pathEl)}
   else if(tab==='live'&&sel){const slug=sel.replace(/^\d{4}-\d{2}-\d{2}-/,'').replace(/\.md$/,'');
     if(e.key==='p')setMode('promote',slug);else if(e.key==='d')setMode('durable',slug);else if(e.key==='a')setMode('archive',slug);else if(e.key==='c')setMode('keep',slug);else if(e.key==='Enter')apply()}});
-load();
+load();loadActivity();setInterval(()=>loadActivity(),600000);
 </script></body></html>

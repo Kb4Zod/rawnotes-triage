@@ -59,3 +59,12 @@ updated pull requests across all states using the optional `gh` CLI and its
 existing authentication. Missing authentication, network access, or history is
 shown explicitly. Refresh reloads the project list and selected project's activity.
 All project inspection is read-only; no fetch, checkout, or repository edits occur.
+
+## GitHub activity strip
+
+Always visible under the heading: a year-long graph of commits you have pushed to GitHub, totals
+and streak, and the repos you pushed to in the last 30 days (🔒 = private). It counts commits on
+the default branch of repos you own or collaborate on, so private repos are included and local-only
+repos (like RawNotes) never show up. Commits on side branches count once merged. Uses `gh api graphql`
+and the same sign-in as the PR list, so no new setup. Cached 10 minutes (`ACTIVITY_TTL`); the
+Refresh button bypasses the cache.
