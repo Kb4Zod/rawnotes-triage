@@ -21,6 +21,18 @@ aside{border-right:1px solid var(--line);overflow:auto;background:var(--panel)}
 .badge.open{color:var(--acc);border-color:var(--acc)}.badge.cooking{color:var(--warn);border-color:var(--warn)}
 .badge.dead{color:var(--bad);border-color:var(--bad)}.badge.promoted{color:var(--ok);border-color:var(--ok)}
 .stale{color:var(--bad);font-weight:600}
+.badge.nodone{color:var(--bad);border-color:var(--bad)}
+.dod{border:1px solid var(--line);border-left:4px solid var(--ok);border-radius:6px;padding:8px 14px;margin:12px 0;background:var(--panel)}
+.dod h2{margin:0 0 4px;border:0;font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--mute)}
+.dod p{margin:0}.dod.missing{border-color:var(--bad);border-left-color:var(--bad)}.dod.missing h2,.dod.missing p{color:var(--bad)}
+.dod .meta{font-size:12px;margin-top:4px}
+.dod .dodhead{display:flex;justify-content:space-between;align-items:center;gap:8px}.dod .dodhead h2{margin:0}
+.dod .dodhead .act{padding:1px 10px;font-size:12px}
+.dod textarea{width:100%;font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);resize:vertical}
+.dod .dodbtns{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}.dod .dodbtns .err{color:var(--bad);font-size:13px}
+.dod.confirm{border-left-color:var(--warn)}.dod .dodcmp{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:6px}
+.dod .dodcmp b{font-size:12px;color:var(--mute)}.dod .dodcmp .old{text-decoration:line-through;color:var(--mute)}
+.dod .dodbtns .act.go{background:var(--ok);color:#fff;border-color:var(--ok)}
 section{display:grid;grid-template-rows:auto 1fr;overflow:hidden}
 .decide{padding:12px 18px;border-bottom:1px solid var(--line);background:var(--panel)}
 .decide .btns{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0}
@@ -50,6 +62,11 @@ article a{color:var(--acc)}article ul{padding-left:20px}article .meta{color:var(
 .activity .repos a{border:1px solid var(--line);border-radius:12px;padding:1px 9px;background:var(--panel);color:var(--ink);text-decoration:none}
 .activity .repos a:hover{border-color:var(--acc)}.activity .repos a em{font-style:normal;color:var(--mute)}
 .activity .err{color:var(--bad)}.activity button{font:inherit;font-size:12.65px;padding:0 8px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink);cursor:pointer}
+.repohead{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px}
+.crumbs{margin:2px 0 10px;color:var(--mute);overflow-wrap:anywhere}.crumbs a{color:var(--acc);text-decoration:none}
+.repofiles{border:1px solid var(--line);border-radius:6px;background:var(--panel);overflow:hidden}
+.repofiles a{display:grid;grid-template-columns:24px 1fr auto;gap:6px;padding:6px 12px;border-bottom:1px solid var(--line);color:var(--ink);text-decoration:none;align-items:center}
+.repofiles a:last-child{border-bottom:0}.repofiles a:hover{background:var(--soft)}.repofiles em{font-style:normal;color:var(--mute);font-size:12px}
 .copy-path{cursor:pointer}.copy-path:hover{text-decoration:underline}
 .empty{color:var(--mute);padding:40px;text-align:center}
 #back{display:none}
@@ -59,6 +76,7 @@ body.note aside{display:none}body.note section{display:block;overflow:visible}
 #back{display:block;margin:10px 16px;min-height:44px}
 .tabs{overflow-x:auto}.tabs button{flex:1 0 auto;min-height:44px;white-space:nowrap}
 .row{min-width:0}.row .t,.row .m{overflow-wrap:anywhere}.row-copy{min-height:32px}
+.repofiles a{min-height:44px}.repohead .act{min-height:44px}.dod textarea{font-size:16px}.dod .act{min-height:44px}.dod .dodhead .act{min-height:36px}.dod .dodcmp{grid-template-columns:1fr}
 .activity{padding:8px 16px}.activity .side{min-width:0;width:100%}.activity .repos{flex-wrap:nowrap;overflow-x:auto}.activity .repos a{white-space:nowrap}
 .inflight{overflow-x:auto;flex-wrap:nowrap}.inflight>b,.inflight .chip{white-space:nowrap}.inflight .chip{cursor:default}
 .decide{position:fixed;left:0;right:0;bottom:0;z-index:2;max-height:65vh;overflow:auto;border-top:1px solid var(--line);border-bottom:0;padding:10px 16px calc(10px + env(safe-area-inset-bottom))}
@@ -98,6 +116,38 @@ function md(src){ // small markdown renderer: headings, lists, code, bold/italic
     if(inList&&/^\s{2,}/.test(raw)){out[out.length-1]=out[out.length-1].replace(/<\/li>$/,' '+inline(raw.trim())+'</li>');continue}
     para.push(raw)}
   flush();return out.join('\n')}
+let repoState=null;const enc=encodeURIComponent;
+const ghUrl=u=>/^https:\/\/github\.com\//.test(u||'')?u:'#';
+const fmtSize=n=>n<1024?n+' B':n<1048576?(n/1024).toFixed(1)+' KB':(n/1048576).toFixed(1)+' MB';
+function closeRepo(){repoState=null;
+  if(sel)return tab==='projects'?showProject(sel):show(sel);
+  $('#view').innerHTML='<div class="empty">Pick something from the list.</div>'}
+const repoBar=url=>`<div class="repohead"><button class="act" id="repoClose" type="button">← Back</button><a href="${esc(ghUrl(url))}" target="_blank" rel="noopener noreferrer">Open on GitHub ↗</a></div>`;
+function crumbs(name,path){const segs=path?path.split('/'):[];
+  return `<div class="crumbs"><a href="#" data-rp="">${esc(name)}</a>`+segs.map((sg,i)=>i===segs.length-1?` / <b>${esc(sg)}</b>`:` / <a href="#" data-rp="${esc(segs.slice(0,i+1).join('/'))}">${esc(sg)}</a>`).join('')+'</div>'}
+const fileList=es=>es.length?`<div class="repofiles">${es.map(e=>`<a href="#" data-rp="${esc(e.path)}"><span>${e.type==='dir'?'📁':'📄'}</span><span>${esc(e.name)}${e.type==='dir'?'/':''}</span><em>${e.type==='file'?fmtSize(e.size):''}</em></a>`).join('')}</div>`:'<p class="meta">Empty.</p>';
+function repoHomeHtml(name,j){const r=j.repo,note=k=>j.errors[k]?`<p class="meta">Couldn't load: ${esc(j.errors[k])}</p>`:'';
+  const none=(l,t)=>l.length?'':`<p class="meta">${t}</p>`;
+  return repoBar(r.url)+`<h1>${r.private?'🔒 ':''}${esc(r.name)}</h1>
+  <p class="meta">${esc(r.description||'No description')} · default branch <code>${esc(r.default_branch)}</code> · last push ${esc(r.pushed_at)}${r.archived?' · archived':''}</p>
+  <h2>Files</h2>${fileList(j.tree)}${note('tree')}
+  <h2>${j.readme?esc(j.readme.name):'README'}</h2>${j.readme?md(j.readme.text):'<p class="meta">No README.</p>'}
+  <h2>Recent commits</h2>${j.commits.length?'<ul>'+j.commits.map(c=>`<li>${esc(c.title)} <span class="meta">· ${esc(c.date)} · ${esc(c.sha)} · ${esc(c.author)}</span></li>`).join('')+'</ul>':none(j.commits,'No commits.')}${note('commits')}
+  <h2>Pull requests</h2>${j.prs.length?'<ul>'+j.prs.map(x=>`<li>#${x.number} ${esc(x.title)} <span class="badge">${esc(x.state)}</span> <span class="meta">${esc(x.updated)} · ${esc(x.author)}</span></li>`).join('')+'</ul>':none(j.prs,'No pull requests.')}${note('prs')}
+  <h2>Open issues</h2>${j.issues.length?'<ul>'+j.issues.map(x=>`<li>#${x.number} ${esc(x.title)} <span class="meta">${esc(x.updated)} · ${esc(x.author)} · ${x.comments} comment${x.comments===1?'':'s'}</span></li>`).join('')+'</ul>':none(j.issues,'No open issues.')}${note('issues')}`}
+function repoPathHtml(name,path,j){let body;
+  if(j.kind==='dir')body=fileList(j.entries);
+  else if(j.too_large)body=`<p class="meta">Too large to show here (${fmtSize(j.size)}). <a href="${esc(ghUrl(j.url))}" target="_blank" rel="noopener noreferrer">Open on GitHub ↗</a></p>`;
+  else if(j.binary||j.kind==='other')body=`<p class="meta">${j.binary?'Binary file':'Not a regular file ('+esc(j.type)+')'}. <a href="${esc(ghUrl(j.url))}" target="_blank" rel="noopener noreferrer">Open on GitHub ↗</a></p>`;
+  else body=/\.(md|markdown)$/i.test(j.name)?md(j.text):`<pre>${esc(j.text)}</pre>`;
+  return repoBar(j.url||`https://github.com/${name}`)+crumbs(name,path)+(j.kind==='file'?`<div class="meta">${esc(j.name)} · ${fmtSize(j.size)}</div>`:'')+body}
+async function openRepo(name,path,nav){path=path||'';const st=repoState={name,path};page(nav);
+  const v=$('#view');v.innerHTML=`<div class="empty">Loading ${esc(name)}…</div>`;v.scrollTop=0;if(!nav)scrollTo(0,0);
+  const wire=()=>{$('#repoClose').onclick=closeRepo;v.querySelectorAll('[data-rp]').forEach(a=>a.onclick=e=>{e.preventDefault();openRepo(name,a.dataset.rp)})};
+  try{const r=await fetch(path?`/api/repo/path?name=${enc(name)}&path=${enc(path)}`:`/api/repo?name=${enc(name)}`);const j=await r.json();
+    if(repoState!==st)return;if(j.error)throw Error(j.error);
+    v.innerHTML=path?repoPathHtml(name,path,j):repoHomeHtml(name,j);wire()}
+  catch(e){if(repoState!==st)return;v.innerHTML=repoBar(`https://github.com/${name}`)+`<p class="stale">${esc(e.message)}</p>`;wire()}}
 const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const dayOf=d=>new Date(d+'T00:00:00');
 async function loadActivity(refresh){
@@ -110,13 +160,14 @@ function renderActivity(a){const el=$('#activity');
   const todayStr=new Date().toLocaleDateString('sv');let lastMonth=-1;
   const months=a.weeks.map((w,i)=>{const m=dayOf(w[0].date).getMonth();if(m===lastMonth)return'';lastMonth=m;return`<span style="grid-column:${i+1}">${MONTHS[m]}</span>`}).join('');
   const cells=a.weeks.map((w,i)=>w.map(d=>`<i class="l${d.level}${d.date===todayStr?' today':''}" style="grid-column:${i+1};grid-row:${dayOf(d.date).getDay()+1}" title="${d.count} commit${d.count===1?'':'s'} pushed on ${MONTHS[dayOf(d.date).getMonth()]} ${dayOf(d.date).getDate()}, ${dayOf(d.date).getFullYear()}"></i>`).join('')).join('');
-  const repos=a.repos.map(r=>`<a href="${esc(r.url)}" target="_blank" rel="noopener noreferrer" title="${esc(r.name)} · ${r.count} commit${r.count===1?'':'s'} in the last ${a.repo_days} days${r.private?' · private':''}">${r.private?'🔒 ':''}${esc(r.name.split('/').pop())} <em>${r.count}</em></a>`).join('');
+  const repos=a.repos.map(r=>`<a href="${esc(r.url)}" data-repo="${esc(r.name)}" target="_blank" rel="noopener noreferrer" title="${esc(r.name)} · ${r.count} commit${r.count===1?'':'s'} in the last ${a.repo_days} days${r.private?' · private':''}">${r.private?'🔒 ':''}${esc(r.name.split('/').pop())} <em>${r.count}</em></a>`).join('');
   el.innerHTML=`<div class="graph"><div class="months" style="grid-template-columns:repeat(${a.weeks.length},10px)">${months}</div><div class="cells">${cells}</div></div>
   <div class="side"><div><b>${a.total}</b> commits pushed in the last year · <b>${a.active_days}</b> active days · streak <b>${a.streak}</b>d
     <span class="legend">Less ${[0,1,2,3,4].map(n=>`<i style="background:var(--g${n})"></i>`).join('')} More</span> ${retry}
     ${a.error?`<span class="err"> · showing saved data (${esc(a.error)})</span>`:''}</div>
   <div class="repos"><span>Pushed in the last ${a.repo_days} days:</span>${repos||'<span>no commits yet</span>'}</div></div>`;
   $('#actRefresh').onclick=()=>loadActivity(true);
+  el.querySelectorAll('[data-repo]').forEach(a=>a.onclick=e=>{e.preventDefault();openRepo(a.dataset.repo,'',true)});
   const g=el.querySelector('.graph');g.scrollLeft=g.scrollWidth}
 async function load(keep){if(tab==='projects')return loadProjects();const requestedTab=tab;const r=await fetch('/api/notes');data=await r.json();if(tab!==requestedTab)return;
   const live=data.live;const stale=live.filter(n=>n.stale).length;
@@ -139,7 +190,7 @@ function renderList(){if(tab==='projects'){projectList();return}const items=tab=
     b.onclick=e=>{e.stopPropagation();copyPath(b.dataset.path,b)};
     b.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.stopPropagation();copyPath(b.dataset.path,b)}};
   })}
-async function show(f,nav){sel=f;mode=null;page(nav);renderList();
+async function show(f,nav){sel=f;mode=null;repoState=null;page(nav);renderList();
   const r=await fetch('/api/note?f='+encodeURIComponent(f));const j=await r.json();
   const n=(tab==='live'?data.live:data.done).find(x=>x.file===f)||{};
   if(tab==='projects'||sel!==f)return;
@@ -184,38 +235,68 @@ async function apply(){if(!mode||!sel)return;const g=id=>{const e=document.getEl
   const idx=data.live.findIndex(n=>n.file===sel);const next=data.live[idx+1]||data.live[idx-1];
   if(mode==='keep'){await load(true)}else{sel=next?next.file:null;await load(true)}}
 function projectList(){
-  $('#list').innerHTML=projects.length?projects.map((p,i)=>`<div class="row ${sel===p.name?'sel':''}" data-project="${i}" role="button" tabindex="0"><div class="t">${esc(p.name)}</div><span style="display:flex;gap:6px;align-items:center"><span class="badge">${p.repo?'Git':'Folder'}</span><button class="act row-copy" type="button" data-path="${esc(p.abs_path)}" title="Copy full path" style="padding:1px 8px;font-size:11px">Copy</button></span><div class="m">${esc(p.path)}</div></div>`).join(''):'<div class="empty">No active projects yet. Promote a note to active to start one.</div>';
+  $('#list').innerHTML=projects.length?projects.map((p,i)=>`<div class="row ${sel===p.name?'sel':''}" data-project="${i}" role="button" tabindex="0"><div class="t">${esc(p.name)}</div><span style="display:flex;gap:6px;align-items:center">${p.done_defined?'':'<span class="badge nodone" title="No definition of done yet">No done defined</span>'}<span class="badge">${p.repo?'Git':'Folder'}</span><button class="act row-copy" type="button" data-path="${esc(p.abs_path)}" title="Copy full path" style="padding:1px 8px;font-size:11px">Copy</button></span><div class="m">${esc(p.path)}</div></div>`).join(''):'<div class="empty">No active projects yet. Promote a note to active to start one.</div>';
   document.querySelectorAll('[data-project]').forEach(el=>{el.onclick=()=>showProject(projects[Number(el.dataset.project)].name,true);el.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();el.click()}}});
   document.querySelectorAll('.row-copy').forEach(b=>{
     b.onclick=e=>{e.stopPropagation();copyPath(b.dataset.path,b)};
     b.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.stopPropagation();copyPath(b.dataset.path,b)}};
   });
 }
+function renderDodCount(){const missing=projects.filter(p=>!p.done_defined).length,el=$('#dodCount');if(!el)return;
+  el.innerHTML=missing?`<span class="stale">${missing} of ${projects.length} have no definition of done</span>`:`<span style="color:var(--ok)">All ${projects.length} have a definition of done</span>`}
+const oneLine=t=>t.replace(/\s+/g,' ').trim();
+function renderDod(p,mode,draft){const el=$('#dod');if(!el)return;const d=p.done,file=d.source||'NOTES.md',old=d.defined?d.text:'';
+  if(mode==='edit'){
+    el.innerHTML=`<div class="dod ${d.defined?'':'missing'}"><div class="dodhead"><h2>Definition of done: editing</h2></div>
+      <textarea id="dodText" rows="3" maxlength="600" placeholder="One or two sentences: what does shipped look like?">${esc(draft??old)}</textarea>
+      <div class="dodbtns"><button class="act" id="dodReview">Review change</button><button class="act" id="dodCancel">Cancel</button><span class="err" id="dodErr"></span></div>
+      <div class="meta">Saved to ${esc(file)}. Nothing is written until you confirm on the next step.</div></div>`;
+    const t=$('#dodText');t.focus();t.setSelectionRange(t.value.length,t.value.length);
+    $('#dodCancel').onclick=()=>renderDod(p);
+    $('#dodReview').onclick=()=>{const next=oneLine(t.value);
+      if(!next){$('#dodErr').textContent='Write what done looks like first.';return}
+      if(next===old){$('#dodErr').textContent='No change to save.';return}
+      renderDod(p,'confirm',next)};return}
+  if(mode==='confirm'){
+    el.innerHTML=`<div class="dod confirm"><div class="dodhead"><h2>Confirm change to ${esc(file)}</h2></div>
+      <div class="dodcmp"><div><b>BEFORE</b><p class="old">${old?esc(old):'(not set)'}</p></div><div><b>AFTER</b><p>${esc(draft)}</p></div></div>
+      <div class="dodbtns"><button class="act go" id="dodSave">Confirm and save</button><button class="act" id="dodBack">Back to editing</button><span class="err" id="dodErr"></span></div></div>`;
+    $('#dodBack').onclick=()=>renderDod(p,'edit',draft);
+    $('#dodSave').onclick=async()=>{const b=$('#dodSave');b.disabled=true;b.textContent='Saving…';
+      try{const r=await fetch('/api/done',{method:'POST',body:JSON.stringify({name:p.name,text:draft,expected:old})});const j=await r.json();
+        if(j.error){$('#dodErr').textContent=j.error;b.disabled=false;b.textContent='Confirm and save';return}
+        const pr=await fetch('/api/projects');projects=(await pr.json()).projects;projectList();renderDodCount();showProject(p.name)}
+      catch(e){$('#dodErr').textContent='Could not reach the triage server.';b.disabled=false;b.textContent='Confirm and save'}};return}
+  el.innerHTML=d.defined?`<div class="dod"><div class="dodhead"><h2>Definition of done</h2><button class="act" id="dodEdit">Edit</button></div><p>${esc(d.text)}</p><div class="meta">From ${esc(d.source)}</div></div>`
+    :`<div class="dod missing"><div class="dodhead"><h2>Definition of done: not filled in</h2><button class="act" id="dodEdit">Fill in</button></div><p>What does done look like for this project? It will be saved to <code>${esc(file)}</code>.</p></div>`;
+  $('#dodEdit').onclick=()=>renderDod(p,'edit')}
 async function loadProjects(){
   mode=null;$('#hint').textContent='Active projects · j/k next/prev · y copy path · select a project for details';
-  $('#decide').innerHTML='<b>Active Projects</b> <button class="act" id="refreshProjects">Refresh</button>';
+  $('#decide').innerHTML='<b>Active Projects</b> <button class="act" id="refreshProjects">Refresh</button> <span id="dodCount"></span>';
   $('#refreshProjects').onclick=loadProjects;
   $('#list').innerHTML='<div class="empty">Loading projects…</div>';
   try{const r=await fetch('/api/projects');if(!r.ok)throw Error('Could not load active projects.');const j=await r.json();if(tab!=='projects')return;
     projects=j.projects;projectList();
+    renderDodCount();
     if(projects.length)await showProject(projects.some(p=>p.name===sel)?sel:projects[0].name);
     else $('#view').innerHTML='<div class="empty">Your active project folders will appear here.</div>';
   }catch(e){if(tab==='projects'){$('#list').innerHTML='<div class="empty">Projects unavailable.</div>';$('#view').textContent=e.message}}
 }
 async function showProject(name,nav){
-  sel=name;mode=null;page(nav);projectList();const request=++projectRequest;
+  sel=name;mode=null;repoState=null;page(nav);projectList();const request=++projectRequest;
   $('#view').innerHTML='<div class="empty">Loading repository activity…</div>';
   try{const r=await fetch('/api/project?name='+encodeURIComponent(name));if(!r.ok)throw Error('Could not load this project.');const p=await r.json();
     if(tab!=='projects'||request!==projectRequest)return;
     const link=(url,label)=>/^https:\/\/github\.com\//.test(url||'')?`<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>`:esc(label);
     const commits=items=>items.map(c=>`<li>${esc(c.title)} <span class="meta">· ${esc(c.date)} · ${esc(c.sha)}</span></li>`).join('');
     $('#view').innerHTML=`<div class="meta"><span class="copy-path" id="detailPath" tabindex="0" role="button" title="Click to copy full path" data-path="${esc(p.abs_path)}">${esc(p.abs_path)}</span>${p.branch?' · '+esc(p.branch):''}</div><h1>${esc(p.name)}</h1>
-      ${p.remote?'<p>'+link(p.remote,'View repository ↗')+'</p>':''}
+      ${p.repo?`<p><button class="act" id="repoOpen" type="button">Review repository</button> ${link(p.remote,'Open on GitHub ↗')}</p>`:''}
+      <div id="dod"></div>
       <h2>Repository summary</h2><p style="white-space:pre-wrap">${esc(p.summary)}</p>${p.summary_source?`<div class="meta">Excerpt from ${esc(p.summary_source)}</div>`:''}
       <h2>Recent pull requests</h2>${p.pr_status?`<p class="meta">${esc(p.pr_status)}</p>`:`<ul>${p.prs.map(pr=>`<li>${link(pr.url,'#'+pr.number+' '+pr.title)} <span class="badge">${esc(pr.mergedAt?'MERGED':pr.state)}</span> <span class="meta">${esc(pr.updatedAt.slice(0,10))}</span></li>`).join('')}</ul>`}
       <h2>Features added</h2><p class="meta">Feature commits on the current branch, from the latest 100 commits.</p>${p.features.length?'<ul>'+commits(p.features)+'</ul>':'<p class="meta">No commits labeled feat: or feat(scope): found.</p>'}
       <h2>Recent commits</h2>${p.commits.length?'<ul>'+commits(p.commits)+'</ul>':'<p class="meta">No Git history available.</p>'}`;
-    $('#view').scrollTop=0;
+    $('#view').scrollTop=0;renderDod(p);if(p.repo)$('#repoOpen').onclick=()=>openRepo(p.repo,'',true);
     const pathEl=$('#detailPath');
     if(pathEl){const go=()=>copyPath(pathEl.dataset.path,pathEl);pathEl.onclick=go;pathEl.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go()}}}
   }catch(e){if(tab==='projects'&&request===projectRequest)$('#view').textContent=e.message}
@@ -227,7 +308,7 @@ async function copyPath(path,el){
   clearTimeout(el._copyTimer);el.textContent='Copied';
   el._copyTimer=setTimeout(()=>{el.textContent=el.dataset.orig},1000);
 }
-document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;mode=null;back();$('#hint').textContent='Keys: j/k next/prev · p promote · d durable · a archive · c keep · y copy path · Enter apply';document.querySelectorAll('.tabs button').forEach(x=>x.classList.toggle('on',x===b));sel=null;load()});
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;mode=null;repoState=null;back();$('#hint').textContent='Keys: j/k next/prev · p promote · d durable · a archive · c keep · y copy path · Enter apply';document.querySelectorAll('.tabs button').forEach(x=>x.classList.toggle('on',x===b));sel=null;load()});
 document.addEventListener('keydown',e=>{if(e.target.matches('input,textarea,select')){if(e.key==='Enter'&&e.target.tagName!=='TEXTAREA'){e.preventDefault();apply()}return}
   if(tab==='projects'){const i=projects.findIndex(p=>p.name===sel);if(e.key==='j'&&projects[i+1])showProject(projects[i+1].name);if(e.key==='k'&&projects[i-1])showProject(projects[i-1].name);
     if(e.key==='y'&&i>=0){const pathEl=$('#detailPath');if(pathEl)copyPath(projects[i].abs_path,pathEl)}return}

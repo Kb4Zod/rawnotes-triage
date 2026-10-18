@@ -197,6 +197,184 @@ class ApiTestCase(unittest.TestCase):
         a = self.get("/api/activity?refresh=1")
         self.assertTrue(a["stale"]); self.assertEqual(a["error"], "network down"); self.assertEqual(a["total"], 1)
 
+    def write(self, project, name, text):
+        with open(os.path.join(self.tmp, "active", project, name), "w", encoding="utf-8") as f: f.write(text)
+
+    def done(self, project):
+        return self.get("/api/project?name=" + project)["done"]
+
+    def test_done_from_promote_line(self):
+        self.make_project("a"); self.write("a", "NOTES.md", "# A\n\n## Plan\n\n- promoted on 2026-10-01\n- definition of done: Ships to the phone.\n- first step:\n")
+        self.assertEqual(self.done("a"), {"defined": True, "text": "Ships to the phone.", "source": "NOTES.md"})
+        self.assertTrue(next(p for p in self.get("/api/projects")["projects"] if p["name"] == "a")["done_defined"])
+
+    def test_done_prose_paragraph_and_heading(self):
+        self.make_project("b"); self.write("b", "NOTES.md", "## Plan\n\nDefinition of done: open it on the phone\nand use it on cell data.\n\nOther text.\n")
+        self.assertEqual(self.done("b")["text"], "open it on the phone and use it on cell data.")
+        self.make_project("c"); self.write("c", "README.md", "# C\n\n## What does done look like?\n\nA working demo.\n\n## Next\n\nstuff\n")
+        self.assertEqual(self.done("c"), {"defined": True, "text": "A working demo.", "source": "README.md"})
+
+    def test_done_missing_blank_or_placeholder_is_not_defined(self):
+        self.make_project("none")
+        self.assertEqual(self.done("none"), {"defined": False, "text": "", "source": None})
+        self.make_project("ph"); self.write("ph", "NOTES.md", "## Plan\n\n- definition of done: <fill in>\n- first step:\n")
+        self.assertEqual(self.done("ph"), {"defined": False, "text": "", "source": "NOTES.md"})  # tells the page which file to edit
+        self.make_project("blank"); self.write("blank", "NOTES.md", "- definition of done:\n- first step: x\n")
+        self.assertFalse(self.done("blank")["defined"])
+        flags = {p["name"]: p["done_defined"] for p in self.get("/api/projects")["projects"]}
+        self.assertEqual(flags, {"none": False, "ph": False, "blank": False})
+
+    def test_done_mention_mid_sentence_is_not_a_definition(self):
+        self.make_project("d"); self.write("d", "README.md", "| Promote | stamps dates and your definition of done |\n")
+        self.assertFalse(self.done("d")["defined"])
+
+    def post_done(self, name, text, expected=""):
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}/api/done", method="POST",
+                                     data=json.dumps({"name": name, "text": text, "expected": expected}).encode())
+        try:
+            with urllib.request.urlopen(req) as r: return r.status, json.loads(r.read())
+        except urllib.error.HTTPError as e: return e.code, json.loads(e.read())
+
+    def read(self, project, name):
+        with open(os.path.join(self.tmp, "active", project, name), encoding="utf-8") as f: return f.read()
+
+    def test_set_done_replaces_promote_line_and_nothing_else(self):
+        self.make_project("a"); self.write("a", "NOTES.md", "# A\n\n## Plan\n\n- promoted on 2026-10-01\n- definition of done: Old goal.\n- first step: go\n")
+        code, r = self.post_done("a", "  New   goal\nline two ", "Old goal.")
+        self.assertEqual((code, r["file"]), (200, "NOTES.md"))
+        self.assertEqual(self.read("a", "NOTES.md"), "# A\n\n## Plan\n\n- promoted on 2026-10-01\n- definition of done: New goal line two\n- first step: go\n")
+        self.assertEqual(self.done("a")["text"], "New goal line two")
+
+    def test_set_done_replaces_whole_prose_paragraph(self):
+        self.make_project("b"); self.write("b", "NOTES.md", "## Plan\n\nDefinition of done: open it on the phone\nand use it on cell data.\n\nOther text.\n")
+        self.assertEqual(self.post_done("b", "Works on cell data", "open it on the phone and use it on cell data.")[0], 200)
+        self.assertEqual(self.read("b", "NOTES.md"), "## Plan\n\nDefinition of done: Works on cell data\n\nOther text.\n")
+
+    def test_set_done_replaces_heading_section(self):
+        self.make_project("c"); self.write("c", "README.md", "# C\n\n## What does done look like?\n\nA demo.\n\n## Next\n\nstuff\n")
+        self.assertEqual(self.post_done("c", "A shipped app", "A demo.")[0], 200)
+        self.assertEqual(self.read("c", "README.md"), "# C\n\n## What does done look like?\n\nA shipped app\n\n## Next\n\nstuff\n")
+
+    def test_set_done_fills_placeholder_in_place(self):
+        self.make_project("ph"); self.write("ph", "NOTES.md", "## Plan\n\n- definition of done: <fill in>\n- first step:\n")
+        self.assertEqual(self.post_done("ph", "Ships")[0], 200)
+        self.assertEqual(self.read("ph", "NOTES.md"), "## Plan\n\n- definition of done: Ships\n- first step:\n")
+
+    def test_set_done_when_missing_goes_into_plan_or_new_notes(self):
+        self.make_project("p"); self.write("p", "NOTES.md", "# P\n\n## Plan\n\n- promoted on 2026-10-01\n")
+        self.post_done("p", "Ships")
+        self.assertEqual(self.read("p", "NOTES.md"), "# P\n\n## Plan\n\n- definition of done: Ships\n- promoted on 2026-10-01\n")
+        self.make_project("q"); self.write("q", "NOTES.md", "# Q\n\nsome notes\n")
+        self.post_done("q", "Ships")
+        self.assertEqual(self.read("q", "NOTES.md"), "# Q\n\nsome notes\n\n## Plan\n\n- definition of done: Ships\n")
+        self.make_project("n"); self.post_done("n", "Ships")
+        self.assertEqual(self.read("n", "NOTES.md"), "# n\n\n## Plan\n\n- definition of done: Ships\n")
+        self.assertTrue(self.done("n")["defined"])
+
+    def test_set_done_refuses_when_file_changed_since_opened(self):
+        self.make_project("s"); self.write("s", "NOTES.md", "- definition of done: Edited elsewhere\n")
+        code, r = self.post_done("s", "Mine", "What I saw earlier")
+        self.assertEqual(code, 400); self.assertIn("changed on disk", r["error"])
+        self.assertEqual(self.read("s", "NOTES.md"), "- definition of done: Edited elsewhere\n")
+
+    def test_set_done_refuses_empty_placeholder_unknown_and_too_long(self):
+        self.make_project("e"); self.write("e", "NOTES.md", "- definition of done: Keep\n")
+        for text in ("", "   ", "<fill in>", "x" * 601): self.assertEqual(self.post_done("e", text, "Keep")[0], 400)
+        self.assertEqual(self.post_done("nope", "Ships")[0], 400)
+        self.assertEqual(self.post_done("../e", "Ships")[0], 400)
+        self.assertEqual(self.read("e", "NOTES.md"), "- definition of done: Keep\n")
+
+    def test_set_done_will_not_write_through_a_symlink_out_of_the_project(self):
+        self.make_project("l"); outside = os.path.join(self.tmp, "outside.md")
+        with open(outside, "w") as f: f.write("- definition of done: Safe\n")
+        os.symlink(outside, os.path.join(self.tmp, "active", "l", "NOTES.md"))
+        self.assertEqual(self.post_done("l", "Hacked", "Safe")[0], 400)
+        self.assertEqual(open(outside).read(), "- definition of done: Safe\n")
+
+    def stub_rest(self, answers):
+        """Replace the GitHub layer: answers maps a REST path to its JSON (or an Exception to raise)."""
+        calls = []
+        def fake(path):
+            calls.append(path)
+            r = answers[path]
+            if isinstance(r, Exception): raise r
+            return r
+        old, old_login = server.gh_rest, server._viewer["login"]
+        server.gh_rest = fake; server._viewer["login"] = "me"
+        def restore(): server.gh_rest = old; server._viewer["login"] = old_login
+        self.addCleanup(restore)
+        return calls
+
+    def get_err(self, path):
+        try: self.get(path)
+        except urllib.error.HTTPError as e: return e.code, json.loads(e.read())["error"]
+        self.fail("expected an error for " + path)
+
+    def b64(self, text): return __import__("base64").b64encode(text.encode()).decode()
+
+    def test_repo_overview_for_a_private_repo(self):
+        b = "repos/me/secret"
+        self.stub_rest({b: {"full_name": "me/secret", "private": True, "description": "Hidden", "html_url": "https://github.com/me/secret",
+                            "default_branch": "main", "pushed_at": "2026-10-18T01:00:00Z"},
+            b + "/contents": [{"name": "b.txt", "path": "b.txt", "type": "file", "size": 3}, {"name": "docs", "path": "docs", "type": "dir", "size": 0},
+                              {"name": "A.md", "path": "A.md", "type": "file", "size": 9}],
+            b + "/readme": {"name": "README.md", "content": self.b64("# Hi\nthere")},
+            b + "/commits?per_page=15": [{"sha": "abcdef123456", "commit": {"message": "First\n\nbody", "author": {"date": "2026-10-17T00:00:00Z", "name": "N"}}, "author": {"login": "me"}}],
+            b + "/pulls?state=all&per_page=10&sort=updated&direction=desc": [{"number": 2, "title": "P", "state": "closed", "merged_at": "x", "updated_at": "2026-10-16T00:00:00Z", "user": {"login": "me"}}],
+            b + "/issues?state=open&per_page=15": [{"number": 3, "title": "Bug", "updated_at": "2026-10-15T00:00:00Z", "comments": 1, "user": {"login": "me"}},
+                                                    {"number": 2, "title": "P as issue", "updated_at": "2026-10-16T00:00:00Z", "pull_request": {}}]})
+        j = self.get("/api/repo?name=me/secret")
+        self.assertEqual((j["repo"]["private"], j["repo"]["pushed_at"], j["repo"]["default_branch"]), (True, "2026-10-18", "main"))
+        self.assertEqual([e["name"] for e in j["tree"]], ["docs", "A.md", "b.txt"])  # folders first, then by name
+        self.assertEqual(j["readme"], {"name": "README.md", "text": "# Hi\nthere"})
+        self.assertEqual(j["commits"], [{"sha": "abcdef1", "date": "2026-10-17", "title": "First", "author": "me"}])
+        self.assertEqual(j["prs"][0]["state"], "merged")
+        self.assertEqual([i["number"] for i in j["issues"]], [3])  # PRs are not issues
+        self.assertEqual(j["errors"], {})
+
+    def test_repo_overview_survives_empty_repo_and_missing_readme(self):
+        b = "repos/me/empty"; nf = RuntimeError("Not found, or not visible to your GitHub sign-in.")
+        self.stub_rest({b: {"full_name": "me/empty", "private": False, "html_url": "https://github.com/me/empty", "default_branch": "main"},
+                        b + "/contents": nf, b + "/readme": nf, b + "/commits?per_page=15": [],
+                        b + "/pulls?state=all&per_page=10&sort=updated&direction=desc": [], b + "/issues?state=open&per_page=15": []})
+        j = self.get("/api/repo?name=me/empty")
+        self.assertEqual((j["tree"], j["readme"], j["repo"]["description"]), ([], None, ""))
+        self.assertEqual(list(j["errors"]), ["tree"])  # missing README is normal; the rest is reported
+
+    def test_repo_path_dir_file_binary_and_large(self):
+        b = "repos/me/r/contents/"
+        self.stub_rest({b + "notes": [{"name": "x.md", "path": "notes/x.md", "type": "file", "size": 4}],
+                        b + "notes/x.md": {"type": "file", "name": "x.md", "size": 4, "content": self.b64("text"), "html_url": "https://github.com/me/r/blob/main/notes/x.md"},
+                        b + "pic.png": {"type": "file", "name": "pic.png", "size": 5, "content": __import__("base64").b64encode(b"\xff\xfe\x00").decode()},
+                        b + "big.json": {"type": "file", "name": "big.json", "size": 400000, "content": ""},
+                        b + "link": {"type": "symlink", "name": "link", "size": 1}})
+        self.assertEqual(self.get("/api/repo/path?name=me/r&path=notes")["entries"][0]["path"], "notes/x.md")
+        self.assertEqual(self.get("/api/repo/path?name=me/r&path=notes/x.md")["text"], "text")
+        self.assertTrue(self.get("/api/repo/path?name=me/r&path=pic.png")["binary"])
+        self.assertTrue(self.get("/api/repo/path?name=me/r&path=big.json")["too_large"])
+        self.assertEqual(self.get("/api/repo/path?name=me/r&path=link")["kind"], "other")
+
+    def test_repo_viewer_refuses_other_owners_and_odd_names_and_paths(self):
+        calls = self.stub_rest({})
+        for q in ("name=someone/else", "name=me/..", "name=me", "name=me/a/b", "name=", "name=me/x&path=../etc", "name=me/x&path=a//b", "name=me/x&path=%5Cwin"):
+            path = "/api/repo/path?" if "path=" in q else "/api/repo?"
+            self.assertEqual(self.get_err(path + q)[0], 400, q)
+        self.assertEqual(calls, [])  # nothing reached GitHub
+
+    def test_repo_viewer_reports_github_errors(self):
+        nf = RuntimeError("Not found, or not visible to your GitHub sign-in.")
+        self.stub_rest({p: nf for p in ("repos/me/gone", "repos/me/gone/contents", "repos/me/gone/readme", "repos/me/gone/commits?per_page=15",
+                                        "repos/me/gone/pulls?state=all&per_page=10&sort=updated&direction=desc", "repos/me/gone/issues?state=open&per_page=15")})
+        self.assertEqual(self.get_err("/api/repo?name=me/gone"), (400, "Not found, or not visible to your GitHub sign-in."))
+
+    def test_project_detail_names_its_github_repo(self):
+        path = self.make_project("withgit")
+        import subprocess
+        subprocess.run(["git", "init", "-q"], cwd=path, check=True)
+        subprocess.run(["git", "remote", "add", "origin", "git@github.com:me/withgit.git"], cwd=path, check=True)
+        self.assertEqual(self.get("/api/project?name=withgit")["repo"], "me/withgit")
+        self.make_project("nogit"); self.assertEqual(self.get("/api/project?name=nogit")["repo"], "")
+
 
 if __name__ == "__main__":
     unittest.main()

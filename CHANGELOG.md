@@ -4,6 +4,28 @@ The version shows in the page heading ("RawNotes Triage version X.XX") and
 in the startup line. Bump `VERSION` in `server.py` and add an entry here
 with every change. Versions 1.00-1.03 were numbered after the fact from git history.
 
+## 1.13 — 2026-10-18
+- In-app repo viewer, so private repos can be reviewed without a GitHub login in the browser (or on the
+  phone). "Review repository" in a project's detail, and every repo chip in the activity strip, open a
+  read-only view: README, file browser (folders, text files, markdown rendered), recent commits, pull
+  requests and open issues. The server reads it all through `gh` (same sign-in as before); the browser
+  never talks to GitHub. Limited to repos owned by the signed-in gh user. New `GET /api/repo` and
+  `GET /api/repo/path`; responses cached 60 s. Files over 300 KB and binaries link out to GitHub instead.
+
+## 1.12 — 2026-10-18
+- Definition of done is editable from Active Projects: Edit (or Fill in) -> Review change -> a confirm
+  step showing the file and BEFORE/AFTER -> Confirm and save. Writes the line in place (or into
+  NOTES.md's `## Plan`, creating NOTES.md if the project has none). Refuses if the text changed on
+  disk since you opened it, if it is empty or `<fill in>`, or if the file is a symlink out of the
+  project. New `POST /api/done`; each save is logged in triage.log.
+
+## 1.11 — 2026-10-18
+- Active Projects shows each project's definition of done (the line written at Promote, a
+  "Definition of done:" paragraph, or a "What does done look like" section; checked in NOTES.md,
+  PROJECT.md, README.md, SPEC.md). Projects without one, or with the `<fill in>` placeholder, get a
+  red "No done defined" badge in the list, a red callout in the detail pane saying which line to
+  add, and a count in the tab header.
+
 ## 1.10 — 2026-10-18
 - Activity strip text 15% larger (12px → 13.8px).
 
