@@ -4,6 +4,24 @@ The version shows in the page heading ("RawNotes Triage version X.XX") and
 in the startup line. Bump `VERSION` in `server.py` and add an entry here
 with every change. Versions 1.00-1.03 were numbered after the fact from git history.
 
+## 1.10 — 2026-10-18
+- Activity strip text 15% larger (12px → 13.8px).
+
+## 1.09 — 2026-10-18
+- Activity strip now counts commits that reached GitHub, private repos included. GitHub's profile
+  calendar hides private-repo commits unless a profile setting is on, so the graph is built from
+  your own commits on the default branch of every repo you own or collaborate on (pushed in the
+  last year). Local-only repos never appear. Private repos show a lock on their chip.
+  Graph shading is quartiles of your busiest day, like GitHub's.
+
+## 1.08 — 2026-10-18
+- GitHub activity strip under the page heading, always visible: a contribution-style graph for the
+  last year, total, active days, current streak, and chips for the repos you committed to in the
+  last 30 days (click opens the repo). New `/api/activity` endpoint uses `gh api graphql` with your
+  existing sign-in, cached 10 minutes; Refresh button forces a fetch. If GitHub can't be reached
+  the strip says why (or keeps the last good data marked as saved). Page layout is now flex instead
+  of a fixed `100vh - 92px`, so the extra strip doesn't push the triage panes off the screen.
+
 ## 1.07 — 2026-10-07
 - Phone layout (<=800px): backlog list and note are two pages — tap a row to open
   the note, "← Backlog" to return. Decide buttons sit in a bar fixed to the bottom
