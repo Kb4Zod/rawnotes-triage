@@ -7,6 +7,7 @@ import tempfile
 import threading
 import unittest
 import urllib.parse
+import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 
@@ -20,6 +21,7 @@ class ApiTestCase(unittest.TestCase):
         self.notes = os.path.join(self.tmp, "RawNotes")
         os.makedirs(self.notes)
         self.old_notes, self.old_projects, self.old_log = server.NOTES, server.PROJECTS, server.log
+        self.old_log_path = server.LOG_PATH
         server.NOTES = self.notes
         server.PROJECTS = self.tmp
         server.log = lambda msg: None  # never write test actions into the real triage.log
@@ -452,6 +454,137 @@ class ApiTestCase(unittest.TestCase):
         d = self.get("/api/project?name=viaport")
         self.assertEqual((d["repo"], d["remote"]), ("me/viaport", "https://github.com/me/viaport"))
         self.assertEqual(d["gh"]["repo"], "me/viaport")
+
+
+class DecisionTestCase(unittest.TestCase):
+    """2.00: decisions, batch, merge, restore, project status and undo, all through the HTTP API."""
+    _restore, get = ApiTestCase._restore, ApiTestCase.get
+
+    def setUp(self):
+        ApiTestCase.setUp(self)
+        server._undo.clear()
+        self.addCleanup(server._undo.clear)
+
+    def note(self, name, title="A note", status="open", body="Some notes."):
+        path = os.path.join(self.notes, name)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(f"# {title}\n\n- date: {name[:10]}\n- status: {status}\n- type: research\n\n"
+                     f"## What's the question / problem?\n\nWhy {title}?\n\n## Notes\n\n### Detail\n\n{body}\n")
+        return path
+
+    def post(self, path, body, ok=True):
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}", method="POST",
+                                     headers={"Content-Type": "application/json"}, data=json.dumps(body).encode())
+        try:
+            with urllib.request.urlopen(req) as r: data = json.loads(r.read())
+        except urllib.error.HTTPError as e: data = json.loads(e.read())
+        if ok: self.assertNotIn("error", data, data)
+        return data
+
+    def snapshot(self):
+        out = {}
+        for root, _, files in os.walk(self.tmp):
+            for f in files:
+                p = os.path.join(root, f)
+                with open(p, "rb") as fh: out[os.path.relpath(p, self.tmp)] = fh.read()
+        return out
+
+    def test_kill_then_undo_puts_everything_back(self):
+        self.note("2026-10-01-a.md"); before = self.snapshot()
+        r = self.post("/api/action", {"file": "2026-10-01-a.md", "action": "kill", "note": "meh"})
+        self.assertIn("Killed", r["msg"])
+        self.assertTrue(os.path.exists(os.path.join(self.notes, "done", "2026-10-01-a.md")))
+        u = self.post("/api/undo", {})
+        self.assertEqual(u["select"], "2026-10-01-a.md")
+        self.assertEqual(self.snapshot(), before)
+        self.assertIn("Nothing to undo", self.post("/api/undo", {}, ok=False)["error"])
+
+    def test_old_action_names_still_work(self):
+        self.note("2026-10-01-a.md"); self.note("2026-10-01-b.md")
+        self.post("/api/action", {"file": "2026-10-01-a.md", "action": "archive"})
+        self.post("/api/action", {"file": "2026-10-01-b.md", "action": "durable"})
+        self.assertTrue(os.path.exists(os.path.join(self.tmp, "reference", "b.md")))
+        fates = {n["file"]: n["fate"] for n in self.get("/api/notes")["done"]}
+        self.assertEqual(fates, {"done/2026-10-01-a.md": "killed", "done/2026-10-01-b.md": "reference"})
+
+    def test_promote_needs_done_means_and_undo_removes_the_project(self):
+        self.note("2026-10-01-a.md"); before = self.snapshot()
+        err = self.post("/api/action", {"file": "2026-10-01-a.md", "action": "promote", "dest": "active", "note": ""}, ok=False)
+        self.assertIn("done means", err["error"])
+        self.post("/api/action", {"file": "2026-10-01-a.md", "action": "promote", "dest": "active", "note": "It ships.", "due_days": 3})
+        notes = open(os.path.join(self.tmp, "active", "a", "NOTES.md")).read()
+        self.assertIn("- definition of done: It ships.", notes)
+        self.post("/api/undo", {})
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "active", "a")))
+        self.assertEqual(self.snapshot(), before)
+
+    def test_undo_refuses_when_a_file_changed_since(self):
+        self.note("2026-10-01-a.md")
+        self.post("/api/action", {"file": "2026-10-01-a.md", "action": "kill"})
+        with open(os.path.join(self.notes, "done", "2026-10-01-a.md"), "a") as fh: fh.write("edited by hand\n")
+        self.assertIn("changed since", self.post("/api/undo", {}, ok=False)["error"])
+        self.assertFalse(os.path.exists(os.path.join(self.notes, "2026-10-01-a.md")))  # nothing half-undone
+
+    def test_batch_kill_is_one_undo_step(self):
+        for n in "abc": self.note(f"2026-10-0{'abc'.index(n) + 1}-{n}.md")
+        before = self.snapshot()
+        r = self.post("/api/batch", {"files": ["2026-10-01-a.md", "2026-10-02-b.md"], "action": "kill", "note": "dupes"})
+        self.assertEqual(r["msg"], "Killed 2 notes")
+        self.assertEqual([n["file"] for n in self.get("/api/notes")["live"]], ["2026-10-03-c.md"])
+        self.post("/api/undo", {})
+        self.assertEqual(self.snapshot(), before)
+        self.assertIn("batch can", self.post("/api/batch", {"files": ["2026-10-03-c.md"], "action": "promote"}, ok=False)["error"])
+
+    def test_merge_newest_first_then_promote_and_undo(self):
+        self.note("2026-10-01-bomb-a.md", "Bomb A", body="alpha"); self.note("2026-10-02-bomb-b.md", "Bomb B", body="beta")
+        before = self.snapshot()
+        r = self.post("/api/merge", {"files": ["2026-10-01-bomb-a.md", "2026-10-02-bomb-b.md"], "title": "Bomb: all of it", "then": "inbox"})
+        merged = open(os.path.join(self.notes, r["file"])).read()
+        self.assertLess(merged.index("## Bomb B"), merged.index("## Bomb A"))
+        self.assertIn("#### Detail", merged)  # source headings pushed one level down
+        self.assertIn("- `done/2026-10-01-bomb-a.md`", merged)
+        done = {n["file"]: n["fate"] for n in self.get("/api/notes")["done"]}
+        self.assertEqual(set(done.values()), {"merged"})
+        self.post("/api/undo", {}); self.assertEqual(self.snapshot(), before)
+        r = self.post("/api/merge", {"files": ["2026-10-01-bomb-a.md", "2026-10-02-bomb-b.md"], "title": "Bomb", "then": "promote",
+                                     "dest": "active", "note": "Runbook printed.", "slug": "bomb"})
+        self.assertTrue(os.path.exists(os.path.join(self.tmp, "active", "bomb", "NOTES.md")))
+        self.assertEqual(self.get("/api/notes")["live"], [])
+        self.post("/api/undo", {}); self.assertEqual(self.snapshot(), before)
+
+    def test_restore_brings_a_note_back_cooking(self):
+        self.note("2026-10-01-a.md"); self.post("/api/action", {"file": "2026-10-01-a.md", "action": "kill"})
+        self.post("/api/restore", {"file": "done/2026-10-01-a.md"})
+        live = self.get("/api/notes")["live"]
+        self.assertEqual([(n["file"], n["status"]) for n in live], [("2026-10-01-a.md", "cooking")])
+        self.assertIn("only Archive", self.post("/api/restore", {"file": "2026-10-01-a.md"}, ok=False)["error"])
+
+    def test_project_ship_extend_and_refuse_unknown(self):
+        self.note("2026-10-01-a.md")
+        self.post("/api/action", {"file": "2026-10-01-a.md", "action": "promote", "dest": "active", "note": "x", "due_days": 2})
+        f = self.get("/api/notes")["inflight"][0]
+        self.assertEqual((f["path"], f["project"]), ("active/a/NOTES.md", "a"))
+        self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "extend", "days": 7})
+        self.assertEqual(self.get("/api/notes")["inflight"][0]["days_left"], 9)
+        self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "shipped"})
+        self.assertTrue(self.get("/api/notes")["inflight"][0]["done"])
+        self.post("/api/undo", {}); self.assertFalse(self.get("/api/notes")["inflight"][0]["done"])
+        self.assertIn("unknown", self.post("/api/project/status", {"path": "../etc/passwd", "action": "shipped"}, ok=False)["error"])
+
+    def test_stats_counts_captures_and_decisions_by_week(self):
+        server.LOG_PATH = os.path.join(self.tmp, "triage.log"); self.addCleanup(setattr, server, "LOG_PATH", self.old_log_path)
+        today = server.today().isoformat()
+        self.note(f"{today}-a.md"); self.note(f"{today}-b.md")
+        with open(server.LOG_PATH, "w") as fh: fh.write(f"{today}T10:00:00 kill x.md -> y\n{today}T10:00:01 keep z.md status=open\n")
+        s = self.get("/api/stats")
+        self.assertEqual((s["weeks"][-1]["captured"], s["weeks"][-1]["decided"]), (2, 1))
+        self.assertEqual(len(s["weeks"]), 8)
+
+    def test_fonts_are_served_and_nothing_else_under_static(self):
+        with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/static/fonts/Lato-400.woff2") as r:
+            self.assertEqual(r.headers["Content-Type"], "font/woff2")
+        for bad in ("/static/fonts/../server.py", "/static/fonts/x.ttf", "/static/fonts/README.md"):
+            with self.assertRaises(urllib.error.HTTPError): urllib.request.urlopen(f"http://127.0.0.1:{self.port}{bad}")
 
 
 if __name__ == "__main__":

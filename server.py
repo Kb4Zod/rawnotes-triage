@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """rawnotes-triage — local website for reviewing ~/Projects/RawNotes.
 
-Usage: python3 server.py [--port 8765] [--host 127.0.0.1] [--notes ~/Projects/RawNotes] [--restart]
+Usage: python3 server.py [--port 8765] [--host 127.0.0.1] [--notes ~/Projects/RawNotes] [--log triage.log] [--restart]
 
 --host 0.0.0.0 listens on every interface (phone on home Wi-Fi / Tailscale).
 There is no login: only do that on a network you trust. Firewall still applies.
@@ -9,20 +9,24 @@ There is no login: only do that on a network you trust. Firewall still applies.
 If a server is already on the port, warns when its version differs from this
 code; --restart stops it and starts this one.
 
-Actions (all move real files, nothing is deleted):
-  promote  -> copy note into ../experiments|active|learning|templates,
-              stamp promoted/due dates, move capture to done/
-  durable  -> copy note into ../reference/<slug>.md (YAML frontmatter), move capture to done/
-  archive  -> status: dead, reason in ## Outcome, move to done/
-  keep     -> status open|cooking, optional next-step line
+Decisions (all move real files, nothing is deleted; the words match the CLI and CLAUDE.md):
+  promote             -> copy note into ../experiments|active|learning|templates,
+                         stamp promoted/due dates and "done means", move capture to done/
+  reference (durable) -> copy note into ../reference/<slug>.md (YAML frontmatter), move capture to done/
+  kill (archive)      -> status: dead, reason in ## Outcome, move to done/
+  keep                -> status open|cooking, optional next-step line
+Also: batch (one decision for many notes), merge (many notes -> one), restore (done/ -> Inbox),
+project status (mark shipped / push ship-by date), and undo of the last change made through this server.
 """
 import argparse, base64, json, os, re, shutil, subprocess, threading, time, urllib.parse, datetime as dt
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
-VERSION = "1.14"  # bump on every change; history in CHANGELOG.md
+VERSION = "2.00"  # bump on every change; history in CHANGELOG.md
 HERE = os.path.dirname(os.path.abspath(__file__))
+LOG_PATH = os.path.join(HERE, "triage.log")
+FONT_RE = re.compile(r"^/static/fonts/[A-Za-z0-9-]+\.woff2$")
 NOTES = os.path.expanduser("~/Projects/RawNotes")
 PROJECTS = None
 BIND_HOST = "127.0.0.1"  # set from --host; the Host/Origin guard depends on it
@@ -79,7 +83,21 @@ def summarize(path, sub=""):
         "stale": age is not None and age > STALE_DAYS and field(text, "status") in ("open", ""),
         "question": (body.group(1).strip() if body else "")[:280],
         "size": len(text),
+        **(fate_of(text) if sub == "done" else {}),
     }
+
+def fate_of(text):
+    """How a note in done/ ended up: promoted / reference / killed / merged, and where it went."""
+    out = text.split("## Outcome", 1)[1] if "## Outcome" in text else ""
+    dest = re.findall(r"->\s*`(?:\.\./)?([^`]+)`", out)
+    dest = dest[-1] if dest else ""
+    status = field(text, "status")
+    if status == "merged" or "**Merged" in out: fate = "merged"
+    elif status == "dead": fate = "killed"
+    elif dest.startswith(("reference/", "maintained/")): fate = "reference"
+    elif status == "promoted": fate = "promoted"
+    else: fate = status or "?"
+    return {"fate": fate, "dest": dest}
 
 def list_notes():
     live = sorted(f for f in os.listdir(NOTES) if NOTE_RE.match(f))
@@ -109,7 +127,8 @@ def inflight():
                 if not due: continue
                 try: left = (dt.date.fromisoformat(due) - today()).days
                 except ValueError: left = None
-                out.append({"path": os.path.relpath(p, PROJECTS), "title": title_of(text, f),
+                rel = os.path.relpath(p, PROJECTS)
+                out.append({"path": rel, "title": title_of(text, f), "project": rel.split(os.sep)[1] if rel.count(os.sep) >= 2 else "",
                             "dest": dest, "promoted": field(text, "promoted"), "due": due,
                             "days_left": left, "status": field(text, "status") or "?",
                             "done": field(text, "status") in ("done", "shipped", "dead")})
@@ -497,19 +516,85 @@ def unique(path):
         path = f"{base}-{n}{ext}"; n += 1
     return path
 
-def to_done(src):
+# ---- every change goes through a Tx, so the last few can be undone ----
+UNDO_MAX = 20
+_undo = []  # newest last: {"label", "ops", "select"}
+_write_lock = threading.RLock()  # one change at a time
+MISSING = object()
+
+def _read(path):
+    with open(path, encoding="utf-8", errors="surrogateescape", newline="") as fh: return fh.read()
+
+class Tx:
+    """Records each file change so undo() can reverse it (only if nothing touched those files since)."""
+    def __init__(self, label=""): self.label, self.ops, self.select = label, [], None
+    def write(self, path, text):
+        before = _read(path) if os.path.exists(path) else None
+        with open(path, "w", encoding="utf-8", errors="surrogateescape", newline="") as fh: fh.write(text)
+        self.ops.append(("write", path, before, text))
+    def move(self, src, dst):
+        shutil.move(src, dst); self.ops.append(("move", src, dst))
+    def mkdir(self, path):
+        os.makedirs(path); self.ops.append(("mkdir", path))
+    def commit(self):
+        if self.ops:
+            _undo.append({"label": self.label, "ops": self.ops, "select": self.select})
+            del _undo[:-UNDO_MAX]
+
+def undo():
+    """Reverse the newest change. Checked on a dry run first: refuses (and changes nothing) if any file it
+    touched has been edited, moved or added to since."""
+    with _write_lock:
+        if not _undo: raise ValueError("Nothing to undo.")
+        tx = _undo[-1]; vfs = {}
+        def cur(p):
+            if p in vfs: return vfs[p]
+            return _read(p) if os.path.isfile(p) else MISSING
+        changed = "Can't undo: {} changed since. Fix it by hand."
+        for op in reversed(tx["ops"]):
+            if op[0] == "write":
+                if cur(op[1]) != op[3]: raise ValueError(changed.format(os.path.basename(op[1])))
+                vfs[op[1]] = MISSING if op[2] is None else op[2]
+            elif op[0] == "move":
+                if cur(op[2]) is MISSING or cur(op[1]) is not MISSING: raise ValueError(changed.format(os.path.basename(op[2])))
+                vfs[op[1]] = cur(op[2]); vfs[op[2]] = MISSING
+            elif op[0] == "mkdir":
+                left = [f for f in os.listdir(op[1]) if vfs.get(os.path.join(op[1], f)) is not MISSING] if os.path.isdir(op[1]) else []
+                if left: raise ValueError(changed.format(os.path.basename(op[1]) + "/"))
+        for op in reversed(tx["ops"]):  # every check passed: do it for real
+            if op[0] == "write":
+                if op[2] is None: os.remove(op[1])
+                else:
+                    with open(op[1], "w", encoding="utf-8", errors="surrogateescape", newline="") as fh: fh.write(op[2])
+            elif op[0] == "move": shutil.move(op[2], op[1])
+            elif op[0] == "mkdir": os.rmdir(op[1])
+        _undo.pop(); log(f"undo {tx['label']}")
+        return {"ok": True, "msg": f"Undone: {tx['label']}", "select": tx["select"], "left": len(_undo)}
+
+def to_done(src, tx):
     done_dir = os.path.join(NOTES, "done"); os.makedirs(done_dir, exist_ok=True)
     dst = unique(os.path.join(done_dir, os.path.basename(src)))
-    shutil.move(src, dst); return dst
+    tx.move(src, dst); return dst
 
 def log(msg):
-    with open(os.path.join(HERE, "triage.log"), "a") as fh:
+    with open(LOG_PATH, "a") as fh:
         fh.write(f"{dt.datetime.now().isoformat(timespec='seconds')} {msg}\n")
 
-def act(req):
+ALIASES = {"archive": "kill", "durable": "reference"}  # 1.x names still accepted
+
+def act(req, tx=None):
+    """One decision on one note. With no tx, it is its own undo step."""
+    with _write_lock:
+        own = tx is None; tx = tx or Tx()
+        res = _act(req, tx)
+        if own: tx.label = res["label"]; tx.select = req["file"]; tx.commit()
+        return res
+
+def _act(req, tx):
     src = safe_note(req["file"]); fname = os.path.basename(src)
-    action = req.get("action"); note = req.get("note", "").strip()
-    text = open(src, encoding="utf-8").read()
+    if os.path.dirname(src) != os.path.realpath(NOTES): raise ValueError("only Inbox notes can be decided")
+    action = ALIASES.get(req.get("action"), req.get("action")); note = (req.get("note") or "").strip()
+    text = open(src, encoding="utf-8").read(); title = title_of(text, fname)
     t = today().isoformat()
 
     if action == "keep":
@@ -517,53 +602,187 @@ def act(req):
         if status not in ("open", "cooking"): raise ValueError("bad status")
         text = set_field(text, "status", status)
         if note: text = text.rstrip("\n") + f"\n\n- next step ({t}): {note}\n" if "## Notes" not in text else \
-            re.sub(r"(## Notes\n)", rf"\1\n- next step ({t}): {note}\n", text, count=1)
-        open(src, "w", encoding="utf-8").write(text)
-        log(f"keep {fname} status={status}"); return {"ok": True, "msg": f"Kept ({status})"}
+            re.sub(r"(## Notes\n)", lambda m: f"{m.group(1)}\n- next step ({t}): {note}\n", text, count=1)
+        tx.write(src, text)
+        log(f"keep {fname} status={status}"); return {"ok": True, "msg": f"Kept “{title}” ({status})", "label": f"keep “{title}”"}
 
-    if action == "archive":
+    if action == "kill":
         text = set_field(text, "status", "dead")
         text = append_outcome(text, f"**Killed {t}:** {note or 'no longer useful.'}")
-        open(src, "w", encoding="utf-8").write(text)
-        dst = to_done(src); log(f"archive {fname} -> {dst}")
-        return {"ok": True, "msg": "Archived to done/"}
+        tx.write(src, text)
+        dst = to_done(src, tx); log(f"kill {fname} -> {dst}")
+        return {"ok": True, "msg": f"Killed “{title}” → Archive", "label": f"kill “{title}”"}
 
-    if action in ("promote", "durable"):
-        dest = "reference" if action == "durable" else req.get("dest")
+    if action in ("promote", "reference"):
+        dest = "reference" if action == "reference" else req.get("dest")
         if action == "promote" and dest not in DESTS: raise ValueError("bad destination")
+        if action == "promote" and done_placeholder(note): raise ValueError("Say what done means first.")
+        try: due_days = int(req.get("due_days") or DUE_DAYS)
+        except ValueError: raise ValueError("ship-by must be a number of days")
+        if action == "promote" and not 1 <= due_days <= 90: raise ValueError("ship-by must be 1 to 90 days")
         slug = re.sub(r"[^a-z0-9-]", "", (req.get("slug") or slug_of(fname)).lower()) or slug_of(fname)
         dest_dir = os.path.join(PROJECTS, dest)
         os.makedirs(dest_dir, exist_ok=True)
         if action == "promote" and DESTS[dest] == "folder":
-            proj = unique(os.path.join(dest_dir, slug)); os.makedirs(proj)
+            proj = unique(os.path.join(dest_dir, slug)); tx.mkdir(proj)
             target = os.path.join(proj, "NOTES.md")
         else:
             target = unique(os.path.join(dest_dir, slug + ".md"))
         copy = set_field(text, "status", "promoted")
         copy = set_field(copy, "promoted", t)
-        if action == "durable": copy = reference_copy(copy, fname, note)
+        if action == "reference": copy = reference_copy(copy, fname, note)
         if action == "promote":
-            due = (today() + dt.timedelta(days=int(req.get("due_days") or DUE_DAYS))).isoformat()
+            due = (today() + dt.timedelta(days=due_days)).isoformat()
             copy = set_field(copy, "due", due)
             copy = copy.rstrip("\n") + (
                 f"\n\n## Plan\n\n- promoted from RawNotes on {t}, due {due}\n"
-                f"- definition of done: {note or '<fill in>'}\n"
+                f"- definition of done: {note}\n"
                 "- first step:\n- ship / stop check-in: on the due date, either ship it or kill it\n")
-        open(target, "w", encoding="utf-8").write(copy)
+        tx.write(target, copy)
         rel = os.path.relpath(target, PROJECTS)
         # original capture: mark promoted, record destination, move to done/
         text = set_field(text, "status", "promoted")
-        text = append_outcome(text, f"**Promoted {t}** -> `../{rel}`" + (f" ({note})" if note and action == 'durable' else ""))
-        open(src, "w", encoding="utf-8").write(text)
-        dst = to_done(src); log(f"{action} {fname} -> {rel}; capture -> {dst}")
-        return {"ok": True, "msg": f"Copied to ../{rel}, capture moved to done/", "target": rel}
+        text = append_outcome(text, f"**Promoted {t}** -> `../{rel}`" + (f" ({note})" if note and action == 'reference' else ""))
+        tx.write(src, text)
+        dst = to_done(src, tx); log(f"{'durable' if action == 'reference' else action} {fname} -> {rel}; capture -> {dst}")
+        verb = "Promoted" if action == "promote" else "Filed"
+        return {"ok": True, "msg": f"{verb} “{title}” → {rel}", "target": rel, "label": f"{action} “{title}”"}
 
     raise ValueError("unknown action")
+
+def batch(req):
+    """The same decision for several notes, as one undo step."""
+    files = req.get("files") or []
+    if not files or len(files) > 200: raise ValueError("pick at least one note")
+    if ALIASES.get(req.get("action"), req.get("action")) not in ("keep", "kill", "reference"): raise ValueError("batch can keep, kill or file as reference")
+    with _write_lock:
+        tx = Tx(); done = 0
+        try:
+            for f in files: _act({**req, "file": f, "slug": ""}, tx); done += 1
+        except Exception:
+            tx.commit()  # whatever already happened stays undoable
+            raise
+        verb = {"keep": "Kept", "kill": "Killed", "reference": "Filed"}[ALIASES.get(req["action"], req["action"])]
+        tx.label = f"{verb.lower()} {done} notes"; tx.select = files[0]; tx.commit()
+        return {"ok": True, "msg": f"{verb} {done} notes"}
+
+def merge(req):
+    """Combine several Inbox notes into one new note (newest first), move the sources to done/ pointing at it,
+    then optionally promote or file the merged note. One undo step."""
+    files = req.get("files") or []
+    title = re.sub(r"\s+", " ", req.get("title") or "").strip()
+    if len(files) < 2: raise ValueError("pick at least two notes to merge")
+    if not title: raise ValueError("give the merged note a title")
+    then = req.get("then", "inbox")
+    if then not in ("inbox", "promote", "reference"): raise ValueError("bad follow-up")
+    srcs = [safe_note(f) for f in files]
+    if any(os.path.dirname(p) != os.path.realpath(NOTES) for p in srcs): raise ValueError("only Inbox notes can be merged")
+    srcs.sort(key=os.path.basename, reverse=True)
+    t = today().isoformat()
+    with _write_lock:
+        tx = Tx(f"merge {len(srcs)} notes")
+        slug = re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", title.lower())).strip("-")[:60] or "merged"
+        target = unique(os.path.join(NOTES, f"{t}-{slug}.md")); tname = os.path.basename(target)
+        types = [field(open(p, encoding="utf-8").read(), "type") for p in srcs]
+        parts = [f"# {title}", "", f"- date: {t}", "- status: cooking",
+                 f"- type: {max(set(types), key=types.count) or 'research'}", "",
+                 "## What's the question / problem?", "",
+                 (req.get("question") or "").strip() or f"Merged from {len(srcs)} notes on {t}; newest first below.", "", "## Notes", ""]
+        sources = []
+        for p in srcs:
+            text = open(p, encoding="utf-8").read(); name = os.path.basename(p)
+            body = re.sub(r"^#\s+.*\n", "", text, count=1)
+            body = re.sub(r"^(\s*- (date|status|type|promoted|due):.*\n|\s*\n)+", "", body)
+            body = re.sub(r"^(#{1,5})(\s)", r"#\1\2", body, flags=re.M)  # its headings sit one level under its section
+            parts += [f"## {title_of(text, name)} ({name[:10]})", "", body.strip(), ""]
+            sources.append(name)
+        parts += ["## Sources", ""] + [f"- `done/{n}`" for n in sources] + [""]
+        tx.write(target, "\n".join(parts))
+        for p in srcs:
+            text = open(p, encoding="utf-8").read()
+            text = set_field(text, "status", "merged")
+            text = append_outcome(text, f"**Merged {t}** -> `RawNotes/{tname}`")
+            tx.write(p, text); to_done(p, tx); log(f"merge {os.path.basename(p)} -> {tname}")
+        msg = f"Merged {len(srcs)} notes into “{title}”"; tx.select = tname
+        if then != "inbox":
+            res = _act({**req, "file": tname, "action": then, "slug": req.get("slug") or ""}, tx)
+            msg += "; " + res["msg"][0].lower() + res["msg"][1:]
+            tx.select = None
+        tx.commit()
+        return {"ok": True, "msg": msg, "file": tname if then == "inbox" else None}
+
+def restore(req):
+    """Bring a note back from done/ into the Inbox (status cooking)."""
+    with _write_lock:
+        src = safe_note(req.get("file", ""))
+        if os.path.dirname(src) != os.path.realpath(os.path.join(NOTES, "done")): raise ValueError("only Archive notes can be restored")
+        dst = os.path.join(NOTES, os.path.basename(src))
+        if os.path.exists(dst): raise ValueError("a note with that name is already in the Inbox")
+        tx = Tx(); text = open(src, encoding="utf-8").read(); title = title_of(text, os.path.basename(src))
+        text = append_outcome(set_field(text, "status", "cooking"), f"**Restored {today().isoformat()}** to the Inbox")
+        tx.write(src, text); tx.move(src, dst)
+        tx.label = f"restore “{title}”"; tx.select = "done/" + os.path.basename(src); tx.commit()
+        log(f"restore {os.path.basename(src)}")
+        return {"ok": True, "msg": f"Restored “{title}” to the Inbox", "file": os.path.basename(dst)}
+
+def project_status(req):
+    """On a promoted project file (one with a due: line): mark it shipped, push the ship-by date, or kill it."""
+    with _write_lock:
+        rel = req.get("path", "")
+        if rel not in {x["path"] for x in inflight()}: raise ValueError("unknown project file")
+        path = os.path.join(PROJECTS, rel)
+        if os.path.islink(path): raise ValueError("refusing to write through a symlink")
+        text = open(path, encoding="utf-8").read(); t = today().isoformat(); action = req.get("action")
+        name = rel.split("/")[1] if rel.count("/") >= 2 else os.path.basename(rel)[:-3]
+        tx = Tx()
+        if action == "shipped":
+            text = set_field(set_field(text, "status", "shipped"), "shipped", t); label = f"ship {name}"; msg = f"Shipped {name} 🎉"
+        elif action == "extend":
+            try: days = int(req.get("days") or 7)
+            except ValueError: raise ValueError("days must be a number")
+            if not 1 <= days <= 90: raise ValueError("days must be 1 to 90")
+            try: base = max(dt.date.fromisoformat(field(text, "due")), today())
+            except ValueError: base = today()
+            due = (base + dt.timedelta(days=days)).isoformat()
+            text = set_field(text, "due", due); label = f"push {name} to {due}"; msg = f"{name}: ship by {due}"
+        elif action == "kill":
+            text = append_outcome(set_field(text, "status", "dead"), f"**Killed {t}:** {(req.get('note') or '').strip() or 'stopped.'}")
+            label = f"kill {name}"; msg = f"Killed {name}"
+        else: raise ValueError("unknown project action")
+        tx.write(path, text); tx.label = label; tx.commit(); log(f"project {action} {rel}")
+        return {"ok": True, "msg": msg}
+
+def stats(weeks=8):
+    """Inbox flow for the Pulse page: notes captured vs. decided per week, and how long the Inbox waits."""
+    notes = list_notes(); t = today()
+    start = t - dt.timedelta(days=t.weekday())  # Monday of this week
+    bins = [{"week": (start - dt.timedelta(weeks=weeks - 1 - i)).isoformat(), "captured": 0, "decided": 0} for i in range(weeks)]
+    def slot(d):
+        i = weeks - 1 - (start - (d - dt.timedelta(days=d.weekday()))).days // 7
+        return bins[i] if 0 <= i < weeks else None
+    for n in notes["live"] + notes["done"]:
+        try: b = slot(dt.date.fromisoformat(n["date"]))
+        except ValueError: continue
+        if b: b["captured"] += 1
+    try:
+        with open(LOG_PATH, encoding="utf-8", errors="replace") as fh: lines = fh.read().splitlines()
+    except OSError: lines = []
+    for line in lines:
+        bits = line.split(" ", 2)
+        if len(bits) < 2 or bits[1] not in ("promote", "durable", "reference", "archive", "kill", "merge"): continue
+        try: b = slot(dt.date.fromisoformat(bits[0][:10]))
+        except ValueError: continue
+        if b: b["decided"] += 1
+    ages = sorted(n["age"] for n in notes["live"] if n["age"] is not None)
+    median = ages[len(ages) // 2] if ages else 0
+    return {"weeks": bins, "median_wait": median, "oldest": ages[-1] if ages else 0, "live": len(notes["live"]),
+            "undo": [u["label"] for u in reversed(_undo)]}
 
 class H(BaseHTTPRequestHandler):
     def _send(self, code, body, ctype="application/json"):
         data = body if isinstance(body, bytes) else json.dumps(body).encode()
-        self.send_response(code); self.send_header("Content-Type", ctype + "; charset=utf-8")
+        self.send_response(code); self.send_header("Content-Type", ctype if ctype.startswith("font/") else ctype + "; charset=utf-8")
+        if ctype.startswith("font/"): self.send_header("Cache-Control", "max-age=604800")
         self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data)
     def log_message(self, *a): pass
     def _refuse(self, post):
@@ -591,6 +810,11 @@ class H(BaseHTTPRequestHandler):
             if u.path == "/api/repo": return self._send(200, repo_overview(q.get("name", [""])[0]))
             if u.path == "/api/repo/path": return self._send(200, repo_path(q.get("name", [""])[0], q.get("path", [""])[0]))
             if u.path == "/api/notes": return self._send(200, list_notes())
+            if u.path == "/api/stats": return self._send(200, stats())
+            if FONT_RE.match(u.path):
+                p = os.path.join(HERE, u.path.lstrip("/"))
+                if not os.path.isfile(p): return self._send(404, {"error": "not found"})
+                return self._send(200, open(p, "rb").read(), "font/woff2")
             if u.path == "/api/note":
                 p = safe_note(q["f"][0]); return self._send(200, {"text": open(p, encoding="utf-8", errors="replace").read()})
             self._send(404, {"error": "not found"})
@@ -600,7 +824,13 @@ class H(BaseHTTPRequestHandler):
         if bad: return self._send(403, {"error": bad})
         try:
             n = int(self.headers.get("Content-Length", 0)); req = json.loads(self.rfile.read(n) or b"{}")
-            if urlparse(self.path).path == "/api/action": return self._send(200, act(req))
+            path = urlparse(self.path).path
+            if path == "/api/action": return self._send(200, act(req))
+            if path == "/api/batch": return self._send(200, batch(req))
+            if path == "/api/merge": return self._send(200, merge(req))
+            if path == "/api/restore": return self._send(200, restore(req))
+            if path == "/api/project/status": return self._send(200, project_status(req))
+            if path == "/api/undo": return self._send(200, undo())
             if urlparse(self.path).path == "/api/done": return self._send(200, set_done(req.get("name", ""), req.get("text", ""), req.get("expected", "")))
             if urlparse(self.path).path == "/api/open":
                 import subprocess; subprocess.Popen(["xdg-open", req["path"]]); return self._send(200, {"ok": True})
@@ -640,7 +870,9 @@ if __name__ == "__main__":
     ap.add_argument("--host", default="127.0.0.1", help="interface to listen on; 0.0.0.0 = all (no auth, trusted networks only)")
     ap.add_argument("--notes", default=NOTES); ap.add_argument("--no-browser", action="store_true")
     ap.add_argument("--restart", action="store_true", help="stop a server already on the port, then start this one")
+    ap.add_argument("--log", default=LOG_PATH, help="where actions are logged (and Pulse reads decisions from)")
     a = ap.parse_args(); BIND_HOST = a.host; NOTES = os.path.abspath(os.path.expanduser(a.notes)); PROJECTS = os.path.dirname(NOTES)
+    LOG_PATH = os.path.abspath(os.path.expanduser(a.log))
     url = f"http://127.0.0.1:{a.port}/"
     info = running_server(a.port)
     if info and a.restart:

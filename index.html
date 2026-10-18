@@ -1,330 +1,874 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RawNotes Triage version __VERSION__</title>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>RawNotes · Triage __VERSION__</title>
+<script>(()=>{const t=localStorage.getItem('theme');if(t==='dark'||(!t&&matchMedia('(prefers-color-scheme:dark)').matches))document.documentElement.classList.add('dark')})()</script>
 <style>
-:root{--bg:#f6f5f1;--panel:#fff;--ink:#1d1d1b;--mute:#6c6a63;--line:#e2e0d8;--acc:#2d63c8;--ok:#1f8a4c;--warn:#b7791f;--bad:#c0392b;--soft:#eef1f8;--g0:#ebedf0;--g1:#9be9a8;--g2:#40c463;--g3:#30a14e;--g4:#216e39}
-@media(prefers-color-scheme:dark){:root{--bg:#171715;--panel:#1f1f1c;--ink:#ece9e1;--mute:#9b988f;--line:#33322d;--acc:#7ea2ea;--ok:#5fc48a;--warn:#e0a94c;--bad:#ea6b5b;--soft:#26292f;--g0:#2a2a26;--g1:#0e4429;--g2:#006d32;--g3:#26a641;--g4:#39d353}}
-*{box-sizing:border-box}body{height:100vh;display:flex;flex-direction:column;margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,sans-serif}
-header{display:flex;gap:16px;align-items:center;padding:10px 18px;border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
-header h1{font-size:16px;margin:0}header .stats{color:var(--mute);font-size:13px}header .stats b{color:var(--ink)}
-.inflight{padding:8px 18px;border-bottom:1px solid var(--line);display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:13px}
-.inflight .chip{border:1px solid var(--line);border-radius:14px;padding:2px 10px;background:var(--panel);cursor:pointer}
-.chip.late{border-color:var(--bad);color:var(--bad)}.chip.soon{border-color:var(--warn)}.chip.done{opacity:.55;text-decoration:line-through}
-main{display:grid;grid-template-columns:360px 1fr;flex:1;min-height:0}
-aside{border-right:1px solid var(--line);overflow:auto;background:var(--panel)}
-.tabs{display:flex;border-bottom:1px solid var(--line)}.tabs button{flex:1;border:0;background:none;padding:8px;color:var(--mute);cursor:pointer;font:inherit}
-.tabs button.on{color:var(--ink);border-bottom:2px solid var(--acc)}
-.row{padding:10px 14px;border-bottom:1px solid var(--line);cursor:pointer;display:grid;grid-template-columns:1fr auto;gap:2px 8px}
-.row:hover{background:var(--soft)}.row.sel{background:var(--soft);box-shadow:inset 3px 0 var(--acc)}
-.row .t{font-weight:600}.row .m{grid-column:1/-1;color:var(--mute);font-size:12px}
-.badge{font-size:11px;padding:1px 7px;border-radius:10px;border:1px solid var(--line);color:var(--mute);height:fit-content}
-.badge.open{color:var(--acc);border-color:var(--acc)}.badge.cooking{color:var(--warn);border-color:var(--warn)}
-.badge.dead{color:var(--bad);border-color:var(--bad)}.badge.promoted{color:var(--ok);border-color:var(--ok)}
-.stale{color:var(--bad);font-weight:600}
-.badge.nodone{color:var(--bad);border-color:var(--bad)}
-.badge.gh{font-weight:700;margin-right:6px}.badge.gh.ok{color:var(--ok);border-color:var(--ok)}.badge.gh.warn{color:var(--warn);border-color:var(--warn)}.badge.gh.no{color:var(--bad);border-color:var(--bad)}
-.dod{border:1px solid var(--line);border-left:4px solid var(--ok);border-radius:6px;padding:8px 14px;margin:12px 0;background:var(--panel)}
-.dod h2{margin:0 0 4px;border:0;font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--mute)}
-.dod p{margin:0}.dod.missing{border-color:var(--bad);border-left-color:var(--bad)}.dod.missing h2,.dod.missing p{color:var(--bad)}
-.dod .meta{font-size:12px;margin-top:4px}
-.dod .dodhead{display:flex;justify-content:space-between;align-items:center;gap:8px}.dod .dodhead h2{margin:0}
-.dod .dodhead .act{padding:1px 10px;font-size:12px}
-.dod textarea{width:100%;font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);resize:vertical}
-.dod .dodbtns{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}.dod .dodbtns .err{color:var(--bad);font-size:13px}
-.dod.confirm{border-left-color:var(--warn)}.dod .dodcmp{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:6px}
-.dod .dodcmp b{font-size:12px;color:var(--mute)}.dod .dodcmp .old{text-decoration:line-through;color:var(--mute)}
-.dod .dodbtns .act.go{background:var(--ok);color:#fff;border-color:var(--ok)}
-section{display:grid;grid-template-rows:auto 1fr;overflow:hidden}
-.decide{padding:12px 18px;border-bottom:1px solid var(--line);background:var(--panel)}
-.decide .btns{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0}
-button.act{font:inherit;padding:6px 14px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer}
-button.act:hover{background:var(--soft)}button.act.on{background:var(--acc);color:#fff;border-color:var(--acc)}
-.form{display:none;margin-top:8px;display:grid;gap:8px;grid-template-columns:auto 1fr;align-items:center;max-width:720px}
-.form label{color:var(--mute);font-size:13px}.form input,.form select,.form textarea{font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);width:100%}
-.form .go{grid-column:2;display:flex;gap:10px;align-items:center}
-.go button{background:var(--ok);color:#fff;border:0;padding:8px 18px;border-radius:6px;font:inherit;cursor:pointer}
-.go button.danger{background:var(--bad)}.go .kbd{color:var(--mute);font-size:12px}
-.toast{color:var(--ok);font-size:13px;margin-left:8px}.toast.err{color:var(--bad)}
-article{overflow:auto;padding:18px 28px;max-width:900px}
-article h1{font-size:22px}article h2{font-size:16px;margin-top:22px;border-bottom:1px solid var(--line)}article h3{font-size:14px}
-article pre{background:var(--soft);padding:10px;border-radius:6px;overflow:auto}article code{background:var(--soft);padding:1px 4px;border-radius:4px}
-article a{color:var(--acc)}article ul{padding-left:20px}article .meta{color:var(--mute)}
-.activity{padding:8px 18px;border-bottom:1px solid var(--line);display:flex;gap:6px 24px;flex-wrap:wrap;align-items:flex-start;font-size:13.8px;color:var(--mute)}
-.activity .graph{overflow-x:auto;max-width:100%;padding-bottom:2px}
-.activity .months,.activity .cells{display:grid;grid-auto-columns:10px;column-gap:3px}
-.activity .months{height:17px;line-height:17px;white-space:nowrap}
-.activity .cells{grid-template-rows:repeat(7,10px);grid-auto-flow:column;gap:3px}
-.activity .cells i{width:10px;height:10px;border-radius:2px;background:var(--g0);outline:1px solid rgba(128,128,128,.12);outline-offset:-1px}
-.activity .cells i.l1{background:var(--g1)}.activity .cells i.l2{background:var(--g2)}.activity .cells i.l3{background:var(--g3)}.activity .cells i.l4{background:var(--g4)}
-.activity .cells i.today{outline:1px solid var(--ink)}
-.activity .side{flex:1;min-width:220px}.activity .side b{color:var(--ink)}
-.activity .legend{display:inline-flex;gap:3px;align-items:center;margin-left:8px}.activity .legend i{width:10px;height:10px;border-radius:2px;display:inline-block}
-.activity .repos{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px}.activity .repos>span{white-space:nowrap}
-.activity .repos a{border:1px solid var(--line);border-radius:12px;padding:1px 9px;background:var(--panel);color:var(--ink);text-decoration:none}
-.activity .repos a:hover{border-color:var(--acc)}.activity .repos a em{font-style:normal;color:var(--mute)}
-.activity .err{color:var(--bad)}.activity button{font:inherit;font-size:12.65px;padding:0 8px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink);cursor:pointer}
+@font-face{font-family:'Cormorant Garamond';src:url(/static/fonts/CormorantGaramond.woff2) format('woff2');font-weight:300 700;font-display:swap}
+@font-face{font-family:'Cormorant Garamond';src:url(/static/fonts/CormorantGaramond-italic.woff2) format('woff2');font-weight:500;font-style:italic;font-display:swap}
+@font-face{font-family:Lato;src:url(/static/fonts/Lato-400.woff2) format('woff2');font-weight:400;font-display:swap}
+@font-face{font-family:Lato;src:url(/static/fonts/Lato-700.woff2) format('woff2');font-weight:700;font-display:swap}
+@font-face{font-family:Lato;src:url(/static/fonts/Lato-900.woff2) format('woff2');font-weight:900;font-display:swap}
+@font-face{font-family:'JetBrains Mono';src:url(/static/fonts/JetBrainsMono.woff2) format('woff2');font-weight:100 800;font-display:swap}
+:root{
+  --bg:#f4f7f4;--glow1:rgba(203,168,90,.14);--glow2:rgba(43,122,84,.11);
+  --surface:rgba(255,255,255,.80);--solid:#fff;--sunk:#edf2ee;
+  --ink:#1f2924;--ink2:#3d4d45;--mute:#64766c;--line:rgba(43,122,84,.14);--line2:rgba(43,122,84,.30);
+  --green:#2b7a54;--green-ink:#1e593d;--green-soft:rgba(43,122,84,.10);
+  --gold:#cba85a;--gold-ink:#7f611a;--gold-soft:rgba(203,168,90,.18);
+  --teal:#2f6f7e;--teal-ink:#245764;--teal-soft:rgba(47,111,126,.10);
+  --rust:#b4533a;--rust-ink:#963f29;--rust-soft:rgba(180,83,58,.10);
+  --g0:#e4ece6;--g1:#b9dcc6;--g2:#7fbf98;--g3:#3f9a6a;--g4:#1f6b47;
+  --s1:#1f8467;--s2:#b5702a;--on-accent:#fff;
+  --shadow:0 1px 2px rgba(31,41,36,.04),0 10px 30px rgba(31,41,36,.05);--shadow-lift:0 18px 40px rgba(43,122,84,.14);
+  --serif:'Cormorant Garamond',Georgia,serif;--sans:Lato,system-ui,sans-serif;--mono:'JetBrains Mono',ui-monospace,monospace;
+}
+.dark{
+  --bg:#0f1512;--glow1:rgba(217,185,106,.07);--glow2:rgba(95,191,141,.07);
+  --surface:rgba(25,34,29,.82);--solid:#18201c;--sunk:#131a16;
+  --ink:#e6ede8;--ink2:#c3d0c8;--mute:#8fa398;--line:rgba(143,216,176,.11);--line2:rgba(143,216,176,.26);
+  --green:#5fbf8d;--green-ink:#8fd8b0;--green-soft:rgba(95,191,141,.12);
+  --gold:#d9b96a;--gold-ink:#e3c886;--gold-soft:rgba(217,185,106,.13);
+  --teal:#6fb3c4;--teal-ink:#97cbd8;--teal-soft:rgba(111,179,196,.12);
+  --rust:#e07a5f;--rust-ink:#eb9a84;--rust-soft:rgba(224,122,95,.12);
+  --g0:#1c2621;--g1:#1d4a33;--g2:#24704a;--g3:#35a06a;--g4:#6fd39c;
+  --s1:#2b9c78;--s2:#c07f2c;--on-accent:#0f1512;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px rgba(0,0,0,.25);--shadow-lift:0 18px 40px rgba(0,0,0,.45);
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font:14px/1.55 var(--sans);-webkit-font-smoothing:antialiased;
+  background-image:radial-gradient(circle at 92% 0%,var(--glow1),transparent 45%),radial-gradient(circle at 0% 100%,var(--glow2),transparent 50%);background-attachment:fixed}
+h1,h2,h3,h4,.serif,.num{font-family:var(--serif);font-weight:600;letter-spacing:.2px;font-variant-numeric:lining-nums}
+button,input,select,textarea{font:inherit;color:inherit}
+a{color:var(--green)}
+:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+.app{display:grid;grid-template-columns:232px 1fr;height:100vh}
+#main{min-width:0;min-height:0;height:100vh;overflow:hidden}
+/* rail */
+.rail{display:flex;flex-direction:column;padding:22px 14px 16px;border-right:1px solid var(--line);background:var(--surface);backdrop-filter:blur(12px);min-height:0;overflow:auto}
+.brand{padding:0 10px 18px;margin-bottom:12px;border-bottom:1px solid var(--line)}
+.brand .name{font-family:var(--serif);font-size:30px;font-weight:700;line-height:1}
+.brand .name em{font-style:italic;color:var(--green)}
+.brand .sub{font-size:10.5px;letter-spacing:.32em;text-transform:uppercase;color:var(--gold-ink);margin-top:6px;display:flex;align-items:center;gap:8px}
+.brand .sub:after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--gold),transparent)}
+.nav a{display:flex;align-items:center;gap:11px;padding:9px 10px;border-radius:9px;color:var(--ink2);text-decoration:none;font-weight:700;font-size:14px;margin-bottom:2px}
+.nav a:hover{background:var(--sunk)}
+.nav a svg{width:18px;height:18px;opacity:.8}
+.nav a .n{margin-left:auto;font-size:12px;color:var(--mute);font-weight:700}
+.nav a .n.alert{color:#fff;background:var(--rust);border-radius:10px;padding:0 7px}
+.nav a.on{background:var(--green-soft);color:var(--green-ink);box-shadow:inset 3px 0 var(--green)}
+.label{font:900 10.5px var(--sans);letter-spacing:.2em;text-transform:uppercase;color:var(--mute)}
+.nav .label{padding:16px 10px 6px}
+.lifecycle{margin:2px 10px 0;font-size:12px;color:var(--mute);display:grid;gap:4px}
+.rail .foot{margin-top:auto;padding:12px 10px 0;border-top:1px solid var(--line);font-size:12px;color:var(--mute)}
+.rail .foot b{color:var(--ink)}
+.spark{display:flex;gap:2px;align-items:flex-end;height:26px;margin:6px 0 8px}
+.spark i{flex:1;background:var(--g3);border-radius:2px 2px 0 0;min-height:2px;opacity:.85}
+.foot .row{display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:6px}
+.linkish{background:none;border:0;padding:0;color:var(--mute);cursor:pointer;font-size:12px}
+.linkish:hover{color:var(--ink)}
+kbd{font:500 11px var(--mono);padding:1px 5px;border:1px solid var(--line2);border-bottom-width:2px;border-radius:5px;background:var(--solid);color:var(--ink2);white-space:nowrap}
+svg.i{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;flex:none}
+/* shared */
+.pane-h{padding:22px 22px 12px}
+.pane-h h1{font-size:34px;margin:0;line-height:1.05}
+.pane-h .sub{color:var(--mute);font-size:13px;margin-top:4px}
+.search{display:flex;align-items:center;gap:8px;margin-top:14px;padding:0 12px;border:1px solid var(--line2);border-radius:10px;background:var(--solid);color:var(--mute)}
+.search input{flex:1;border:0;background:transparent;padding:9px 0;outline:none;color:var(--ink);min-width:0}
+.search:focus-within{border-color:var(--green);box-shadow:0 0 0 3px var(--green-soft)}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:999px;border:1px solid var(--line2);background:var(--solid);font-size:12.5px;font-weight:700;color:var(--ink2);cursor:pointer;white-space:nowrap}
+.chip b{font-weight:900;color:var(--mute)}
+.chip.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}.chip.on b{color:inherit;opacity:.7}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex:none}
+.st{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;padding:2px 9px 2px 8px;border-radius:999px;white-space:nowrap;line-height:1.5}
+.st.open,.st.cooking,.st.soon{color:var(--gold-ink);background:var(--gold-soft)}
+.st.open .dot{border:2px solid var(--gold);width:9px;height:9px}.st.cooking .dot,.st.soon .dot{background:var(--gold)}
+.st.promoted,.st.ok,.st.shipped{color:var(--green-ink);background:var(--green-soft)}.st.promoted .dot,.st.ok .dot,.st.shipped .dot{background:var(--green)}
+.st.reference,.st.merged{color:var(--teal-ink);background:var(--teal-soft)}.st.reference .dot,.st.merged .dot{background:var(--teal)}
+.st.dead,.st.killed,.st.late{color:var(--rust-ink);background:var(--rust-soft)}.st.dead .dot,.st.killed .dot,.st.late .dot{background:var(--rust)}
+.st.plain{color:var(--ink2);background:var(--sunk);padding-left:9px}.st.plain .dot{display:none}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:8px 15px;border-radius:9px;border:1px solid var(--line2);background:var(--solid);font-weight:700;font-size:13.5px;cursor:pointer;text-decoration:none;color:var(--ink)}
+.btn:hover{border-color:var(--green)}
+.btn.primary{background:var(--green);border-color:var(--green);color:var(--on-accent)}
+.btn.danger{background:var(--rust);border-color:var(--rust);color:#fff}
+.btn.ghost{background:transparent}
+.btn.sm{padding:4px 10px;font-size:12.5px}
+.btn:disabled{opacity:.55;cursor:wait}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);backdrop-filter:blur(10px)}
+.mono{font-family:var(--mono);font-size:12px}
+.muted{color:var(--mute)}
+.err{color:var(--rust-ink);font-weight:700;font-size:13px}
+.empty{color:var(--mute);padding:48px 20px;text-align:center;font-family:var(--serif);font-size:20px}
+.copy{cursor:pointer;display:inline-flex;gap:6px;align-items:center;color:var(--mute);word-break:break-all}
+.copy:hover{color:var(--ink)}
+/* split view: Inbox and Archive */
+.split{display:grid;grid-template-columns:400px 1fr;height:100vh;min-height:0}
+.listpane{border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;background:color-mix(in srgb,var(--surface) 55%,transparent)}
+.list{overflow:auto;flex:1;padding:4px 10px 24px}
+.grp-h{font:900 10.5px var(--sans);letter-spacing:.2em;text-transform:uppercase;color:var(--mute);padding:14px 12px 6px;display:flex;justify-content:space-between}
+.item{display:grid;grid-template-columns:4px 1fr auto;gap:0 12px;padding:10px 12px 10px 0;border-radius:11px;cursor:pointer;margin-bottom:2px;align-items:center;border:1px solid transparent}
+.item .bar{align-self:stretch;border-radius:3px;background:var(--line2)}
+.item .bar.h1{background:var(--gold)}.item .bar.h2{background:var(--rust)}
+.item .t{font-weight:700;font-size:14px;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.item .m{font-size:12px;color:var(--mute);margin-top:3px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.item .age{font-weight:700;font-size:12px;color:var(--mute);text-align:right}
+.item .age.a1{color:var(--gold-ink)}.item .age.a2{color:var(--rust)}
+.item:hover{background:var(--sunk)}
+.item.sel{background:var(--solid);box-shadow:var(--shadow);border-color:var(--line2)}
+.item.stack{background:var(--solid);border:1px dashed var(--line2);padding:12px 12px 12px 0;margin:6px 0 10px;position:relative}
+.item.stack.sel{border:1px solid var(--green);box-shadow:0 0 0 3px var(--green-soft)}
+.item.stack .t{font-family:var(--serif);font-size:19px;font-weight:700}
+.item.stack .count{font:900 12px var(--sans);background:var(--ink);color:var(--bg);border-radius:999px;padding:2px 9px}
+.item.member{grid-template-columns:4px 22px 1fr auto;margin-left:14px}
+.cb{width:18px;height:18px;border-radius:5px;border:1.5px solid var(--line2);display:inline-grid;place-items:center;background:var(--solid);cursor:pointer;padding:0}
+.cb.on{background:var(--green);border-color:var(--green)}
+.cb.on:after{content:"";width:8px;height:4px;border:2px solid var(--on-accent);border-top:0;border-right:0;transform:rotate(-45deg) translate(1px,-1px)}
+.reader{overflow:auto;min-height:0;padding:20px 32px 60px}
+.back{display:none}
+/* decide */
+.decide{position:sticky;top:0;z-index:5;padding:14px;margin:-6px -6px 22px}
+.decide.open{position:relative}
+.decide .q{display:flex;align-items:baseline;gap:10px;margin:0 4px 12px;flex-wrap:wrap}
+.decide .q h3{margin:0;font-size:21px}
+.decide .q .muted{font-size:13px}
+.opts{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.opt{position:relative;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:var(--solid);cursor:pointer;transition:border-color .15s,box-shadow .15s,opacity .15s;text-align:left}
+.opt:hover{border-color:var(--line2)}
+.opt .k{position:absolute;top:11px;right:11px}
+.opt .v{display:flex;align-items:center;gap:8px;font-weight:900;font-size:15px}
+.opt .v i{width:26px;height:26px;border-radius:8px;display:grid;place-items:center}
+.opt .d{font-size:12.5px;color:var(--mute);margin-top:5px;line-height:1.4}
+.opt.promote .v i{background:var(--green-soft);color:var(--green)}
+.opt.reference .v i{background:var(--teal-soft);color:var(--teal)}
+.opt.keep .v i{background:var(--gold-soft);color:var(--gold-ink)}
+.opt.kill .v i{background:var(--rust-soft);color:var(--rust)}
+.opt.on.promote{border-color:var(--green);box-shadow:0 0 0 3px var(--green-soft)}
+.opt.on.reference{border-color:var(--teal);box-shadow:0 0 0 3px var(--teal-soft)}
+.opt.on.keep{border-color:var(--gold);box-shadow:0 0 0 3px var(--gold-soft)}
+.opt.on.kill{border-color:var(--rust);box-shadow:0 0 0 3px var(--rust-soft)}
+.opt.dim{opacity:.55}
+.form{margin-top:14px;padding:18px 18px 16px;border-radius:12px;background:var(--solid);border:1px solid var(--line2);display:grid;grid-template-columns:1fr 300px;gap:22px}
+.form.promote{border-color:var(--green)}.form.reference{border-color:var(--teal)}.form.keep{border-color:var(--gold)}.form.kill{border-color:var(--rust)}
+.field{margin-bottom:14px}
+.field>label,.field>.label{display:block;margin-bottom:6px}
+.field label em{font-style:normal;color:var(--rust);letter-spacing:0;text-transform:none;font-weight:700;margin-left:6px}
+.seg{display:flex;border:1px solid var(--line2);border-radius:10px;overflow:hidden;background:var(--sunk)}
+.seg button{flex:1;text-align:center;padding:8px 6px;font-weight:700;font-size:13px;color:var(--ink2);border:0;border-right:1px solid var(--line);background:none;cursor:pointer;line-height:1.3}
+.seg button:last-child{border-right:0}
+.seg button small{display:block;font-weight:400;font-size:11px;color:var(--mute)}
+.seg button.on{background:var(--green);color:var(--on-accent)}.seg button.on small{color:inherit;opacity:.8}
+.input{width:100%;padding:9px 12px;border:1px solid var(--line2);border-radius:9px;background:var(--bg);font-size:14px;color:var(--ink)}
+.input:focus{outline:none;border-color:var(--green);box-shadow:0 0 0 3px var(--green-soft)}
+textarea.input{min-height:72px;resize:vertical;line-height:1.5}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.preview{background:var(--sunk);border-radius:10px;padding:14px;font-size:13px;align-self:start}
+.preview .label{margin-bottom:10px}
+.preview ol{margin:0;padding-left:18px}.preview li{margin-bottom:8px}
+.preview .mono{word-break:break-all;color:var(--green-ink)}
+.formfoot{grid-column:1/-1;display:flex;align-items:center;gap:12px;border-top:1px solid var(--line);padding-top:14px;flex-wrap:wrap}
+.formfoot .hint{margin-left:auto;font-size:12.5px;color:var(--mute)}
+/* doc */
+.doc{max-width:860px;padding:30px 40px 36px}
+.doc .meta{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.doc h1.title{font-size:44px;line-height:1.05;margin:16px 0 10px;overflow-wrap:anywhere}
+.doc .path{margin-bottom:18px}
+.ask{border-left:3px solid var(--gold);background:var(--gold-soft);padding:12px 18px;border-radius:0 10px 10px 0;margin-bottom:10px}
+.ask .label{color:var(--gold-ink);margin-bottom:4px}
+.ask p{margin:0;font-family:var(--serif);font-size:20px;line-height:1.4;font-weight:500}
+.outcome{border-left:3px solid var(--teal);background:var(--teal-soft);padding:12px 18px;border-radius:0 10px 10px 0;margin-bottom:10px;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.md{overflow-wrap:anywhere}
+.md h1{font-size:30px}.md h2{font-size:26px;margin:28px 0 8px;padding-bottom:4px;border-bottom:1px solid var(--line)}
+.md h3{font-size:20px;margin:20px 0 6px}.md h4{font-size:17px;margin:16px 0 4px}
+.md p,.md li{color:var(--ink2);font-size:15px;line-height:1.7}
+.md ul{padding-left:20px}
+.md code{font:12.5px var(--mono);background:var(--sunk);padding:1px 5px;border-radius:5px}
+.md .tbl{overflow-x:auto;margin:10px 0}.md table{border-collapse:collapse;font-size:13.5px}.md td{border:1px solid var(--line2);padding:5px 9px;vertical-align:top;color:var(--ink2)}.md tr:first-child td{font-weight:700;background:var(--sunk)}
+.md pre{background:var(--sunk);padding:12px;border-radius:8px;overflow:auto;font:12.5px/1.5 var(--mono)}
+/* toast */
+#toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,20px);opacity:0;pointer-events:none;display:flex;align-items:center;gap:14px;padding:11px 12px 11px 18px;border-radius:12px;background:var(--ink);color:var(--bg);box-shadow:var(--shadow-lift);font-size:13.5px;z-index:60;transition:.2s;max-width:min(680px,92vw)}
+#toast.show{opacity:1;transform:translate(-50%,0);pointer-events:auto}
+#toast.bad{background:var(--rust);color:#fff}
+#toast button{background:none;border:0;font-weight:900;color:var(--gold);cursor:pointer;display:flex;gap:6px;align-items:center;white-space:nowrap}
+.dark #toast button{color:#7f611a}
+#toast kbd{background:transparent;color:inherit;border-color:currentColor;opacity:.7}
+/* batch */
+.btable{width:100%;border-collapse:collapse;margin-top:6px;font-size:13.5px}
+.btable td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+.btable tr td:first-child{width:96px}
+/* projects */
+.scroll{overflow:auto;height:100vh;padding:0 28px 40px}
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:6px 0 22px}
+.tile{padding:14px 16px;text-align:left;cursor:default}
+button.tile{cursor:pointer;font:inherit;color:inherit}
+.tile .num{font-size:38px;font-weight:700;line-height:1}
+.tile .lab{font-size:12.5px;color:var(--mute);margin-top:6px;display:flex;gap:6px;align-items:center}
+.board{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) 380px;gap:16px;align-items:start}
+.col h3{font:900 11px var(--sans);letter-spacing:.18em;text-transform:uppercase;color:var(--mute);margin:0 0 10px;display:flex;gap:8px;align-items:center}
+.pc{padding:14px 15px;margin-bottom:10px;cursor:pointer;display:block;width:100%;text-align:left;font:inherit;color:inherit}
+.pc:hover{border-color:var(--line2)}
+.pc.sel{box-shadow:0 0 0 2px var(--green),var(--shadow-lift)}
+.pc.closed{opacity:.6}
+.pc .top{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+.pc h4{font-size:20px;margin:0;line-height:1.15;font-weight:700;overflow-wrap:anywhere}
+.pc .dm{font-size:12.5px;color:var(--ink2);margin:8px 0 10px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.pc .dm.miss{color:var(--rust-ink);font-weight:700}
+.pc .row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.ring{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;flex:none}
+.ring span{width:34px;height:34px;border-radius:50%;background:var(--solid);display:grid;place-items:center;font:900 12px/1 var(--sans);text-align:center}
+.ring small{display:block;font-size:8.5px;font-weight:700;color:var(--mute);letter-spacing:.05em;margin-top:2px}
+.drawer{padding:20px;position:sticky;top:16px;max-height:calc(100vh - 32px);overflow:auto}
+.drawer h2{font-size:28px;margin:6px 0 4px;line-height:1.1;overflow-wrap:anywhere}
+.drawer .sec{margin:18px 0 8px}
+.dod{border-left:3px solid var(--green);background:var(--green-soft);padding:10px 14px;border-radius:0 10px 10px 0;font-size:13.5px}
+.dod.missing{border-color:var(--rust);background:var(--rust-soft);color:var(--rust-ink)}
+.dod .cmp{display:grid;grid-template-columns:1fr;gap:6px;margin:8px 0}.dod .old{text-decoration:line-through;color:var(--mute)}
+.tl{list-style:none;margin:0;padding:0;font-size:13px}
+.tl li{display:grid;grid-template-columns:12px 1fr auto;gap:8px;padding:4px 0;align-items:baseline}
+.tl li:before{content:"";width:7px;height:7px;border-radius:50%;background:var(--green);margin-top:5px}
+.tl .muted{font-size:11.5px}
+.acts{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px}
+.clockbar{height:8px;border-radius:4px;background:var(--sunk);margin-top:8px;overflow:hidden}
+.clockbar i{display:block;height:100%}
+/* repo viewer */
 .repohead{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px}
-.crumbs{margin:2px 0 10px;color:var(--mute);overflow-wrap:anywhere}.crumbs a{color:var(--acc);text-decoration:none}
-.repofiles{border:1px solid var(--line);border-radius:6px;background:var(--panel);overflow:hidden}
-.repofiles a{display:grid;grid-template-columns:24px 1fr auto;gap:6px;padding:6px 12px;border-bottom:1px solid var(--line);color:var(--ink);text-decoration:none;align-items:center}
-.repofiles a:last-child{border-bottom:0}.repofiles a:hover{background:var(--soft)}.repofiles em{font-style:normal;color:var(--mute);font-size:12px}
-.copy-path{cursor:pointer}.copy-path:hover{text-decoration:underline}
-.empty{color:var(--mute);padding:40px;text-align:center}
-#back{display:none}
-@media(max-width:800px){ /* phone: list and note are two pages, toggled by body.note */
-body{height:auto;display:block}#hint{display:none}main{display:block;height:auto}aside{border-right:0}section{display:none}
-body.note aside{display:none}body.note section{display:block;overflow:visible}
-#back{display:block;margin:10px 16px;min-height:44px}
-.tabs{overflow-x:auto}.tabs button{flex:1 0 auto;min-height:44px;white-space:nowrap}
-.row{min-width:0}.row .t,.row .m{overflow-wrap:anywhere}.row-copy{min-height:32px}
-.repofiles a{min-height:44px}.repohead .act{min-height:44px}.dod textarea{font-size:16px}.dod .act{min-height:44px}.dod .dodhead .act{min-height:36px}.dod .dodcmp{grid-template-columns:1fr}
-.activity{padding:8px 16px}.activity .side{min-width:0;width:100%}.activity .repos{flex-wrap:nowrap;overflow-x:auto}.activity .repos a{white-space:nowrap}
-.inflight{overflow-x:auto;flex-wrap:nowrap}.inflight>b,.inflight .chip{white-space:nowrap}.inflight .chip{cursor:default}
-.decide{position:fixed;left:0;right:0;bottom:0;z-index:2;max-height:65vh;overflow:auto;border-top:1px solid var(--line);border-bottom:0;padding:10px 16px calc(10px + env(safe-area-inset-bottom))}
-.decide .btns{display:grid;grid-template-columns:1fr 1fr}.decide .btns button.act{min-height:44px;padding:6px 10px}
-.form{grid-template-columns:1fr;max-width:none}.form .go{grid-column:1;flex-wrap:wrap}.form input,.form select,.form textarea{font-size:16px;min-height:44px;width:100%!important}.go button{min-height:44px}
-article{overflow:visible;padding:14px 16px 240px;overflow-wrap:anywhere}article pre{max-width:100%}
+.crumbs{margin:2px 0 10px;color:var(--mute);overflow-wrap:anywhere}.crumbs a{text-decoration:none}
+.repofiles{border:1px solid var(--line);border-radius:10px;background:var(--solid);overflow:hidden}
+.repofiles a{display:grid;grid-template-columns:24px 1fr auto;gap:6px;padding:7px 12px;border-bottom:1px solid var(--line);color:var(--ink);text-decoration:none;align-items:center}
+.repofiles a:last-child{border-bottom:0}.repofiles a:hover{background:var(--sunk)}.repofiles em{font-style:normal;color:var(--mute);font-size:12px}
+/* pulse */
+.pgrid{display:grid;grid-template-columns:1.25fr 1fr;gap:16px}
+.panel{padding:18px 20px;min-width:0}
+.panel h3{margin:0 0 2px;font-size:22px}
+.panel .cap{color:var(--mute);font-size:12.5px;margin-bottom:12px}
+.hmwrap{overflow-x:auto;padding-bottom:4px}
+.hm{display:grid;grid-auto-flow:column;grid-template-rows:repeat(7,13px);grid-auto-columns:13px;gap:3px}
+.hm i{border-radius:3px;background:var(--g0)}
+.hm i.l1{background:var(--g1)}.hm i.l2{background:var(--g2)}.hm i.l3{background:var(--g3)}.hm i.l4{background:var(--g4)}
+.hm i.today{outline:1.5px solid var(--ink);outline-offset:-1px}
+.hmonths{display:grid;grid-auto-columns:13px;column-gap:3px;font-size:11px;color:var(--mute);height:16px}
+.bars .b{display:grid;grid-template-columns:minmax(0,190px) 1fr 32px;gap:10px;align-items:center;font-size:13px;margin-bottom:4px;padding:3px 6px;border-radius:6px;cursor:pointer;width:100%;background:none;border:0;text-align:left}
+.bars .b:hover{background:var(--sunk)}
+.bars .b>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bars .fill{height:12px;border-radius:0 4px 4px 0;background:var(--g3)}
+.bars .n{text-align:right;font-weight:700;color:var(--ink2)}
+.legend{display:flex;gap:14px;font-size:12px;color:var(--ink2);align-items:center;flex-wrap:wrap}
+.legend i{width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:5px;vertical-align:-1px}
+.chart rect{transition:opacity .15s}.chart g:hover rect{opacity:.8}
+/* overlays */
+.scrim{position:fixed;inset:0;background:rgba(15,21,18,.35);backdrop-filter:blur(3px);z-index:50;display:grid;justify-items:center;align-items:start;padding-top:12vh}
+.pal{width:min(640px,94vw);background:var(--solid);border-radius:16px;box-shadow:0 30px 80px rgba(0,0,0,.28);border:1px solid var(--line2);overflow:hidden}
+.pal .in{display:flex;gap:10px;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line)}
+.pal .in input{flex:1;border:0;background:none;font-size:17px;outline:none;color:var(--ink)}
+.pal .res{max-height:52vh;overflow:auto}
+.pal .sect{padding:12px 18px 4px}
+.pal .r{display:flex;gap:12px;align-items:center;padding:9px 18px;font-size:14px;cursor:pointer}
+.pal .r.on{background:var(--green-soft)}
+.pal .r .grow{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pal .foot{display:flex;gap:16px;padding:10px 18px;border-top:1px solid var(--line);font-size:12px;color:var(--mute)}
+.keys{width:min(560px,94vw);padding:22px 26px}
+.keys h3{margin:0 0 10px;font-size:24px}
+.keys table{width:100%;border-collapse:collapse;font-size:13.5px}.keys td{padding:5px 0;border-bottom:1px solid var(--line)}.keys td:first-child{width:140px}
+/* phone */
+.mtop,.tabbar{display:none}
+@media(max-width:1180px){.board{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.board .drawer{grid-column:1/-1;position:relative;top:0;max-height:none;order:-1}.board .drawer.none{display:none}}
+@media(max-width:800px){
+  body{font-size:15px}
+  .app{display:block;height:auto;min-height:100vh;padding-bottom:84px}
+  #main{height:auto;overflow:visible}
+  .rail{display:none}
+  .mtop{display:flex;align-items:center;justify-content:space-between;padding:calc(10px + env(safe-area-inset-top)) 18px 4px}
+  .mtop .name{font-family:var(--serif);font-size:26px;font-weight:700}.mtop .name em{color:var(--green)}
+  .split{display:block;height:auto}
+  .listpane{border:0;background:transparent}
+  .pane-h{padding:4px 18px 8px}.pane-h h1{font-size:32px}
+  .search kbd{display:none}
+  .list{padding:4px 10px;overflow:visible}
+  .item{min-height:56px}
+  .reader{display:none;overflow:visible}
+  body.note .listpane{display:none}body.note .reader{display:block;padding:4px 12px 52vh}
+  .back{display:inline-flex;align-items:center;gap:4px;color:var(--green);font-weight:700;padding:8px 4px;background:none;border:0;min-height:44px;cursor:pointer}
+  .decide{position:fixed;left:0;right:0;bottom:0;top:auto;margin:0;z-index:40;border-radius:20px 20px 0 0;max-height:78vh;overflow:auto;padding:10px 14px calc(16px + env(safe-area-inset-bottom));box-shadow:0 -12px 40px rgba(0,0,0,.2);background:var(--solid)}
+  .decide.open{position:fixed}
+  .decide:before{content:"";display:block;width:40px;height:5px;border-radius:3px;background:var(--line2);margin:0 auto 10px}
+  .decide .q h3{font-size:19px}.decide .q .kh{display:none}
+  .opts{grid-template-columns:1fr 1fr}.opt{min-height:60px}.opt .k{display:none}
+  .form{grid-template-columns:1fr;padding:14px}.preview{display:none}.two{grid-template-columns:1fr}
+  .input{font-size:16px;min-height:44px}.seg button{min-height:44px}.btn{min-height:44px}
+  .formfoot .hint{display:none}
+  .doc{padding:20px 18px}.doc h1.title{font-size:32px}
+  .scroll{height:auto;overflow:visible;padding:0 14px 30px}
+  .tiles{grid-template-columns:1fr 1fr}
+  .board{grid-template-columns:1fr}
+  .board .drawer{display:none}
+  body.detail .board>.col,body.detail .tiles,body.detail .pane-h{display:none}
+  body.detail .board .drawer{display:block}
+  .pgrid{grid-template-columns:1fr}
+  .tabbar{display:grid;grid-template-columns:repeat(4,1fr);position:fixed;left:0;right:0;bottom:0;padding:8px 6px calc(8px + env(safe-area-inset-bottom));background:var(--surface);backdrop-filter:blur(14px);border-top:1px solid var(--line);z-index:30}
+  .tabbar a{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:11px;font-weight:700;color:var(--mute);text-decoration:none;position:relative;min-height:44px;justify-content:center}
+  .tabbar a svg{width:22px;height:22px}
+  .tabbar a.on{color:var(--green)}
+  .tabbar a .bd{position:absolute;top:0;left:56%;background:var(--rust);color:#fff;font-size:10px;border-radius:9px;padding:0 5px}
+  body.note .tabbar{display:none}
+  #toast{bottom:calc(90px + env(safe-area-inset-bottom))}
 }
 </style></head><body>
-<header><h1>RawNotes Triage version __VERSION__</h1><div class="stats" id="stats"></div>
-<span style="flex:1"></span><span class="stats" id="hint">Keys: j/k next/prev · p promote · d durable · a archive · c keep · y copy path · Enter apply</span></header>
-<div class="activity" id="activity"><span>Loading GitHub activity…</span></div>
-<div class="inflight" id="inflight"></div>
-<main>
-<aside><div class="tabs"><button class="on" data-tab="live">Backlog</button><button data-tab="done">Done</button><button data-tab="projects">Active Projects</button></div><div id="list"></div></aside>
-<section>
-<button class="act" id="back" onclick="back()">← Backlog</button>
-<div class="decide" id="decide"><div class="empty">Pick a note to review.</div></div>
-<article id="view"><div class="empty">Oldest first. Decide one, move on.</div></article>
-</section></main>
+<div class="app">
+  <aside class="rail" id="rail"></aside>
+  <div class="mtop"><div class="name">Raw<em>Notes</em></div><button class="btn sm ghost" id="mPal" aria-label="Search"></button></div>
+  <div id="main"></div>
+</div>
+<nav class="tabbar" id="tabbar"></nav>
+<div id="toast" role="status" aria-live="polite"></div>
+<div id="overlay"></div>
 <script>
-let data=null,tab='live',sel=null,mode=null,projects=[],projectRequest=0;
-const $=s=>document.querySelector(s);const narrow=()=>matchMedia('(max-width:800px)').matches;
-function back(){document.body.classList.remove('note');scrollTo(0,0)}
-function page(nav){if(nav&&narrow()){document.body.classList.add('note');scrollTo(0,0)}}
+const VERSION='__VERSION__';
+const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const enc=encodeURIComponent;
+const narrow=()=>matchMedia('(max-width:800px)').matches;
+const svg=d=>`<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
+const I={
+ inbox:svg('<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5h13l3.5 7v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6z"/>'),
+ proj:svg('<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M8 13h3M8 16h6"/>'),
+ arch:svg('<rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M10 12h4"/>'),
+ pulse:svg('<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>'),
+ ref:svg('<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z"/><path d="M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"/>'),
+ search:svg('<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>'),
+ up:svg('<path d="M12 19V5M5 12l7-7 7 7"/>'),
+ pot:svg('<path d="M3 11h18v3a7 7 0 0 1-7 7h-4a7 7 0 0 1-7-7z"/><path d="M8 7c0-1.5 1-2 1-3.5M12 7c0-1.5 1-2 1-3.5M16 7c0-1.5 1-2 1-3.5"/>'),
+ x:svg('<path d="M18 6 6 18M6 6l12 12"/>'),
+ copy:svg('<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>'),
+ merge:svg('<circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="12" r="2.5"/><path d="M6 8.5v7M8.3 7.2l7.4 3.6"/>'),
+ check:svg('<path d="M20 6 9 17l-5-5"/>'),
+ clock:svg('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
+ gh:svg('<path d="M9 19c-4.3 1.4-4.3-2.5-6-3m12 5v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.2 4.2 0 0 0-.1-3.2s-1.1-.3-3.5 1.3a12.3 12.3 0 0 0-6.2 0C6.5 2.8 5.4 3.1 5.4 3.1a4.2 4.2 0 0 0-.1 3.2A4.6 4.6 0 0 0 4 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21"/>'),
+ undo:svg('<path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>'),
+ restore:svg('<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>'),
+ moon:svg('<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>'),
+ sun:svg('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'),
+ ext:svg('<path d="M7 17 17 7M8 7h9v9"/>'),
+ folder:svg('<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>'),
+};
+
+/* ---------- api ---------- */
+async function api(path,body){
+  const r=await fetch(path,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  let j;try{j=await r.json()}catch(e){throw Error('The triage server sent something unexpected.')}
+  if(j&&j.error&&!j.weeks)throw Error(j.error);return j}
+
+/* ---------- state ---------- */
+const S={route:'inbox',notes:null,projects:null,activity:null,stats:null,
+  sel:null,mode:null,expanded:null,batch:new Set(),batchMode:'merge',
+  f:{q:'',status:'all',type:null},af:{q:'',fate:'all'},asel:null,
+  psel:null,pdetail:null,repo:null,undoCount:0};
+
+/* ---------- small renderers ---------- */
+const stLabel={open:'Open',cooking:'Cooking',promoted:'Promoted',reference:'Reference',dead:'Killed',killed:'Killed',merged:'Merged',shipped:'Shipped'};
+const st=(s,txt)=>`<span class="st ${esc(s)}"><span class="dot"></span>${esc(txt??stLabel[s]??s)}</span>`;
+const kb=k=>`<kbd>${k}</kbd>`;
+const slugOf=f=>f.replace(/^(done\/)?\d{4}-\d{2}-\d{2}-/,'').replace(/\.md$/,'');
+const ageCls=a=>a>60?2:a>=14?1:0;
+const fmtDate=d=>{try{return new Date(d+'T00:00').toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'})}catch(e){return d}};
+const addDays=n=>{const d=new Date();d.setDate(d.getDate()+n);return d.toLocaleDateString('sv')};
 function md(src){ // small markdown renderer: headings, lists, code, bold/italic, links
-  const out=[];let inCode=false,inList=false,para=[];
+  const out=[];let inCode=false,inList=false,inTable=false,para=[];
   const inline=s=>esc(s).replace(/`([^`]+)`/g,'<code>$1</code>').replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/(^|\W)\*(?!\s)(.+?)\*(?=\W|$)/g,'$1<i>$2</i>')
-    .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g,'<a href="$2" target="_blank">$1</a>').replace(/(^|\s)(https?:\/\/[^\s<]+)/g,'$1<a href="$2" target="_blank">$2</a>');
-  const flush=()=>{if(para.length){out.push('<p>'+inline(para.join(' '))+'</p>');para=[]}if(inList){out.push('</ul>');inList=false}};
+    .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g,'<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>').replace(/(^|\s)(https?:\/\/[^\s<]+)/g,'$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>');
+  const flush=()=>{if(para.length){out.push('<p>'+inline(para.join(' '))+'</p>');para=[]}if(inList){out.push('</ul>');inList=false}if(inTable){out.push('</table></div>');inTable=false}};
   for(const raw of src.split('\n')){
     if(raw.startsWith('```')){flush();inCode=!inCode;out.push(inCode?'<pre>':'</pre>');continue}
     if(inCode){out.push(esc(raw));continue}
-    const h=raw.match(/^(#{1,4})\s+(.*)/);if(h){flush();out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`);continue}
+    const h=raw.match(/^(#{1,5})\s+(.*)/);if(h){flush();const n=Math.min(h[1].length,4);out.push(`<h${n}>${inline(h[2])}</h${n}>`);continue}
     const li=raw.match(/^\s*[-*]\s+(.*)/);if(li){if(para.length){out.push('<p>'+inline(para.join(' '))+'</p>');para=[]}if(!inList){out.push('<ul>');inList=true}out.push('<li>'+inline(li[1].replace(/<!--.*?-->/g,''))+'</li>');continue}
+    if(/^\s*\|.*\|\s*$/.test(raw)){if(!inTable){flush();inTable=true;out.push('<div class="tbl"><table>')}
+      const cells=raw.trim().slice(1,-1).split('|').map(c=>c.trim());if(cells.every(c=>/^:?-{2,}:?$/.test(c)))continue;
+      out.push('<tr>'+cells.map(c=>`<td>${inline(c)}</td>`).join('')+'</tr>');continue}
+    if(inTable){out.push('</table></div>');inTable=false}
     if(raw.trim()===''){flush();continue}
     if(inList&&/^\s{2,}/.test(raw)){out[out.length-1]=out[out.length-1].replace(/<\/li>$/,' '+inline(raw.trim())+'</li>');continue}
     para.push(raw)}
   flush();return out.join('\n')}
-let repoState=null;const enc=encodeURIComponent;
-function ghInfo(g){g=g||{};
-  if(g.pushed&&g.unpushed)return{label:'GH ↑'+g.unpushed,cls:'warn',text:`On GitHub (${g.repo}), but ${g.unpushed} commit${g.unpushed===1?'':'s'} here ${g.unpushed===1?'is':'are'} not pushed yet`};
-  if(g.pushed)return{label:'GH',cls:'ok',text:'Pushed to GitHub: '+g.repo};
-  if(g.repo)return{label:'No GH',cls:'no',text:`GitHub remote is set (${g.repo}) but nothing has been pushed yet`};
-  return{label:'No GH',cls:'no',text:g.git?'Git repository with no GitHub remote: not on GitHub':'Not a Git repository: not on GitHub'}}
-const ghBadge=g=>{const i=ghInfo(g);return`<span class="badge gh ${i.cls}" title="${esc(i.text)}">${i.label}</span>`};
-const ghUrl=u=>/^https:\/\/github\.com\//.test(u||'')?u:'#';
-const fmtSize=n=>n<1024?n+' B':n<1048576?(n/1024).toFixed(1)+' KB':(n/1048576).toFixed(1)+' MB';
-function closeRepo(){repoState=null;
-  if(sel)return tab==='projects'?showProject(sel):show(sel);
-  $('#view').innerHTML='<div class="empty">Pick something from the list.</div>'}
-const repoBar=url=>`<div class="repohead"><button class="act" id="repoClose" type="button">← Back</button><a href="${esc(ghUrl(url))}" target="_blank" rel="noopener noreferrer">Open on GitHub ↗</a></div>`;
-function crumbs(name,path){const segs=path?path.split('/'):[];
-  return `<div class="crumbs"><a href="#" data-rp="">${esc(name)}</a>`+segs.map((sg,i)=>i===segs.length-1?` / <b>${esc(sg)}</b>`:` / <a href="#" data-rp="${esc(segs.slice(0,i+1).join('/'))}">${esc(sg)}</a>`).join('')+'</div>'}
-const fileList=es=>es.length?`<div class="repofiles">${es.map(e=>`<a href="#" data-rp="${esc(e.path)}"><span>${e.type==='dir'?'📁':'📄'}</span><span>${esc(e.name)}${e.type==='dir'?'/':''}</span><em>${e.type==='file'?fmtSize(e.size):''}</em></a>`).join('')}</div>`:'<p class="meta">Empty.</p>';
-function repoHomeHtml(name,j){const r=j.repo,note=k=>j.errors[k]?`<p class="meta">Couldn't load: ${esc(j.errors[k])}</p>`:'';
-  const none=(l,t)=>l.length?'':`<p class="meta">${t}</p>`;
-  return repoBar(r.url)+`<h1>${r.private?'🔒 ':''}${esc(r.name)}</h1>
-  <p class="meta">${esc(r.description||'No description')} · default branch <code>${esc(r.default_branch)}</code> · last push ${esc(r.pushed_at)}${r.archived?' · archived':''}</p>
-  <h2>Files</h2>${fileList(j.tree)}${note('tree')}
-  <h2>${j.readme?esc(j.readme.name):'README'}</h2>${j.readme?md(j.readme.text):'<p class="meta">No README.</p>'}
-  <h2>Recent commits</h2>${j.commits.length?'<ul>'+j.commits.map(c=>`<li>${esc(c.title)} <span class="meta">· ${esc(c.date)} · ${esc(c.sha)} · ${esc(c.author)}</span></li>`).join('')+'</ul>':none(j.commits,'No commits.')}${note('commits')}
-  <h2>Pull requests</h2>${j.prs.length?'<ul>'+j.prs.map(x=>`<li>#${x.number} ${esc(x.title)} <span class="badge">${esc(x.state)}</span> <span class="meta">${esc(x.updated)} · ${esc(x.author)}</span></li>`).join('')+'</ul>':none(j.prs,'No pull requests.')}${note('prs')}
-  <h2>Open issues</h2>${j.issues.length?'<ul>'+j.issues.map(x=>`<li>#${x.number} ${esc(x.title)} <span class="meta">${esc(x.updated)} · ${esc(x.author)} · ${x.comments} comment${x.comments===1?'':'s'}</span></li>`).join('')+'</ul>':none(j.issues,'No open issues.')}${note('issues')}`}
-function repoPathHtml(name,path,j){let body;
-  if(j.kind==='dir')body=fileList(j.entries);
-  else if(j.too_large)body=`<p class="meta">Too large to show here (${fmtSize(j.size)}). <a href="${esc(ghUrl(j.url))}" target="_blank" rel="noopener noreferrer">Open on GitHub ↗</a></p>`;
-  else if(j.binary||j.kind==='other')body=`<p class="meta">${j.binary?'Binary file':'Not a regular file ('+esc(j.type)+')'}. <a href="${esc(ghUrl(j.url))}" target="_blank" rel="noopener noreferrer">Open on GitHub ↗</a></p>`;
-  else body=/\.(md|markdown)$/i.test(j.name)?md(j.text):`<pre>${esc(j.text)}</pre>`;
-  return repoBar(j.url||`https://github.com/${name}`)+crumbs(name,path)+(j.kind==='file'?`<div class="meta">${esc(j.name)} · ${fmtSize(j.size)}</div>`:'')+body}
-async function openRepo(name,path,nav){path=path||'';const st=repoState={name,path};page(nav);
-  const v=$('#view');v.innerHTML=`<div class="empty">Loading ${esc(name)}…</div>`;v.scrollTop=0;if(!nav)scrollTo(0,0);
-  const wire=()=>{$('#repoClose').onclick=closeRepo;v.querySelectorAll('[data-rp]').forEach(a=>a.onclick=e=>{e.preventDefault();openRepo(name,a.dataset.rp)})};
-  try{const r=await fetch(path?`/api/repo/path?name=${enc(name)}&path=${enc(path)}`:`/api/repo?name=${enc(name)}`);const j=await r.json();
-    if(repoState!==st)return;if(j.error)throw Error(j.error);
-    v.innerHTML=path?repoPathHtml(name,path,j):repoHomeHtml(name,j);wire()}
-  catch(e){if(repoState!==st)return;v.innerHTML=repoBar(`https://github.com/${name}`)+`<p class="stale">${esc(e.message)}</p>`;wire()}}
-const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-const dayOf=d=>new Date(d+'T00:00:00');
-async function loadActivity(refresh){
-  try{const r=await fetch('/api/activity'+(refresh?'?refresh=1':''));renderActivity(await r.json())}
-  catch(e){renderActivity({error:'Could not reach the triage server.'})}
-}
-function renderActivity(a){const el=$('#activity');
-  const retry='<button type="button" id="actRefresh">Refresh</button>';
-  if(!a.weeks){el.innerHTML=`<span class="err">GitHub activity unavailable: ${esc(a.error)}</span> ${retry}`;$('#actRefresh').onclick=()=>loadActivity(true);return}
-  const todayStr=new Date().toLocaleDateString('sv');let lastMonth=-1;
-  const months=a.weeks.map((w,i)=>{const m=dayOf(w[0].date).getMonth();if(m===lastMonth)return'';lastMonth=m;return`<span style="grid-column:${i+1}">${MONTHS[m]}</span>`}).join('');
-  const cells=a.weeks.map((w,i)=>w.map(d=>`<i class="l${d.level}${d.date===todayStr?' today':''}" style="grid-column:${i+1};grid-row:${dayOf(d.date).getDay()+1}" title="${d.count} commit${d.count===1?'':'s'} pushed on ${MONTHS[dayOf(d.date).getMonth()]} ${dayOf(d.date).getDate()}, ${dayOf(d.date).getFullYear()}"></i>`).join('')).join('');
-  const repos=a.repos.map(r=>`<a href="${esc(r.url)}" data-repo="${esc(r.name)}" target="_blank" rel="noopener noreferrer" title="${esc(r.name)} · ${r.count} commit${r.count===1?'':'s'} in the last ${a.repo_days} days${r.private?' · private':''}">${r.private?'🔒 ':''}${esc(r.name.split('/').pop())} <em>${r.count}</em></a>`).join('');
-  el.innerHTML=`<div class="graph"><div class="months" style="grid-template-columns:repeat(${a.weeks.length},10px)">${months}</div><div class="cells">${cells}</div></div>
-  <div class="side"><div><b>${a.total}</b> commits pushed in the last year · <b>${a.active_days}</b> active days · streak <b>${a.streak}</b>d
-    <span class="legend">Less ${[0,1,2,3,4].map(n=>`<i style="background:var(--g${n})"></i>`).join('')} More</span> ${retry}
-    ${a.error?`<span class="err"> · showing saved data (${esc(a.error)})</span>`:''}</div>
-  <div class="repos"><span>Pushed in the last ${a.repo_days} days:</span>${repos||'<span>no commits yet</span>'}</div></div>`;
-  $('#actRefresh').onclick=()=>loadActivity(true);
-  el.querySelectorAll('[data-repo]').forEach(a=>a.onclick=e=>{e.preventDefault();openRepo(a.dataset.repo,'',true)});
-  const g=el.querySelector('.graph');g.scrollLeft=g.scrollWidth}
-async function load(keep){if(tab==='projects')return loadProjects();const requestedTab=tab;const r=await fetch('/api/notes');data=await r.json();if(tab!==requestedTab)return;
-  const live=data.live;const stale=live.filter(n=>n.stale).length;
-  $('#stats').innerHTML=`<b>${live.length}</b> live · <b>${live.filter(n=>n.status==='open').length}</b> open · <b>${live.filter(n=>n.status==='cooking').length}</b> cooking · <b>${data.done.length}</b> done`+(stale?` · <span class="stale">${stale} stale (&gt;60d)</span>`:'');
-  renderInflight();renderList();
-  if(!keep||!live.find(n=>n.file===sel)){sel=tab==='live'&&live.length?live[0].file:null}
-  if(sel)show(sel);else{$('#view').innerHTML='<div class="empty">Backlog empty. Go build something.</div>';$('#decide').innerHTML='<div class="empty">Nothing to decide.</div>'}}
-function renderInflight(){const el=$('#inflight');const f=data.inflight;
-  if(!f.length){el.innerHTML='<span style="color:var(--mute)">In flight: nothing promoted yet. Promote a note to start the clock.</span>';return}
-  el.innerHTML='<b>In flight:</b> '+f.map(x=>{const cls=x.done?'done':x.days_left<0?'late':x.days_left<=2?'soon':'';
-    const when=x.done?'done':x.days_left<0?`${-x.days_left}d late`:x.days_left===0?'due today':`${x.days_left}d left`;
-    return `<span class="chip ${cls}" title="${x.path}" onclick="openPath('${x.path}')">${esc(x.title)} · ${x.dest} · ${when}</span>`}).join('')}
-function openPath(p){if(narrow())return;fetch('/api/open',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:data.notes_dir+'/../'+p})})}
-function renderList(){if(tab==='projects'){projectList();return}const items=tab==='live'?data.live:data.done;
-  $('#list').innerHTML=items.length?items.map(n=>`<div class="row ${n.file===sel?'sel':''}" data-f="${n.file}">
-    <div class="t">${esc(n.title)}</div><span style="display:flex;gap:6px;align-items:center"><span class="badge ${n.status}">${n.status}</span><button class="act row-copy" type="button" data-path="${esc(n.abs_path)}" title="Copy full path" style="padding:1px 8px;font-size:11px">Copy</button></span>
-    <div class="m">${n.date} · <span class="${n.stale?'stale':''}">${n.age??'?'}d old</span> · ${n.type}${n.stale?' · STALE':''}</div></div>`).join(''):'<div class="empty">Nothing here.</div>';
-  document.querySelectorAll('.row').forEach(r=>r.onclick=()=>show(r.dataset.f,true));
-  document.querySelectorAll('.row-copy').forEach(b=>{
-    b.onclick=e=>{e.stopPropagation();copyPath(b.dataset.path,b)};
-    b.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.stopPropagation();copyPath(b.dataset.path,b)}};
-  })}
-async function show(f,nav){sel=f;mode=null;repoState=null;page(nav);renderList();
-  const r=await fetch('/api/note?f='+encodeURIComponent(f));const j=await r.json();
-  const n=(tab==='live'?data.live:data.done).find(x=>x.file===f)||{};
-  if(tab==='projects'||sel!==f)return;
-  $('#view').innerHTML=`<div class="meta"><span class="copy-path" id="detailPath" tabindex="0" role="button" title="Click to copy full path" data-path="${esc(n.abs_path||'')}">${esc(n.abs_path||f)}</span></div>`+md(j.text||j.error||'');
-  $('#view').scrollTop=0;renderDecide(n);
-  const pathEl=$('#detailPath');
-  if(pathEl&&n.abs_path){const go=()=>copyPath(pathEl.dataset.path,pathEl);pathEl.onclick=go;pathEl.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.stopPropagation();go()}}}}
-function renderDecide(n){const d=$('#decide');
-  if(tab!=='live'){d.innerHTML=`<div class="empty">Archived capture — read only.</div>`;return}
-  const slug=n.file.replace(/^\d{4}-\d{2}-\d{2}-/,'').replace(/\.md$/,'');
-  d.innerHTML=`<div><b>${esc(n.title)}</b> <span class="badge ${n.status}">${n.status}</span> <span style="color:var(--mute)">${n.age}d old</span></div>
-  <div class="btns">
-    <button class="act" data-m="promote">Promote → build it</button>
-    <button class="act" data-m="durable">Durable → reference only</button>
-    <button class="act" data-m="archive">Archive → no longer useful</button>
-    <button class="act" data-m="keep">Keep cooking</button>
-  </div>
-  <div class="form" id="form" style="display:none"></div>`;
-  document.querySelectorAll('#decide .act').forEach(b=>b.onclick=()=>setMode(b.dataset.m,slug))}
-function setMode(m,slug){mode=m;document.querySelectorAll('#decide .act').forEach(b=>b.classList.toggle('on',b.dataset.m===m));
-  const f=$('#form');f.style.display='grid';const F={
-  promote:`<label>Destination</label><select id="dest"><option value="active">active — real project, ship it</option><option value="experiments">experiments — spike / prototype</option><option value="learning">learning — study material</option><option value="templates">templates — reusable scaffold</option></select>
-    <label>Folder / file name</label><input id="slug" value="${slug}">
-    <label>Due in (days)</label><input id="due" type="number" value="7" min="1" max="30" style="width:90px">
-    <label>Definition of done</label><input id="note" placeholder="What does shipped look like? One sentence." autofocus>
-    <div class="go"><button onclick="apply()">Promote</button><span class="kbd">copies note to ../&lt;dest&gt;, stamps due date, moves capture to done/</span></div>`,
-  durable:`<label>File name</label><input id="slug" value="${slug}">
-    <label>Why keep it</label><input id="note" placeholder="optional: what this is a reference for" autofocus>
-    <div class="go"><button onclick="apply()">Save to reference/</button><span class="kbd">reference notes live in ../reference (Obsidian: Reference/)</span></div>`,
-  archive:`<label>Why not</label><input id="note" placeholder="one line: why this died" autofocus>
-    <div class="go"><button class="danger" onclick="apply()">Archive</button><span class="kbd">status: dead, moved to done/</span></div>`,
-  keep:`<label>Status</label><select id="status"><option value="cooking">cooking — I'm working it</option><option value="open">open — still just a question</option></select>
-    <label>Next step</label><input id="note" placeholder="optional: the one thing to do next" autofocus>
-    <div class="go"><button onclick="apply()">Keep</button><span class="kbd">leaves it in the backlog</span></div>`}[m];
-  f.innerHTML=F;const i=f.querySelector('input[autofocus]');if(i)i.focus()}
-async function apply(){if(!mode||!sel)return;const g=id=>{const e=document.getElementById(id);return e?e.value:undefined};
-  const body={file:sel,action:mode,note:g('note'),dest:g('dest'),slug:g('slug'),due_days:g('due'),status:g('status')};
-  const r=await fetch('/api/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const j=await r.json();
-  const go=$('.go');if(!go)return;let t=go.querySelector('.toast');if(!t){t=document.createElement('span');t.className='toast';go.appendChild(t)}
-  if(j.error){t.className='toast err';t.textContent=j.error;return}
-  t.textContent=j.msg;
-  const idx=data.live.findIndex(n=>n.file===sel);const next=data.live[idx+1]||data.live[idx-1];
-  if(mode==='keep'){await load(true)}else{sel=next?next.file:null;await load(true)}}
-function projectList(){
-  $('#list').innerHTML=projects.length?projects.map((p,i)=>`<div class="row ${sel===p.name?'sel':''}" data-project="${i}" role="button" tabindex="0"><div class="t">${ghBadge(p.gh)}${esc(p.name)}</div><span style="display:flex;gap:6px;align-items:center">${p.done_defined?'':'<span class="badge nodone" title="No definition of done yet">No done defined</span>'}<span class="badge">${p.repo?'Git':'Folder'}</span><button class="act row-copy" type="button" data-path="${esc(p.abs_path)}" title="Copy full path" style="padding:1px 8px;font-size:11px">Copy</button></span><div class="m">${esc(p.path)}</div></div>`).join(''):'<div class="empty">No active projects yet. Promote a note to active to start one.</div>';
-  document.querySelectorAll('[data-project]').forEach(el=>{el.onclick=()=>showProject(projects[Number(el.dataset.project)].name,true);el.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();el.click()}}});
-  document.querySelectorAll('.row-copy').forEach(b=>{
-    b.onclick=e=>{e.stopPropagation();copyPath(b.dataset.path,b)};
-    b.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.stopPropagation();copyPath(b.dataset.path,b)}};
-  });
-}
-function renderDodCount(){const missing=projects.filter(p=>!p.done_defined).length,el=$('#dodCount');if(!el)return;
-  el.innerHTML=missing?`<span class="stale">${missing} of ${projects.length} have no definition of done</span>`:`<span style="color:var(--ok)">All ${projects.length} have a definition of done</span>`}
-const oneLine=t=>t.replace(/\s+/g,' ').trim();
-function renderDod(p,mode,draft){const el=$('#dod');if(!el)return;const d=p.done,file=d.source||'NOTES.md',old=d.defined?d.text:'';
+// the note minus what the header already shows: title, "- key: value" lines, the question section
+const noteBody=t=>t.replace(/^# .*\n/,'').replace(/^(\s*- (date|status|type|promoted|due):.*\n|\s*\n)+/,'').replace(/## What's the question[^\n]*\n[\s\S]*?(?=\n## |$)/,'').trim();
+
+/* ---------- toast + undo ---------- */
+let toastTimer;
+function toast(msg,{undo=false,bad=false}={}){
+  const t=$('#toast');t.className=bad?'bad':'';
+  t.innerHTML=`<span>${bad?'':I.check} ${esc(msg)}</span>${undo?`<button type="button" id="tUndo">${I.undo}Undo ${kb('Z')}</button>`:''}`;
+  if(undo)$('#tUndo').onclick=doUndo;
+  requestAnimationFrame(()=>t.classList.add('show'));clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),bad?7000:9000)}
+async function doUndo(){
+  try{const r=await api('/api/undo',{});S.undoCount=r.left;toast(r.msg,{undo:r.left>0});
+    await refresh();
+    if(r.select){if(r.select.startsWith('done/')){if(S.notes.live.some(n=>n.file===r.select.slice(5)))S.sel=r.select.slice(5)}else if(S.notes.live.some(n=>n.file===r.select)){S.sel=r.select;S.expanded=null}}
+    render()}
+  catch(e){toast(e.message,{bad:true})}}
+
+/* ---------- data ---------- */
+async function loadNotes(){S.notes=await api('/api/notes')}
+async function loadProjects(){S.projects=(await api('/api/projects')).projects}
+async function loadActivity(force){try{S.activity=await api('/api/activity'+(force?'?refresh=1':''))}catch(e){S.activity={error:e.message}}renderRail()}
+async function loadStats(){try{S.stats=await api('/api/stats')}catch(e){S.stats={error:e.message}}}
+async function refresh(){await loadNotes();if(S.projects||S.route==='projects')await loadProjects().catch(()=>{});if(S.route==='pulse')await loadStats()}
+
+/* ---------- rail & tabbar ---------- */
+function counts(){const n=S.notes;if(!n)return{};const late=n.inflight.filter(x=>!x.done&&x.days_left!==null&&x.days_left<0).length;
+  return{live:n.live.length,done:n.done.length,late,flight:n.inflight.filter(x=>!x.done).length}}
+function renderRail(){
+  const c=counts(),a=S.activity,dark=document.documentElement.classList.contains('dark');
+  const nav=(id,ic,label,n,alert)=>`<a href="#/${id}" class="${S.route===id?'on':''}">${I[ic]}${label}<span class="n ${alert?'alert':''}">${n??''}</span></a>`;
+  let spark='';if(a&&a.weeks){const wk=a.weeks.slice(-16).map(w=>w.reduce((s,d)=>s+d.count,0)),mx=Math.max(...wk,1);
+    spark=`<div class="spark" title="Commits pushed per week, last 16 weeks">${wk.map(v=>`<i style="height:${Math.max(8,v/mx*100)}%"></i>`).join('')}</div><b>${a.total}</b> pushes this year · streak <b>${a.streak}d</b>`}
+  else if(a&&a.error)spark=`<span title="${esc(a.error)}">GitHub activity unavailable</span>`;
+  $('#rail').innerHTML=`<div class="brand"><div class="name">Raw<em>Notes</em></div><div class="sub">Triage</div></div>
+  <div class="nav">${nav('inbox','inbox','Inbox',c.live)}${nav('projects','proj','Projects',c.late||c.flight,!!c.late)}${nav('archive','arch','Archive',c.done)}${nav('pulse','pulse','Pulse')}
+  <div class="label">Lifecycle</div>
+  <div class="lifecycle"><div>${st('open')} <span>captured</span></div><div>${st('cooking')} <span>being worked</span></div><div style="font-size:11px;margin-top:2px">then one of</div>
+  <div>${st('promoted')} → Projects</div><div>${st('reference')} → reference/</div><div>${st('killed')} → Archive</div></div></div>
+  <div class="foot">${spark}
+   <div class="row"><button class="linkish" id="kPal">${kb('Ctrl K')} search</button><button class="linkish" id="kKeys">${kb('?')} keys</button></div>
+   <div class="row"><button class="linkish" id="theme">${dark?I.sun:I.moon} ${dark?'Light':'Dark'}</button><span>v${VERSION}</span></div></div>`;
+  $('#kPal').onclick=openPalette;$('#kKeys').onclick=openKeys;$('#theme').onclick=toggleTheme;
+  const tab=(id,ic,label,bd)=>`<a href="#/${id}" class="${S.route===id?'on':''}">${I[ic]}${bd?`<span class="bd">${bd}</span>`:''}${label}</a>`;
+  $('#tabbar').innerHTML=tab('inbox','inbox','Inbox')+tab('projects','proj','Projects',c.late)+tab('archive','arch','Archive')+tab('pulse','pulse','Pulse')}
+function toggleTheme(){const d=document.documentElement.classList.toggle('dark');localStorage.setItem('theme',d?'dark':'light');renderRail();if(S.route==='pulse')render()}
+
+/* ---------- Inbox model ---------- */
+function passes(n){const f=S.f;
+  if(f.status==='open'&&n.status!=='open')return false;
+  if(f.status==='cooking'&&n.status!=='cooking')return false;
+  if(f.status==='stale'&&!n.stale)return false;
+  if(f.type&&n.type!==f.type)return false;
+  if(f.q){const q=f.q.toLowerCase();if(!(n.title+' '+n.question+' '+n.file).toLowerCase().includes(q))return false}
+  return true}
+const stackKey=n=>slugOf(n.file).split('-').slice(0,2).join('-');
+function stackName(ms){const words=ms.map(n=>n.title.split(/\s+/));let k=0;
+  while(words.every(w=>w[k]!==undefined&&w[k].toLowerCase().replace(/[:—–-]+$/,'')===words[0][k].toLowerCase().replace(/[:—–-]+$/,'')))k++;
+  const s=words[0].slice(0,k).join(' ').replace(/[\s:—–-]+$/,'');
+  return s.length>2?s:slugOf(ms[0].file).split('-').slice(0,2).join(' ').replace(/^./,c=>c.toUpperCase())}
+function inboxModel(){
+  const live=S.notes.live.filter(passes);const by={};
+  if(!S.f.q)live.forEach(n=>{(by[stackKey(n)]=by[stackKey(n)]||[]).push(n)});
+  const stacks={};for(const k in by)if(by[k].length>=3)stacks[k]={key:k,members:by[k],name:stackName(by[k])};
+  const older=[],recent=[],seen=new Set();
+  for(const n of live){const k=stackKey(n),s=stacks[k];
+    if(s){if(seen.has(k))continue;seen.add(k);const newest=Math.min(...s.members.map(m=>m.age??0));(newest>=14?older:recent).push({kind:'stack',...s});continue}
+    ((n.age??0)>=14?older:recent).push({kind:'note',n})}
+  return{older,recent,stacks,count:live.length}}
+function navOrder(m){const out=[];for(const e of[...m.older,...m.recent]){if(e.kind==='note')out.push(e.n.file);else{out.push('stack:'+e.key);if(S.expanded===e.key)e.members.forEach(n=>out.push(n.file))}}return out}
+
+/* ---------- Inbox view ---------- */
+function renderInbox(){
+  const m=inboxModel(),live=S.notes.live;
+  const ord=navOrder(m);
+  if(!S.sel||!ord.includes(S.sel))S.sel=ord[0]||null;
+  if(S.sel&&S.sel.startsWith('stack:'))S.expanded=S.sel.slice(6);
+  const cnt=s=>live.filter(n=>s==='stale'?n.stale:n.status===s).length;
+  const chip=(v,label,n)=>`<button class="chip ${S.f.status===v?'on':''}" data-st="${v}">${label} <b>${n}</b></button>`;
+  const tchip=v=>`<button class="chip ${S.f.type===v?'on':''}" data-ty="${v}">${v[0].toUpperCase()+v.slice(1)}</button>`;
+  $('#main').innerHTML=`<div class="split"><div class="listpane"><div class="pane-h"><h1>Inbox</h1>
+    <div class="sub">${live.length} note${live.length===1?'':'s'} waiting on a decision · oldest first</div>
+    <label class="search">${I.search}<input id="q" placeholder="Search notes…" value="${esc(S.f.q)}" autocomplete="off">${kb('/')}</label>
+    <div class="chips">${chip('all','All',live.length)}${chip('open','Open',cnt('open'))}${chip('cooking','Cooking',cnt('cooking'))}${chip('stale','Stale',cnt('stale'))}</div>
+    <div class="chips" style="margin-top:6px">${tchip('question')}${tchip('research')}${tchip('issue')}</div></div>
+    <div class="list" id="list"></div></div><div class="reader" id="reader"></div></div>`;
+  $('#q').oninput=e=>{S.f.q=e.target.value;renderInboxList(true)};
+  $$('[data-st]').forEach(b=>b.onclick=()=>{S.f.status=b.dataset.st;renderInbox()});
+  $$('[data-ty]').forEach(b=>b.onclick=()=>{S.f.type=S.f.type===b.dataset.ty?null:b.dataset.ty;renderInbox()});
+  renderInboxList();renderReader()}
+function renderInboxList(fromSearch){
+  const m=inboxModel(),el=$('#list');if(!el)return;
+  const row=n=>{const a=n.age??0,c=ageCls(a);return `<div class="item ${n.file===S.sel?'sel':''}" data-f="${esc(n.file)}" role="button" tabindex="0">
+    <span class="bar ${c?'h'+c:''}"></span><div><div class="t">${esc(n.title)}</div><div class="m">${st(n.status)}<span>${esc(n.type)}</span>${n.stale?'<span class="err">stale</span>':''}</div></div><span class="age ${c?'a'+c:''}" title="waiting ${a} days">${a}d</span></div>`};
+  const member=n=>`<div class="item member ${n.file===S.sel?'sel':''}" data-f="${esc(n.file)}" role="button" tabindex="0"><span class="bar"></span>
+    <button class="cb ${S.batch.has(n.file)?'on':''}" data-cb="${esc(n.file)}" aria-label="Select"></button><div><div class="t" style="font-weight:${S.batch.has(n.file)?700:400}">${esc(n.title)}</div></div><span class="age">${n.age}d</span></div>`;
+  const ent=e=>{if(e.kind==='note')return row(e.n);const open=S.expanded===e.key,id='stack:'+e.key;
+    const dates=e.members.map(n=>n.date).sort();
+    return `<div class="item stack ${S.sel===id?'sel':''}" data-f="${esc(id)}" role="button" tabindex="0"><span class="bar"></span><div><div class="t">${esc(e.name)}</div>
+      <div class="m">${e.members.length} related notes · ${dates[0]===dates.at(-1)?dates[0]:dates[0].slice(5)+' – '+dates.at(-1).slice(5)} · ${open?'decide them together':'click to open'}</div></div><span class="count">${e.members.length}</span></div>`+(open?e.members.map(member).join(''):'')};
+  const grp=(label,es)=>es.length?`<div class="grp-h"><span>${label}</span><span>${es.reduce((s,e)=>s+(e.kind==='note'?1:e.members.length),0)}</span></div>${es.map(ent).join('')}`:'';
+  el.innerHTML=m.count?grp('Waiting 2+ weeks',m.older)+grp('This fortnight',m.recent):`<div class="empty">${S.notes.live.length?'Nothing matches.':'Inbox zero. Go build something.'}</div>`;
+  el.querySelectorAll('[data-f]').forEach(r=>{r.onclick=e=>{if(e.target.closest('[data-cb]'))return;selectNote(r.dataset.f,true)};
+    r.onkeydown=e=>{if(e.key==='Enter'&&e.target===r){e.preventDefault();selectNote(r.dataset.f,true)}}});
+  el.querySelectorAll('[data-cb]').forEach(b=>b.onclick=e=>{e.stopPropagation();const f=b.dataset.cb;S.batch.has(f)?S.batch.delete(f):S.batch.add(f);renderInboxList();if(S.sel&&S.sel.startsWith('stack:'))renderBatchSummary()});
+  if(fromSearch){const ord=navOrder(m);if(!ord.includes(S.sel)){S.sel=ord[0]||null;S.mode=null;renderReader()}}
+  const s=el.querySelector('.sel');if(s&&!fromSearch)s.scrollIntoView({block:'nearest'})}
+function selectNote(f,nav){
+  if(f.startsWith('stack:')){const k=f.slice(6);if(S.expanded!==k){S.expanded=k;const st=inboxModel().stacks[k];S.batch=new Set(st?st.members.map(n=>n.file):[]);S.batchMode='merge'}}
+  else{const n=S.notes.live.find(x=>x.file===f);if(n&&stackKey(n)!==S.expanded)S.expanded=null}
+  S.sel=f;S.mode=null;renderInboxList();renderReader();
+  if(nav&&narrow()){document.body.classList.add('note');scrollTo(0,0)}}
+
+function optCards(on){const o=(id,ic,v,d,k)=>`<button type="button" class="opt ${id} ${on===id?'on':on?'dim':''}" data-m="${id}"><span class="k">${kb(k)}</span><div class="v"><i>${I[ic]}</i>${v}</div><div class="d">${d}</div></button>`;
+  return `<div class="opts">${o('promote','up','Promote','Make it a project with a ship-by date','P')}${o('reference','ref','Reference','File it in reference/ for lookup','R')}${o('keep','pot','Keep','Still cooking: stays in the Inbox','C')}${o('kill','x','Kill','Not worth it: off to the Archive','X')}</div>`}
+function seg(name,items,on){return `<div class="seg" data-seg="${name}">${items.map(([v,l,s])=>`<button type="button" data-v="${v}" class="${v===on?'on':''}">${l}${s?`<small>${s}</small>`:''}</button>`).join('')}</div>`}
+const segVal=name=>{const b=document.querySelector(`[data-seg="${name}"] .on`);return b?b.dataset.v:null};
+function wireSegs(root,onChange){root.querySelectorAll('[data-seg]').forEach(s=>s.querySelectorAll('button').forEach(b=>b.onclick=()=>{s.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b));onChange&&onChange()}))}
+
+function formHtml(mode,n){const s=slugOf(n.file);
+  const foot=(btn,cls,hint)=>`<div class="formfoot"><button type="submit" class="btn ${cls}" id="go">${btn} ${kb('↵')}</button><button type="button" class="btn ghost" id="cancel">Cancel ${kb('Esc')}</button><span class="err" id="ferr"></span><span class="hint">${hint}</span></div>`;
+  if(mode==='promote')return `<form class="form promote" id="form"><div>
+    <div class="field"><span class="label">Promote to</span>${seg('dest',[['active','Active','ship it'],['experiments','Experiment','spike'],['learning','Learning','study'],['templates','Template','scaffold']],'active')}</div>
+    <div class="two"><div class="field"><label class="label" for="slug">Project name</label><input class="input mono" id="slug" value="${esc(s)}" autocomplete="off"></div>
+    <div class="field"><span class="label">Ship by</span>${seg('due',[['3','3d'],['7','7d'],['14','14d'],['30','30d']],'7')}</div></div>
+    <div class="field"><label class="label" for="note">Done means <em>required</em></label><textarea class="input" id="note" rows="3" placeholder="What does shipped look like? One or two sentences."></textarea></div></div>
+    <div class="preview" id="pv"></div>${foot(I.up+'Promote &amp; next','primary','Undo afterwards with Z · every move is logged')}</form>`;
+  if(mode==='reference')return `<form class="form reference" id="form"><div>
+    <div class="field"><label class="label" for="slug">File name</label><input class="input mono" id="slug" value="${esc(s)}" autocomplete="off"></div>
+    <div class="field"><label class="label" for="note">Why keep it</label><input class="input" id="note" placeholder="optional: what this is a reference for"></div></div>
+    <div class="preview" id="pv"></div>${foot(I.ref+'File as reference','primary','Shows up in Obsidian under Reference/')}</form>`;
+  if(mode==='keep')return `<form class="form keep" id="form"><div>
+    <div class="field"><span class="label">Status</span>${seg('status',[['cooking','Cooking',"I'm working it"],['open','Open','still just a question']],n.status==='open'?'open':'cooking')}</div>
+    <div class="field"><label class="label" for="note">Next step</label><input class="input" id="note" placeholder="optional: the one thing to do next"></div></div>
+    <div class="preview"><div class="label">What will happen</div><ol><li>Sets the status and adds the next step under ## Notes</li><li>The note stays in the Inbox; you move on to the next one</li></ol></div>${foot(I.pot+'Keep &amp; next','primary','')}</form>`;
+  return `<form class="form kill" id="form"><div>
+    <div class="field"><label class="label" for="note">Why not</label><input class="input" id="note" placeholder="one line: why this died (optional)"></div></div>
+    <div class="preview"><div class="label">What will happen</div><ol><li>Sets <b>status: dead</b> and writes your reason under ## Outcome</li><li>Moves the note to <span class="mono">RawNotes/done/</span>; it shows up in the <b>Archive</b></li></ol></div>${foot(I.x+'Kill &amp; next','danger','Restore it from the Archive any time')}</form>`}
+function updatePreview(){const pv=$('#pv');if(!pv||!S.mode)return;const slug=($('#slug')?.value||'').toLowerCase().replace(/[^a-z0-9-]/g,'')||'…';
+  if(S.mode==='promote'){const d=segVal('dest'),days=+segVal('due'),folder=d==='active'||d==='experiments';
+    pv.innerHTML=`<div class="label">What will happen</div><ol><li>Creates <span class="mono">~/Projects/${d}/${slug}${folder?'/NOTES.md':'.md'}</span></li>
+      <li>Stamps <b>promoted</b> today · <b>ship by ${fmtDate(addDays(days))}</b></li><li>Writes your <b>done means</b> into its ## Plan</li><li>Moves the capture to <span class="mono">RawNotes/done/</span></li><li>Shows up in <b>Projects</b> with a ${days}-day clock</li></ol>`}
+  if(S.mode==='reference')pv.innerHTML=`<div class="label">What will happen</div><ol><li>Copies to <span class="mono">~/Projects/reference/${slug}.md</span> with Obsidian properties</li><li>Moves the capture to <span class="mono">RawNotes/done/</span></li><li>Add it to <span class="mono">reference/README.md</span> if it belongs in the index</li></ol>`}
+
+function renderReader(){const r=$('#reader');if(!r)return;r.scrollTop=0;
+  if(!S.sel){r.innerHTML=`<div class="empty">${S.notes.live.length?'Pick a note.':'Inbox zero. Nothing to decide.'}</div>`;return}
+  if(S.sel.startsWith('stack:'))return renderBatch();
+  const n=S.notes.live.find(x=>x.file===S.sel);if(!n){r.innerHTML='';return}
+  r.innerHTML=`<button class="back" onclick="backToList()">‹ Inbox</button>
+   <div class="card decide ${S.mode?'open':''}" id="decide"><div class="q"><h3>What happens to this note?</h3><span class="muted">waiting ${n.age} day${n.age===1?'':'s'}</span><span class="muted kh" style="margin-left:auto">${kb('J')} ${kb('K')} next / prev</span></div>
+   ${optCards(S.mode)}${S.mode?formHtml(S.mode,n):''}</div><div id="doc" class="card doc"><div class="muted">Loading…</div></div>`;
+  wireDecide(n);loadDoc(n)}
+function wireDecide(n){
+  $$('#decide .opt').forEach(b=>b.onclick=()=>setMode(S.mode===b.dataset.m?null:b.dataset.m));
+  const f=$('#form');if(!f)return;
+  wireSegs(f,updatePreview);$('#slug')&&($('#slug').oninput=updatePreview);updatePreview();
+  f.onsubmit=e=>{e.preventDefault();apply()};$('#cancel').onclick=()=>setMode(null);
+  const first=f.querySelector('textarea,input#note')||f.querySelector('input');if(first&&!narrow())first.focus()}
+function setMode(m){if(!S.sel||S.sel.startsWith('stack:'))return;S.mode=m;const n=S.notes.live.find(x=>x.file===S.sel);
+  const d=$('#decide');d.classList.toggle('open',!!m);
+  d.innerHTML=d.innerHTML.split('<div class="opts">')[0]+optCards(m)+(m?formHtml(m,n):'');wireDecide(n);
+  if(m&&!narrow())d.scrollIntoView({block:'nearest'})}
+async function loadDoc(n){
+  try{const j=await api('/api/note?f='+enc(n.file));if(S.sel!==n.file)return;
+    $('#doc').innerHTML=docHtml(n,j.text);wireCopy($('#doc'))}
+  catch(e){if(S.sel===n.file)$('#doc').innerHTML=`<p class="err">${esc(e.message)}</p>`}}
+function docHtml(n,text,extra=''){
+  const age=n.age??0;
+  return `<div class="meta">${st(n.fate||n.status)}<span class="st plain">${esc(n.type)}</span><span class="st plain">Captured ${esc(n.date)}</span>${n.fate?'':`<span class="st ${age>=14?'soon':'plain'}">${I.clock} waiting ${age} day${age===1?'':'s'}</span>`}</div>
+  <h1 class="title">${esc(n.title)}</h1><div class="path"><span class="copy mono" data-copy="${esc(n.abs_path)}" tabindex="0" role="button" title="Copy full path ( Y )">${I.copy}<span>RawNotes/${esc(n.file)}</span></span></div>
+  ${extra}${n.question?`<div class="ask"><div class="label">The question</div><p>${esc(n.question.replace(/\s+/g,' '))}</p></div>`:''}
+  <div class="md">${md(noteBody(text||''))}</div>`}
+function wireCopy(root){root.querySelectorAll('[data-copy]').forEach(el=>{const go=()=>copyPath(el.dataset.copy,el);el.onclick=go;el.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go()}}})}
+async function copyPath(path,el){try{await navigator.clipboard.writeText(path)}catch(e){toast('Copy needs a secure page (localhost or HTTPS).',{bad:true});return}
+  const s=el&&el.querySelector('span:last-child');if(s){const o=s.textContent;s.textContent='Copied';setTimeout(()=>s.textContent=o,1000)}}
+function backToList(){document.body.classList.remove('note','detail');S.mode=null;if(S.route==='inbox'||S.route==='archive')render();scrollTo(0,0)}
+
+async function apply(){
+  if(S.sel&&S.sel.startsWith('stack:'))return applyBatch();
+  if(!S.mode||!S.sel)return;const go=$('#go'),err=$('#ferr');
+  const val=id=>{const e=document.getElementById(id);return e?e.value.trim():undefined};
+  const body={file:S.sel,action:S.mode,note:val('note'),slug:val('slug'),dest:segVal('dest'),due_days:segVal('due'),status:segVal('status')};
+  if(S.mode==='promote'&&!body.note){err.textContent='Say what done means first.';$('#note').focus();return}
+  go.disabled=true;err.textContent='';
+  try{const ord=navOrder(inboxModel()),i=ord.indexOf(S.sel);
+    const r=await api('/api/action',body);S.undoCount++;
+    const next=ord.slice(i+1).find(f=>!f.startsWith('stack:'))||ord.slice(0,i).reverse().find(f=>!f.startsWith('stack:'));
+    await loadNotes();S.sel=next&&S.notes.live.some(n=>n.file===next)?next:null;S.mode=null;
+    toast(r.msg,{undo:true});render()}
+  catch(e){go.disabled=false;err.textContent=e.message}}
+
+/* ---------- stacks: batch + merge ---------- */
+function renderBatch(){const k=S.sel.slice(6),stk=inboxModel().stacks[k];const r=$('#reader');
+  if(!stk){r.innerHTML='<div class="empty">That stack is gone.</div>';return}
+  const o=(id,ic,v,d)=>`<button type="button" class="opt ${id==='merge'?'promote':id} ${S.batchMode===id?'on':'dim'}" data-bm="${id}"><div class="v"><i>${I[ic]}</i>${v}</div><div class="d">${d}</div></button>`;
+  r.innerHTML=`<button class="back" onclick="backToList()">‹ Inbox</button><div class="card decide open" id="decide"><div class="q"><h3 id="bcount"></h3><span class="muted">batch decision · tick notes in the list</span></div>
+   <div class="opts" style="grid-template-columns:1.3fr 1fr 1fr 1fr">${o('merge','merge','Merge into one','Combine into a single note, newest first')}${o('reference','ref','Reference all','File each one in reference/')}${o('keep','pot','Keep all','Set status in one go')}${o('kill','x','Kill all','One reason for all of them')}</div>
+   <form class="form ${S.batchMode==='merge'?'promote':S.batchMode}" id="form">${batchForm(stk)}</form></div>
+   <div class="card doc" style="padding:22px 28px"><h3 style="margin:0 0 6px;font-size:22px">Selected notes</h3><table class="btable" id="btable"></table></div>`;
+  $$('[data-bm]').forEach(b=>b.onclick=()=>{S.batchMode=b.dataset.bm;renderBatch()});
+  const f=$('#form');wireSegs(f,()=>{if(S.batchMode==='merge'){$('#promoteBits').style.display=segVal('then')==='promote'?'':'none';batchPreview()}});
+  f.onsubmit=e=>{e.preventDefault();apply()};$('#cancel').onclick=()=>{S.sel=stk.members[0].file;S.expanded=k;renderInboxList();renderReader()};
+  f.querySelectorAll('input,textarea').forEach(i=>i.oninput=batchPreview);
+  renderBatchSummary()}
+function batchForm(stk){const m=S.batchMode;
+  const foot=(btn,cls)=>`<div class="formfoot"><button type="submit" class="btn ${cls}" id="go">${btn} ${kb('↵')}</button><button type="button" class="btn ghost" id="cancel">Cancel</button><span class="err" id="ferr"></span><span class="hint" id="bleft"></span></div>`;
+  if(m==='merge')return `<div><div class="field"><label class="label" for="mtitle">Merged note title</label><input class="input" id="mtitle" value="${esc(stk.name)}"></div>
+    <div class="field"><span class="label">Then</span>${seg('then',[['inbox','Leave in Inbox'],['promote','Promote it','new project'],['reference','File as reference']],'inbox')}</div>
+    <div id="promoteBits" style="display:none"><div class="two"><div class="field"><span class="label">Promote to</span>${seg('dest',[['active','Active'],['experiments','Experiment']],'active')}</div>
+      <div class="field"><span class="label">Ship by</span>${seg('due',[['3','3d'],['7','7d'],['14','14d']],'7')}</div></div>
+      <div class="field"><label class="label" for="slug">Project name</label><input class="input mono" id="slug" value="${esc(stackKey(stk.members[0]))}"></div>
+      <div class="field"><label class="label" for="note">Done means <em>required</em></label><textarea class="input" id="note" rows="2"></textarea></div></div></div>
+    <div class="preview" id="pv"></div>${foot(I.merge+'Merge','primary')}`;
+  if(m==='reference')return `<div><div class="field"><label class="label" for="note">Why keep them</label><input class="input" id="note" placeholder="optional, applied to each"></div></div><div class="preview" id="pv"></div>${foot(I.ref+'File all','primary')}`;
+  if(m==='keep')return `<div><div class="field"><span class="label">Status</span>${seg('status',[['cooking','Cooking'],['open','Open']],'cooking')}</div><div class="field"><label class="label" for="note">Next step</label><input class="input" id="note" placeholder="optional, added to each"></div></div><div class="preview" id="pv"></div>${foot(I.pot+'Keep all','primary')}`;
+  return `<div><div class="field"><label class="label" for="note">Why not</label><input class="input" id="note" placeholder="one line, written into each note"></div></div><div class="preview" id="pv"></div>${foot(I.x+'Kill all','danger')}`}
+function batchPreview(){const pv=$('#pv');if(!pv)return;const n=S.batch.size,m=S.batchMode,t=new Date().toLocaleDateString('sv');
+  if(m==='merge'){const title=($('#mtitle')?.value||'merged').trim(),slug=title.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,60),then=segVal('then');
+    pv.innerHTML=`<div class="label">What will happen</div><ol><li>Writes <span class="mono">RawNotes/${t}-${esc(slug)}.md</span> with ${n} sections, newest first</li><li>Moves the ${n} sources to <span class="mono">done/</span>, each pointing at the merge</li>${then==='promote'?`<li>Promotes the merged note → <b>Projects</b>, ship by ${fmtDate(addDays(+segVal('due')))}</li>`:then==='reference'?'<li>Files the merged note in <span class="mono">reference/</span></li>':'<li>The merged note waits in the Inbox</li>'}</ol>`}
+  else pv.innerHTML=`<div class="label">What will happen</div><ol><li>${m==='kill'?`Kills ${n} notes and moves them to the Archive`:m==='keep'?`Sets ${n} notes to ${segVal('status')}`:`Copies ${n} notes into <span class="mono">reference/</span>, captures to done/`}</li><li>One undo step for all of them</li></ol>`}
+function renderBatchSummary(){const k=S.sel.slice(6),stk=inboxModel().stacks[k];if(!stk||!$('#btable'))return;
+  const n=S.batch.size;$('#bcount').textContent=`${n} of ${stk.members.length} ${stk.name} notes selected`;
+  $('#bleft').textContent=n<stk.members.length?`${stk.members.length-n} unticked stay in the Inbox`:'';
+  $('#btable').innerHTML=stk.members.filter(x=>S.batch.has(x.file)).map(x=>`<tr><td>${st(x.status)}</td><td><b>${esc(x.title)}</b><div class="mono muted">${esc(x.file)} · ${(x.size/1024).toFixed(1)} KB</div></td></tr>`).join('')||'<tr><td></td><td class="muted">Tick notes in the list to include them.</td></tr>';
+  batchPreview()}
+async function applyBatch(){const files=[...S.batch],m=S.batchMode,go=$('#go'),err=$('#ferr');const val=id=>{const e=document.getElementById(id);return e?e.value.trim():''};
+  if(!files.length){err.textContent='Tick at least one note.';return}
+  if(m==='merge'&&files.length<2){err.textContent='Merging needs at least two notes.';return}
+  if(m==='merge'&&segVal('then')==='promote'&&!val('note')){err.textContent='Say what done means first.';$('#note').focus();return}
+  go.disabled=true;err.textContent='';
+  try{const r=m==='merge'?await api('/api/merge',{files,title:val('mtitle'),then:segVal('then'),dest:segVal('dest'),due_days:segVal('due'),slug:val('slug'),note:val('note')})
+      :await api('/api/batch',{files,action:m,note:val('note'),status:segVal('status')});
+    S.undoCount++;await loadNotes();S.expanded=null;S.batch=new Set();S.sel=r.file||null;toast(r.msg,{undo:true});render()}
+  catch(e){go.disabled=false;err.textContent=e.message}}
+
+/* ---------- Archive ---------- */
+function renderArchive(){
+  const done=S.notes.done,af=S.af,q=af.q.toLowerCase();
+  const items=done.filter(n=>(af.fate==='all'||n.fate===af.fate)&&(!q||(n.title+' '+n.file).toLowerCase().includes(q)));
+  if(!S.asel||!items.some(n=>n.file===S.asel))S.asel=items[0]?.file||null;
+  const cnt=f=>done.filter(n=>n.fate===f).length;
+  const chip=(v,l)=>`<button class="chip ${af.fate===v?'on':''}" data-fate="${v}">${l} <b>${v==='all'?done.length:cnt(v)}</b></button>`;
+  $('#main').innerHTML=`<div class="split"><div class="listpane"><div class="pane-h"><h1>Archive</h1><div class="sub">Everything decided · newest first · nothing is ever deleted</div>
+    <label class="search">${I.search}<input id="q" placeholder="Search the archive…" value="${esc(af.q)}" autocomplete="off">${kb('/')}</label>
+    <div class="chips">${chip('all','All')}${chip('promoted','Promoted')}${chip('reference','Reference')}${chip('killed','Killed')}${chip('merged','Merged')}</div></div>
+    <div class="list" id="list">${items.length?items.map(n=>`<div class="item ${n.file===S.asel?'sel':''}" data-f="${esc(n.file)}" role="button" tabindex="0"><span class="bar"></span><div><div class="t">${esc(n.title)}</div><div class="m">${st(n.fate)}<span>${esc(n.date)}</span></div></div><span></span></div>`).join(''):'<div class="empty">Nothing here.</div>'}</div></div>
+    <div class="reader" id="reader"></div></div>`;
+  $('#q').oninput=e=>{S.af.q=e.target.value;const p=e.target.selectionStart;renderArchive();const i=$('#q');i.focus();i.setSelectionRange(p,p)};
+  $$('[data-fate]').forEach(b=>b.onclick=()=>{S.af.fate=b.dataset.fate;renderArchive()});
+  $$('#list [data-f]').forEach(r=>{r.onclick=()=>selectArchive(r.dataset.f,true);r.onkeydown=e=>{if(e.key==='Enter')selectArchive(r.dataset.f,true)}});
+  renderArchiveReader()}
+function selectArchive(f,nav){S.asel=f;$$('#list [data-f]').forEach(r=>r.classList.toggle('sel',r.dataset.f===f));renderArchiveReader();if(nav&&narrow()){document.body.classList.add('note');scrollTo(0,0)}}
+async function renderArchiveReader(){const r=$('#reader');const n=S.notes.done.find(x=>x.file===S.asel);
+  if(!n){r.innerHTML='<div class="empty">Pick a note.</div>';return}
+  r.innerHTML=`<button class="back" onclick="backToList()">‹ Archive</button><div class="card doc" id="doc"><div class="muted">Loading…</div></div>`;
+  try{const j=await api('/api/note?f='+enc(n.file));if(S.asel!==n.file)return;
+    const where={promoted:'Promoted to',reference:'Filed at',merged:'Merged into',killed:'Killed'}[n.fate]||'Outcome';
+    const out=`<div class="outcome"><div style="flex:1;min-width:200px"><div class="label">${where}</div>${n.dest?`<span class="mono">${esc(n.dest)}</span>`:'<span class="muted">see ## Outcome below</span>'}</div><button class="btn sm" id="restore">${I.restore}Restore to Inbox</button></div>`;
+    $('#doc').innerHTML=docHtml(n,j.text,out);wireCopy($('#doc'));
+    $('#restore').onclick=async()=>{try{const r=await api('/api/restore',{file:n.file});S.undoCount++;await loadNotes();toast(r.msg,{undo:true});S.asel=null;render()}catch(e){toast(e.message,{bad:true})}}}
+  catch(e){$('#doc').innerHTML=`<p class="err">${esc(e.message)}</p>`}}
+
+/* ---------- Projects ---------- */
+function projectCards(){
+  const inf=S.notes.inflight,ps=S.projects||[];const byName={};ps.forEach(p=>byName[p.name]=p);
+  const cards=inf.map(f=>{const p=f.dest==='active'&&byName[f.project];return{id:f.path,title:p?p.name:(f.project||f.title),f,p}});
+  const used=new Set(inf.filter(f=>f.dest==='active').map(f=>f.project));
+  ps.filter(p=>!used.has(p.name)).forEach(p=>cards.push({id:p.path,title:p.name,f:null,p}));
+  return cards}
+function ring(f){if(!f||f.days_left===null)return'';const l=f.days_left;
+  let total=7;if(f.promoted&&f.due){const t=(new Date(f.due)-new Date(f.promoted))/864e5;if(t>0)total=t}
+  const p=l<0?1:Math.min(1,Math.max(.04,1-l/total)),c=l<0?'var(--rust)':l<=2?'var(--gold)':'var(--green)';
+  return `<div class="ring" style="background:conic-gradient(${c} ${p*360}deg,var(--sunk) 0)" title="${l<0?-l+' days late':l+' days left'}"><span><span>${Math.abs(l)}d<small>${l<0?'LATE':'LEFT'}</small></span></span></div>`}
+function ghChip(g){if(!g)return'';return g.pushed?(g.unpushed?st('soon','GH ↑'+g.unpushed):st('ok','On GitHub')):g.repo?st('late','Not pushed'):g.git?st('plain','Local git'):st('plain','No git')}
+function renderProjects(){
+  if(!S.projects){$('#main').innerHTML='<div class="scroll"><div class="pane-h" style="padding-left:0"><h1>Projects</h1><div class="sub">Loading projects…</div></div></div>';
+    loadProjects().then(()=>{if(S.route==='projects')render()}).catch(e=>{$('#main').innerHTML=`<div class="scroll"><p class="err">${esc(e.message)}</p></div>`});return}
+  const cards=projectCards(),open=cards.filter(c=>!c.f||!c.f.done);
+  const late=open.filter(c=>c.f&&c.f.days_left!==null&&c.f.days_left<0),week=open.filter(c=>c.f&&c.f.days_left>=0&&c.f.days_left<=7),
+    later=open.filter(c=>c.f&&(c.f.days_left>7||c.f.days_left===null)),none=open.filter(c=>!c.f),closed=cards.filter(c=>c.f&&c.f.done);
+  if(!S.psel||!cards.some(c=>c.id===S.psel))S.psel=(late[0]||week[0]||later[0]||none[0]||{}).id||null;
+  const nodod=(S.projects||[]).filter(p=>!p.done_defined).length,gh=(S.projects||[]).filter(p=>p.gh&&p.gh.pushed).length;
+  const card=c=>{const dm=c.p?(c.p.done_defined?null:'＋ Define “done means”'):null;
+    return `<button type="button" class="card pc ${c.id===S.psel?'sel':''} ${c.f&&c.f.done?'closed':''}" data-pid="${esc(c.id)}"><div class="top"><h4>${esc(c.title)}</h4>${c.f&&!c.f.done?ring(c.f):''}</div>
+      <div class="dm ${dm?'miss':''}">${dm||esc(c.f&&c.f.title!==c.title?c.f.title:(c.p?c.p.path:c.f.path))}</div>
+      <div class="row">${c.f&&c.f.done?st(c.f.status==='dead'?'killed':'shipped',stLabel[c.f.status]||c.f.status):''}${c.p?ghChip(c.p.gh):st('plain',c.f.dest)}${c.f&&c.f.due&&!c.f.done?`<span class="st plain">ship by ${c.f.due.slice(5)}</span>`:''}</div></button>`};
+  const col=(cls,label,cs,more='')=>`<div class="col"><h3>${st(cls,label)} ${cs.length}</h3>${cs.map(card).join('')||'<div class="muted" style="padding:0 4px 14px;font-size:13px">Nothing here.</div>'}${more}</div>`;
+  $('#main').innerHTML=`<div class="scroll" id="pscroll"><div class="pane-h" style="padding-left:0;display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap"><div><h1>Projects</h1><div class="sub">Everything you promoted, sorted by its ship-by date</div></div>
+    <button class="btn sm" id="pref" style="margin-left:auto">Refresh</button></div>
+   <div class="tiles"><div class="card tile"><div class="num" style="color:${late.length?'var(--rust)':'inherit'}">${late.length}</div><div class="lab">${st('late','Overdue')}</div></div>
+    <div class="card tile"><div class="num">${week.length}</div><div class="lab">${st('soon','Ship this week')}</div></div>
+    <div class="card tile"><div class="num">${nodod}</div><div class="lab">${st('killed','No “done means”')}</div></div>
+    <div class="card tile"><div class="num">${gh}<span style="font-size:20px;color:var(--mute)">/${(S.projects||[]).length}</span></div><div class="lab">${st('ok','On GitHub')}</div></div></div>
+   <div class="board">${col('late','Overdue',late,later.length?`<h3 style="margin-top:18px">${st('ok','Later')} ${later.length}</h3>${later.map(card).join('')}`:'')}
+    ${col('soon','Ship this week',week,closed.length?`<h3 style="margin-top:18px">${st('plain','Closed')} ${closed.length}</h3>${closed.map(card).join('')}`:'')}
+    ${col('plain','No ship-by date',none)}
+    <div class="card drawer ${S.psel?'':'none'}" id="drawer"></div></div></div>`;
+  $('#pref').onclick=async()=>{S.projects=null;S.pdetail=null;await loadNotes();render()};
+  $$('[data-pid]').forEach(b=>b.onclick=()=>selectProject(b.dataset.pid,true));
+  renderDrawer()}
+function selectProject(id,nav){S.psel=id;$$('[data-pid]').forEach(b=>b.classList.toggle('sel',b.dataset.pid===id));renderDrawer();
+  if(nav&&narrow()){document.body.classList.add('detail');scrollTo(0,0)}}
+async function renderDrawer(){const d=$('#drawer');if(!d)return;const c=projectCards().find(x=>x.id===S.psel);if(!c){d.innerHTML='';return}
+  const f=c.f,p=c.p;
+  const clock=f?`<div class="sec label">Clock</div><div style="font-size:13px">${f.promoted?`Promoted <b>${esc(f.promoted)}</b> · `:''}ship by <b>${esc(f.due)}</b>${f.done?` · <b>${esc(stLabel[f.status]||f.status)}</b>`:''}
+     ${!f.done&&f.days_left!==null?`<div class="clockbar"><i style="width:${f.days_left<0?100:Math.max(4,100-f.days_left/Math.max(7,f.days_left)*100)}%;background:${f.days_left<0?'var(--rust)':f.days_left<=2?'var(--gold)':'var(--green)'}"></i></div>`:''}</div>`
+    :`<div class="sec label">Clock</div><div class="muted" style="font-size:13px">Not on the clock. Add a <span class="mono">- due: YYYY-MM-DD</span> line to its NOTES.md to give it a ship-by date.</div>`;
+  const acts=f&&!f.done?`<div class="acts"><button class="btn primary" data-pa="shipped">${I.check}Mark shipped</button><button class="btn" data-pa="extend">${I.clock}+7 days</button>
+     ${p&&p.gh&&p.gh.repo?`<button class="btn" id="browse">${I.gh}Browse repo</button>`:`<button class="btn" id="openf">${I.folder}Open folder</button>`}<button class="btn" data-pa="kill" style="color:var(--rust)">${I.x}Kill</button></div>`
+    :`<div class="acts">${p&&p.gh&&p.gh.repo?`<button class="btn" id="browse">${I.gh}Browse repo</button>`:''}<button class="btn" id="openf">${I.folder}Open folder</button></div>`;
+  const head=`<button class="back" onclick="backToList()">‹ Projects</button><div style="display:flex;gap:6px;flex-wrap:wrap">${f&&!f.done&&f.days_left!==null?st(f.days_left<0?'late':f.days_left<=2?'soon':'ok',f.days_left<0?`${-f.days_left} days late`:`${f.days_left} days left`):''}${p?ghChip(p.gh):''}</div>
+    <h2>${esc(c.title)}</h2><span class="copy mono" data-copy="${esc(p?p.abs_path:S.notes.notes_dir.replace(/RawNotes$/,'')+f.path)}" tabindex="0" role="button">${I.copy}<span>~/Projects/${esc(p?p.path:f.path)}</span></span>`;
+  d.innerHTML=head+`<div id="dodbox"></div>`+clock+`<div id="pmore"></div>`+acts+`<div class="err" id="perr" style="margin-top:8px"></div>`;
+  wireCopy(d);
+  d.querySelectorAll('[data-pa]').forEach(b=>b.onclick=()=>projectAction(f,b.dataset.pa,b));
+  $('#browse')&&($('#browse').onclick=()=>openRepo(p.gh.repo,'','projects'));
+  $('#openf')&&($('#openf').onclick=()=>api('/api/open',{path:p?p.abs_path:S.notes.notes_dir+'/../'+f.path}).catch(e=>toast(e.message,{bad:true})));
+  if(narrow()&&$('#openf'))$('#openf').style.display='none';
+  if(!p){$('#dodbox').innerHTML='';return}
+  $('#dodbox').innerHTML='<div class="sec label">Done means</div><div class="muted">Loading…</div>';
+  try{const j=await api('/api/project?name='+enc(p.name));if(S.psel!==c.id)return;S.pdetail=j;renderDod(j);
+    const prs=j.prs&&j.prs.length?`<div class="sec label">Pull requests</div><ul class="tl">${j.prs.slice(0,5).map(x=>`<li><a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">#${x.number} ${esc(x.title)}</a><span class="muted">${esc(x.mergedAt?'merged':x.state.toLowerCase())}</span></li>`).join('')}</ul>`:'';
+    $('#pmore').innerHTML=(j.commits.length?`<div class="sec label">Recent activity${j.branch?' · '+esc(j.branch):''}</div><ul class="tl">${j.commits.slice(0,5).map(x=>`<li><span>${esc(x.title)}</span><span class="muted">${esc(x.date.slice(5))}</span></li>`).join('')}</ul>`:'')
+      +prs+`<div class="sec label">From ${esc(j.summary_source||'the project')}</div><div style="font-size:13px;color:var(--ink2);white-space:pre-wrap;max-height:9.5em;overflow:hidden">${esc(j.summary)}</div>`}
+  catch(e){$('#dodbox').innerHTML=`<p class="err">${esc(e.message)}</p>`}}
+async function projectAction(f,a,btn){
+  let note='';if(a==='kill'){if(btn.dataset.confirm!=='1'){btn.dataset.confirm='1';btn.innerHTML=`${I.x}Really kill?`;return}}
+  btn.disabled=true;
+  try{const r=await api('/api/project/status',{path:f.path,action:a,days:7,note});S.undoCount++;await loadNotes();toast(r.msg,{undo:true});render()}
+  catch(e){btn.disabled=false;$('#perr').textContent=e.message}}
+// "Done means" editor: edit -> review before/after -> confirm (writes only on confirm; refused if the file changed)
+function renderDod(p,mode,draft){const el=$('#dodbox');if(!el)return;const d=p.done,file=d.source||'NOTES.md',old=d.defined?d.text:'';
   if(mode==='edit'){
-    el.innerHTML=`<div class="dod ${d.defined?'':'missing'}"><div class="dodhead"><h2>Definition of done: editing</h2></div>
-      <textarea id="dodText" rows="3" maxlength="600" placeholder="One or two sentences: what does shipped look like?">${esc(draft??old)}</textarea>
-      <div class="dodbtns"><button class="act" id="dodReview">Review change</button><button class="act" id="dodCancel">Cancel</button><span class="err" id="dodErr"></span></div>
-      <div class="meta">Saved to ${esc(file)}. Nothing is written until you confirm on the next step.</div></div>`;
-    const t=$('#dodText');t.focus();t.setSelectionRange(t.value.length,t.value.length);
-    $('#dodCancel').onclick=()=>renderDod(p);
-    $('#dodReview').onclick=()=>{const next=oneLine(t.value);
-      if(!next){$('#dodErr').textContent='Write what done looks like first.';return}
-      if(next===old){$('#dodErr').textContent='No change to save.';return}
-      renderDod(p,'confirm',next)};return}
+    el.innerHTML=`<div class="sec label">Done means · editing</div><textarea class="input" id="dodText" rows="3" maxlength="600" placeholder="One or two sentences: what does shipped look like?">${esc(draft??old)}</textarea>
+      <div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap"><button class="btn sm primary" id="dodReview">Review change</button><button class="btn sm ghost" id="dodCancel">Cancel</button><span class="err" id="dodErr"></span></div>
+      <div class="muted" style="font-size:12px;margin-top:4px">Saved to ${esc(file)} only after you confirm.</div>`;
+    const t=$('#dodText');t.focus();$('#dodCancel').onclick=()=>renderDod(p);
+    $('#dodReview').onclick=()=>{const next=t.value.replace(/\s+/g,' ').trim();if(!next)return $('#dodErr').textContent='Write what done looks like first.';if(next===old)return $('#dodErr').textContent='No change to save.';renderDod(p,'confirm',next)};return}
   if(mode==='confirm'){
-    el.innerHTML=`<div class="dod confirm"><div class="dodhead"><h2>Confirm change to ${esc(file)}</h2></div>
-      <div class="dodcmp"><div><b>BEFORE</b><p class="old">${old?esc(old):'(not set)'}</p></div><div><b>AFTER</b><p>${esc(draft)}</p></div></div>
-      <div class="dodbtns"><button class="act go" id="dodSave">Confirm and save</button><button class="act" id="dodBack">Back to editing</button><span class="err" id="dodErr"></span></div></div>`;
+    el.innerHTML=`<div class="sec label">Confirm change to ${esc(file)}</div><div class="dod"><div class="cmp"><div><b class="label">Before</b><div class="old">${old?esc(old):'(not set)'}</div></div><div><b class="label">After</b><div>${esc(draft)}</div></div></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn sm primary" id="dodSave">Confirm and save</button><button class="btn sm ghost" id="dodBack">Back</button><span class="err" id="dodErr"></span></div></div>`;
     $('#dodBack').onclick=()=>renderDod(p,'edit',draft);
     $('#dodSave').onclick=async()=>{const b=$('#dodSave');b.disabled=true;b.textContent='Saving…';
-      try{const r=await fetch('/api/done',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:p.name,text:draft,expected:old})});const j=await r.json();
-        if(j.error){$('#dodErr').textContent=j.error;b.disabled=false;b.textContent='Confirm and save';return}
-        const pr=await fetch('/api/projects');projects=(await pr.json()).projects;projectList();renderDodCount();showProject(p.name)}
-      catch(e){$('#dodErr').textContent='Could not reach the triage server.';b.disabled=false;b.textContent='Confirm and save'}};return}
-  el.innerHTML=d.defined?`<div class="dod"><div class="dodhead"><h2>Definition of done</h2><button class="act" id="dodEdit">Edit</button></div><p>${esc(d.text)}</p><div class="meta">From ${esc(d.source)}</div></div>`
-    :`<div class="dod missing"><div class="dodhead"><h2>Definition of done: not filled in</h2><button class="act" id="dodEdit">Fill in</button></div><p>What does done look like for this project? It will be saved to <code>${esc(file)}</code>.</p></div>`;
+      try{await api('/api/done',{name:p.name,text:draft,expected:old});await loadProjects();toast('Saved “done means” to '+file);render()}
+      catch(e){$('#dodErr').textContent=e.message;b.disabled=false;b.textContent='Confirm and save'}};return}
+  el.innerHTML=d.defined?`<div class="sec label" style="display:flex;justify-content:space-between;align-items:center">Done means <button class="btn sm ghost" id="dodEdit">Edit</button></div><div class="dod">${esc(d.text)}</div><div class="muted" style="font-size:12px;margin-top:4px">From ${esc(d.source)}</div>`
+    :`<div class="sec label" style="display:flex;justify-content:space-between;align-items:center">Done means <button class="btn sm" id="dodEdit">Fill in</button></div><div class="dod missing">Not defined yet. What does done look like? It goes into <span class="mono">${esc(file)}</span>.</div>`;
   $('#dodEdit').onclick=()=>renderDod(p,'edit')}
-async function loadProjects(){
-  mode=null;$('#hint').textContent='Active projects · j/k next/prev · y copy path · select a project for details';
-  $('#decide').innerHTML='<b>Active Projects</b> <button class="act" id="refreshProjects">Refresh</button> <span id="dodCount"></span>';
-  $('#refreshProjects').onclick=loadProjects;
-  $('#list').innerHTML='<div class="empty">Loading projects…</div>';
-  try{const r=await fetch('/api/projects');if(!r.ok)throw Error('Could not load active projects.');const j=await r.json();if(tab!=='projects')return;
-    projects=j.projects;projectList();
-    renderDodCount();
-    if(projects.length)await showProject(projects.some(p=>p.name===sel)?sel:projects[0].name);
-    else $('#view').innerHTML='<div class="empty">Your active project folders will appear here.</div>';
-  }catch(e){if(tab==='projects'){$('#list').innerHTML='<div class="empty">Projects unavailable.</div>';$('#view').textContent=e.message}}
-}
-async function showProject(name,nav){
-  sel=name;mode=null;repoState=null;page(nav);projectList();const request=++projectRequest;
-  $('#view').innerHTML='<div class="empty">Loading repository activity…</div>';
-  try{const r=await fetch('/api/project?name='+encodeURIComponent(name));if(!r.ok)throw Error('Could not load this project.');const p=await r.json();
-    if(tab!=='projects'||request!==projectRequest)return;
-    const link=(url,label)=>/^https:\/\/github\.com\//.test(url||'')?`<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>`:esc(label);
-    const commits=items=>items.map(c=>`<li>${esc(c.title)} <span class="meta">· ${esc(c.date)} · ${esc(c.sha)}</span></li>`).join('');
-    $('#view').innerHTML=`<div class="meta"><span class="copy-path" id="detailPath" tabindex="0" role="button" title="Click to copy full path" data-path="${esc(p.abs_path)}">${esc(p.abs_path)}</span>${p.branch?' · '+esc(p.branch):''}</div><h1>${esc(p.name)}</h1>
-      ${p.repo?`<p><button class="act" id="repoOpen" type="button">Review repository</button> ${link(p.remote,'Open on GitHub ↗')}</p>`:''}
-      <p class="meta">${ghBadge(p.gh)} ${esc(ghInfo(p.gh).text)}</p>
-      <div id="dod"></div>
-      <h2>Repository summary</h2><p style="white-space:pre-wrap">${esc(p.summary)}</p>${p.summary_source?`<div class="meta">Excerpt from ${esc(p.summary_source)}</div>`:''}
-      <h2>Recent pull requests</h2>${p.pr_status?`<p class="meta">${esc(p.pr_status)}</p>`:`<ul>${p.prs.map(pr=>`<li>${link(pr.url,'#'+pr.number+' '+pr.title)} <span class="badge">${esc(pr.mergedAt?'MERGED':pr.state)}</span> <span class="meta">${esc(pr.updatedAt.slice(0,10))}</span></li>`).join('')}</ul>`}
-      <h2>Features added</h2><p class="meta">Feature commits on the current branch, from the latest 100 commits.</p>${p.features.length?'<ul>'+commits(p.features)+'</ul>':'<p class="meta">No commits labeled feat: or feat(scope): found.</p>'}
-      <h2>Recent commits</h2>${p.commits.length?'<ul>'+commits(p.commits)+'</ul>':'<p class="meta">No Git history available.</p>'}`;
-    $('#view').scrollTop=0;renderDod(p);if(p.repo)$('#repoOpen').onclick=()=>openRepo(p.repo,'',true);
-    const pathEl=$('#detailPath');
-    if(pathEl){const go=()=>copyPath(pathEl.dataset.path,pathEl);pathEl.onclick=go;pathEl.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go()}}}
-  }catch(e){if(tab==='projects'&&request===projectRequest)$('#view').textContent=e.message}
-}
-async function copyPath(path,el){
-  try{await navigator.clipboard.writeText(path)}catch(e){return}
-  if(!el)return;
-  if(el.dataset.orig===undefined)el.dataset.orig=el.textContent;
-  clearTimeout(el._copyTimer);el.textContent='Copied';
-  el._copyTimer=setTimeout(()=>{el.textContent=el.dataset.orig},1000);
-}
-document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;mode=null;repoState=null;back();$('#hint').textContent='Keys: j/k next/prev · p promote · d durable · a archive · c keep · y copy path · Enter apply';document.querySelectorAll('.tabs button').forEach(x=>x.classList.toggle('on',x===b));sel=null;load()});
-document.addEventListener('keydown',e=>{if(e.target.matches('input,textarea,select')){if(e.key==='Enter'&&e.target.tagName!=='TEXTAREA'){e.preventDefault();apply()}return}
-  if(tab==='projects'){const i=projects.findIndex(p=>p.name===sel);if(e.key==='j'&&projects[i+1])showProject(projects[i+1].name);if(e.key==='k'&&projects[i-1])showProject(projects[i-1].name);
-    if(e.key==='y'&&i>=0){const pathEl=$('#detailPath');if(pathEl)copyPath(projects[i].abs_path,pathEl)}return}
-  if(!data)return;
-  const items=tab==='live'?data.live:data.done;const i=items.findIndex(n=>n.file===sel);
-  if(e.key==='j'&&items[i+1])show(items[i+1].file);else if(e.key==='k'&&items[i-1])show(items[i-1].file);
-  else if(e.key==='y'){const pathEl=$('#detailPath');if(i>=0&&pathEl&&items[i].abs_path)copyPath(items[i].abs_path,pathEl)}
-  else if(tab==='live'&&sel){const slug=sel.replace(/^\d{4}-\d{2}-\d{2}-/,'').replace(/\.md$/,'');
-    if(e.key==='p')setMode('promote',slug);else if(e.key==='d')setMode('durable',slug);else if(e.key==='a')setMode('archive',slug);else if(e.key==='c')setMode('keep',slug);else if(e.key==='Enter')apply()}});
-load();loadActivity();setInterval(()=>loadActivity(),600000);
+
+/* ---------- repo viewer (read-only, through gh on the server) ---------- */
+const ghUrl=u=>/^https:\/\/github\.com\//.test(u||'')?u:'#';
+const fmtSize=n=>n<1024?n+' B':n<1048576?(n/1024).toFixed(1)+' KB':(n/1048576).toFixed(1)+' MB';
+function openRepo(name,path,from){S.repo={name,path:path||'',from:from||S.route};renderRepo()}
+async function renderRepo(){const rs=S.repo,{name,path}=rs;
+  const bar=url=>`<div class="repohead"><button class="btn sm" id="repoClose">‹ Back</button><a class="btn sm ghost" href="${esc(ghUrl(url))}" target="_blank" rel="noopener noreferrer">Open on GitHub ${I.ext}</a></div>`;
+  $('#main').innerHTML=`<div class="scroll"><div class="card doc" style="margin-top:22px;max-width:980px" id="repo">${bar('https://github.com/'+name)}<div class="empty">Loading ${esc(name)}…</div></div></div>`;
+  const wire=()=>{$('#repoClose').onclick=()=>{S.repo=null;render()};$$('#repo [data-rp]').forEach(a=>a.onclick=e=>{e.preventDefault();openRepo(name,a.dataset.rp,rs.from)})};wire();
+  const files=es=>es.length?`<div class="repofiles">${es.map(e=>`<a href="#" data-rp="${esc(e.path)}"><span>${e.type==='dir'?'📁':'📄'}</span><span>${esc(e.name)}${e.type==='dir'?'/':''}</span><em>${e.type==='file'?fmtSize(e.size):''}</em></a>`).join('')}</div>`:'<p class="muted">Empty.</p>';
+  try{const j=await api(path?`/api/repo/path?name=${enc(name)}&path=${enc(path)}`:`/api/repo?name=${enc(name)}`);if(S.repo!==rs)return;let html;
+    if(!path){const r=j.repo,note=k=>j.errors[k]?`<p class="err">Couldn't load: ${esc(j.errors[k])}</p>`:'';
+      html=bar(r.url)+`<h1 class="title" style="font-size:38px">${r.private?'🔒 ':''}${esc(r.name)}</h1><p class="muted">${esc(r.description||'No description')} · default branch <code>${esc(r.default_branch)}</code> · last push ${esc(r.pushed_at)}${r.archived?' · archived':''}</p>
+      <div class="md"><h2>Files</h2>${files(j.tree)}${note('tree')}<h2>${j.readme?esc(j.readme.name):'README'}</h2>${j.readme?md(j.readme.text):'<p class="muted">No README.</p>'}
+      <h2>Recent commits</h2>${j.commits.length?'<ul>'+j.commits.map(c=>`<li>${esc(c.title)} <span class="muted">· ${esc(c.date)} · ${esc(c.sha)} · ${esc(c.author)}</span></li>`).join('')+'</ul>':'<p class="muted">No commits.</p>'}${note('commits')}
+      <h2>Pull requests</h2>${j.prs.length?'<ul>'+j.prs.map(x=>`<li>#${x.number} ${esc(x.title)} ${st(x.state==='merged'?'promoted':x.state==='open'?'cooking':'plain',x.state)} <span class="muted">${esc(x.updated)}</span></li>`).join('')+'</ul>':'<p class="muted">No pull requests.</p>'}${note('prs')}
+      <h2>Open issues</h2>${j.issues.length?'<ul>'+j.issues.map(x=>`<li>#${x.number} ${esc(x.title)} <span class="muted">${esc(x.updated)} · ${x.comments} comment${x.comments===1?'':'s'}</span></li>`).join('')+'</ul>':'<p class="muted">No open issues.</p>'}${note('issues')}</div>`}
+    else{const segs=path.split('/');const crumbs=`<div class="crumbs"><a href="#" data-rp="">${esc(name)}</a>`+segs.map((s,i)=>i===segs.length-1?` / <b>${esc(s)}</b>`:` / <a href="#" data-rp="${esc(segs.slice(0,i+1).join('/'))}">${esc(s)}</a>`).join('')+'</div>';
+      let body;if(j.kind==='dir')body=files(j.entries);else if(j.too_large)body=`<p class="muted">Too large to show here (${fmtSize(j.size)}).</p>`;else if(j.binary||j.kind==='other')body=`<p class="muted">${j.binary?'Binary file':'Not a regular file'}; open it on GitHub.</p>`;
+      else body=/\.(md|markdown)$/i.test(j.name)?`<div class="md">${md(j.text)}</div>`:`<div class="md"><pre>${esc(j.text)}</pre></div>`;
+      html=bar(j.url||'https://github.com/'+name)+crumbs+body}
+    $('#repo').innerHTML=html;wire()}
+  catch(e){if(S.repo!==rs)return;$('#repo').innerHTML=bar('https://github.com/'+name)+`<p class="err">${esc(e.message)}</p>`;wire()}}
+
+/* ---------- Pulse ---------- */
+function renderPulse(){
+  const a=S.activity,s=S.stats;
+  if(!s){$('#main').innerHTML='<div class="scroll"><div class="pane-h" style="padding-left:0"><h1>Pulse</h1><div class="sub">Loading…</div></div></div>';loadStats().then(()=>{if(S.route==='pulse')render()});return}
+  const M=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],today=new Date().toLocaleDateString('sv');
+  let heat='<p class="muted">Loading GitHub activity…</p>',bars='';
+  if(a&&a.weeks){let lm=-1;const day=d=>new Date(d+'T00:00');
+    const months=a.weeks.map((w,i)=>{const m=day(w[0].date).getMonth();if(m===lm)return'';lm=m;return`<span style="grid-column:${i+1}">${M[m]}</span>`}).join('');
+    const cells=a.weeks.map((w,i)=>w.map(d=>`<i class="l${d.level}${d.date===today?' today':''}" style="grid-column:${i+1};grid-row:${day(d.date).getDay()+1}" title="${d.count} commit${d.count===1?'':'s'} pushed on ${fmtDate(d.date)}"></i>`).join('')).join('');
+    heat=`<div class="hmwrap" id="hmwrap"><div class="hmonths" style="grid-template-columns:repeat(${a.weeks.length},13px)">${months}</div><div class="hm">${cells}</div></div>
+      <div class="legend" style="margin-top:10px;justify-content:flex-end">${a.error?`<span class="err" style="margin-right:auto">Showing saved data: ${esc(a.error)}</span>`:''}Less ${[0,1,2,3,4].map(n=>`<i style="background:var(--g${n});margin:0"></i>`).join('')} More <button class="btn sm" id="actRef">Refresh</button></div>`;
+    const mx=Math.max(1,...a.repos.map(r=>r.count));
+    bars=a.repos.length?a.repos.slice(0,10).map(r=>`<button class="b" data-repo="${esc(r.name)}" title="${esc(r.name)} · ${r.count} commits · open read-only view"><span>${r.private?'🔒 ':''}${esc(r.name.split('/')[1])}</span><span><div class="fill" style="width:${r.count/mx*100}%"></div></span><span class="n">${r.count}</span></button>`).join(''):'<p class="muted">No commits pushed in the last 30 days.</p>'}
+  else if(a&&a.error)heat=`<p class="err">GitHub activity unavailable: ${esc(a.error)}</p><button class="btn sm" id="actRef">Retry</button>`;
+  const w=s.weeks||[],fm=Math.max(1,...w.flatMap(x=>[x.captured,x.decided])),H=150,bw=20,gap=Math.max(52,Math.floor(520/Math.max(1,w.length)));
+  const chart=`<svg class="chart" width="100%" viewBox="0 0 ${50+w.length*gap} 200" role="img" aria-label="Notes captured and decided per week">
+    ${[0,.5,1].map(t=>`<line x1="34" x2="${50+w.length*gap}" y1="${170-t*H}" y2="${170-t*H}" stroke="var(--line2)" stroke-width="${t?1:1.5}"/><text x="28" y="${174-t*H}" text-anchor="end" font-size="11" fill="var(--mute)">${Math.round(t*fm)}</text>`).join('')}
+    ${w.map((x,i)=>{const X=48+i*gap,hc=x.captured/fm*H,hd=x.decided/fm*H,last=i===w.length-1,lbl=new Date(x.week+'T00:00').toLocaleDateString(undefined,{month:'short',day:'numeric'});
+      return `<g><title>Week of ${lbl}: ${x.captured} captured, ${x.decided} decided</title><rect x="${X-4}" y="10" width="${bw*2+10}" height="160" fill="transparent"/>
+      ${hc?`<rect x="${X}" y="${170-hc}" width="${bw}" height="${hc}" rx="4" fill="var(--s1)"/>`:''}${hd?`<rect x="${X+bw+2}" y="${170-hd}" width="${bw}" height="${hd}" rx="4" fill="var(--s2)"/>`:''}
+      ${last?`<text x="${X+bw/2}" y="${164-hc}" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--ink2)">${x.captured}</text><text x="${X+bw*1.5+2}" y="${164-hd}" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--ink2)">${x.decided}</text>`:''}
+      <text x="${X+bw}" y="190" text-anchor="middle" font-size="11" fill="var(--mute)">${lbl}</text></g>`}).join('')}</svg>`;
+  $('#main').innerHTML=`<div class="scroll"><div class="pane-h" style="padding-left:0"><h1>Pulse</h1><div class="sub">Are notes turning into shipped work? Capture vs. decisions, and what reached GitHub.</div></div>
+  <div class="tiles"><div class="card tile"><div class="num">${a&&a.total!==undefined?a.total:'–'}</div><div class="lab">commits pushed this year</div></div>
+   <div class="card tile"><div class="num">${a&&a.active_days!==undefined?a.active_days:'–'}</div><div class="lab">active days</div></div>
+   <div class="card tile"><div class="num">${a&&a.streak!==undefined?a.streak:'–'}<span style="font-size:20px;color:var(--mute)">d</span></div><div class="lab">current streak</div></div>
+   <div class="card tile"><div class="num" style="color:${s.median_wait>7?'var(--rust)':'inherit'}">${s.median_wait??'–'}<span style="font-size:20px;color:var(--mute)">d</span></div><div class="lab">median wait in the Inbox (goal ≤ 7) · oldest ${s.oldest??'–'}d</div></div></div>
+  <div class="card panel" style="margin-bottom:16px"><h3>Pushed to GitHub</h3><div class="cap">Your commits on default branches, last 52 weeks · private repos included · local-only repos never show</div>${heat}</div>
+  <div class="pgrid"><div class="card panel"><h3>Inbox flow</h3><div class="cap">Notes captured vs. notes decided, per week (decisions from triage.log)</div>
+    <div class="legend"><span><i style="background:var(--s1)"></i>Captured</span><span><i style="background:var(--s2)"></i>Decided</span></div>${chart}
+    <details style="margin-top:8px;font-size:12.5px"><summary class="muted" style="cursor:pointer">Table</summary><table class="btable"><tr><td>Week of</td><td>Captured</td><td>Decided</td></tr>${w.map(x=>`<tr><td>${x.week}</td><td>${x.captured}</td><td>${x.decided}</td></tr>`).join('')}</table></details></div>
+   <div class="card panel"><h3>Where the commits went</h3><div class="cap">Last ${a&&a.repo_days||30} days · click a repo to browse it</div><div class="bars">${bars}</div></div></div></div>`;
+  const hw=$('#hmwrap');if(hw)hw.scrollLeft=hw.scrollWidth;
+  $('#actRef')&&($('#actRef').onclick=async()=>{$('#actRef').disabled=true;await loadActivity(true);render()});
+  $$('[data-repo]').forEach(b=>b.onclick=()=>openRepo(b.dataset.repo,'','pulse'))}
+
+/* ---------- palette & keys ---------- */
+let pal=null;
+function closeOverlay(){$('#overlay').innerHTML='';pal=null}
+function openKeys(){closeOverlay();$('#overlay').innerHTML=`<div class="scrim" id="scrim"><div class="card keys" style="background:var(--solid)"><h3>Keyboard</h3><table>
+  ${[['J / K or ↓ / ↑','next / previous'],['P','Promote'],['R','Reference'],['C','Keep (cooking)'],['X','Kill'],['Enter','apply the open decision (Ctrl+Enter in a text box)'],['Esc','close the form / overlay'],['Z','undo the last change'],['Y','copy the note’s full path'],['/','search the list'],['Ctrl K','search everything + commands'],['1 2 3 4','Inbox · Projects · Archive · Pulse'],['?','this help']].map(([k,v])=>`<tr><td>${k.split(' ').map(x=>/^[A-Z↓↑]$|^[A-Za-z]{2,}$|^[\/?1-4]$/.test(x)?kb(x):x).join(' ')}</td><td>${v}</td></tr>`).join('')}</table></div></div>`;
+  $('#scrim').onclick=e=>{if(e.target.id==='scrim')closeOverlay()}}
+function openPalette(){closeOverlay();pal={i:0,items:[]};
+  $('#overlay').innerHTML=`<div class="scrim" id="scrim"><div class="pal"><div class="in">${I.search}<input id="pq" placeholder="Search notes, projects, commands…" autocomplete="off">${kb('Esc')}</div><div class="res" id="pres"></div>
+   <div class="foot"><span>${kb('↑')} ${kb('↓')} move</span><span>${kb('↵')} open</span><span>${kb('Esc')} close</span></div></div></div>`;
+  $('#scrim').onclick=e=>{if(e.target.id==='scrim')closeOverlay()};
+  const q=$('#pq');q.oninput=()=>{pal.i=0;palRender(q.value)};q.focus();palRender('')}
+function palRender(q){q=q.trim().toLowerCase();const hit=s=>!q||s.toLowerCase().includes(q);const n=S.notes;
+  const hl=s=>{const e=esc(s);if(!q)return e;const i=s.toLowerCase().indexOf(q);return i<0?e:esc(s.slice(0,i))+'<mark>'+esc(s.slice(i,i+q.length))+'</mark>'+esc(s.slice(i+q.length))};
+  const items=[];
+  const notes=n.live.filter(x=>hit(x.title+' '+x.file)).slice(0,6);if(notes.length)items.push({h:'Inbox'},...notes.map(x=>({html:`${st(x.status)}<span class="grow">${hl(x.title)}</span><span class="muted">${x.age}d</span>`,go:()=>{location.hash='#/inbox';S.f={q:'',status:'all',type:null};S.sel=x.file;S.expanded=null;render()}})));
+  const projs=projectCards().filter(c=>hit(c.title)).slice(0,4);if(projs.length)items.push({h:'Projects'},...projs.map(c=>({html:`${I.proj}<span class="grow">${hl(c.title)}</span><span class="muted">${c.f&&!c.f.done&&c.f.days_left!==null?(c.f.days_left<0?-c.f.days_left+'d late':c.f.days_left+'d left'):''}</span>`,go:()=>{S.psel=c.id;location.hash='#/projects';render()}})));
+  const done=q?n.done.filter(x=>hit(x.title+' '+x.file)).slice(0,4):[];if(done.length)items.push({h:'Archive'},...done.map(x=>({html:`${st(x.fate)}<span class="grow">${hl(x.title)}</span>`,go:()=>{S.af={q:'',fate:'all'};S.asel=x.file;location.hash='#/archive';render()}})));
+  const cmds=[['Go to Inbox',()=>location.hash='#/inbox','1'],['Go to Projects',()=>location.hash='#/projects','2'],['Go to Archive',()=>location.hash='#/archive','3'],['Go to Pulse',()=>location.hash='#/pulse','4'],
+    ['Undo last change',doUndo,'Z'],['Toggle dark mode',toggleTheme,''],['Refresh everything',async()=>{S.projects=null;S.stats=null;await refresh();loadActivity(true);render()},''],['Keyboard shortcuts',openKeys,'?']].filter(c=>hit(c[0]));
+  if(cmds.length)items.push({h:'Commands'},...cmds.map(([l,go,k])=>({html:`<span class="grow">${hl(l)}</span>${k?kb(k):''}`,go})));
+  pal.items=items.filter(x=>!x.h);let idx=0;
+  $('#pres').innerHTML=items.length?items.map(x=>x.h?`<div class="sect label">${x.h}</div>`:`<div class="r ${idx===pal.i?'on':''}" data-pi="${idx++}">${x.html}</div>`).join(''):'<div class="empty" style="font-size:16px">No matches.</div>';
+  $$('#pres [data-pi]').forEach(r=>{r.onclick=()=>palGo(+r.dataset.pi);r.onmousemove=()=>{if(pal.i!==+r.dataset.pi){pal.i=+r.dataset.pi;$$('#pres .r').forEach(x=>x.classList.toggle('on',+x.dataset.pi===pal.i))}}})}
+function palGo(i){const it=pal&&pal.items[i];closeOverlay();if(it)it.go()}
+
+document.addEventListener('keydown',e=>{
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();pal?closeOverlay():openPalette();return}
+  if($('#overlay').innerHTML){if(e.key==='Escape')closeOverlay();
+    if(pal){if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();pal.i=Math.max(0,Math.min(pal.items.length-1,pal.i+(e.key==='ArrowDown'?1:-1)));$$('#pres .r').forEach(x=>x.classList.toggle('on',+x.dataset.pi===pal.i));$('#pres .r.on')?.scrollIntoView({block:'nearest'})}
+      if(e.key==='Enter'){e.preventDefault();palGo(pal.i)}}return}
+  const t=e.target instanceof Element?e.target:document.body;
+  if(t.matches('input,textarea,select')){
+    if(e.key==='Escape'){if(t.id==='q'){t.blur();return}if(S.mode){setMode(null);return}t.blur();return}
+    if(e.key==='Enter'&&t.closest('#form')&&(t.tagName!=='TEXTAREA'||e.ctrlKey||e.metaKey)){e.preventDefault();apply()}
+    if(e.key==='Enter'&&t.id==='q'){e.preventDefault();t.blur()}
+    return}
+  if(e.ctrlKey||e.metaKey||e.altKey)return;
+  const k=e.key;
+  if(k==='/'){const q=$('#q');if(q){e.preventDefault();q.focus();q.select()}return}
+  if(k==='?'){openKeys();return}
+  if(k==='z'||k==='Z'){doUndo();return}
+  if('1234'.includes(k)&&k.length===1){location.hash='#/'+['inbox','projects','archive','pulse'][+k-1];return}
+  if(k==='Escape'){if(S.repo){S.repo=null;render()}else if(S.mode)setMode(null);else if(document.body.classList.contains('note')||document.body.classList.contains('detail'))backToList();return}
+  const down=k==='j'||k==='ArrowDown',up=k==='k'||k==='ArrowUp';
+  if(S.route==='inbox'&&S.notes){const ord=navOrder(inboxModel()),i=ord.indexOf(S.sel);
+    if(down||up){e.preventDefault();const n=ord[i+(down?1:-1)];if(n)selectNote(n);return}
+    if(t.closest&&t.closest('.opt,.seg,.btn'))if(k===' '||k==='Enter')return;
+    if(k==='Enter'&&S.sel&&S.sel.startsWith('stack:')){apply();return}
+    const m={p:'promote',r:'reference',c:'keep',x:'kill'}[k.toLowerCase()];if(m&&S.sel&&!S.sel.startsWith('stack:')){e.preventDefault();setMode(m);return}
+    if(m&&S.sel&&S.sel.startsWith('stack:')){S.batchMode={promote:'merge',reference:'reference',keep:'keep',kill:'kill'}[m];renderBatch();return}
+    if(k==='Enter'&&S.mode){apply();return}
+    if(k==='y'){const el=$('#doc [data-copy]');if(el)copyPath(el.dataset.copy,el)}return}
+  if(S.route==='archive'&&S.notes){const items=$$('#list [data-f]').map(r=>r.dataset.f),i=items.indexOf(S.asel);
+    if(down||up){e.preventDefault();const n=items[i+(down?1:-1)];if(n){selectArchive(n);$('#list .sel')?.scrollIntoView({block:'nearest'})}return}
+    if(k==='y'){const el=$('#doc [data-copy]');if(el)copyPath(el.dataset.copy,el)}return}
+  if(S.route==='projects'&&!S.repo){const ids=$$('[data-pid]').map(b=>b.dataset.pid),i=ids.indexOf(S.psel);
+    if(down||up){e.preventDefault();const n=ids[i+(down?1:-1)];if(n)selectProject(n)}
+    if(k==='y'){const el=$('#drawer [data-copy]');if(el)copyPath(el.dataset.copy,el)}}});
+
+/* ---------- routing ---------- */
+function render(){
+  if(!S.notes){$('#main').innerHTML='<div class="empty">Loading…</div>';return}
+  renderRail();
+  if(S.repo&&S.repo.from===S.route)return renderRepo();S.repo=null;
+  ({inbox:renderInbox,projects:renderProjects,archive:renderArchive,pulse:renderPulse}[S.route]||renderInbox)()}
+function route(){const r=(location.hash.match(/^#\/(\w+)/)||[])[1];const nr=['inbox','projects','archive','pulse'].includes(r)?r:'inbox';
+  if(nr!==S.route){S.mode=null;S.repo=null;document.body.classList.remove('note','detail')}S.route=nr;render()}
+addEventListener('hashchange',route);
+$('#mPal').onclick=openPalette;$('#mPal').innerHTML=I.search;
+// coming back to the tab (or the phone app) picks up notes changed elsewhere, unless you're mid-decision
+document.addEventListener('visibilitychange',async()=>{if(document.visibilityState!=='visible'||S.mode||$('#overlay').innerHTML)return;
+  try{await refresh();if(!(S.route==='inbox'&&S.sel&&S.sel.startsWith('stack:')))render()}catch(e){}});
+(async()=>{try{await loadNotes()}catch(e){$('#main').innerHTML=`<div class="empty">Can't reach the triage server: ${esc(e.message)}</div>`;return}
+  route();loadActivity();setInterval(()=>loadActivity(),600000)})();
 </script></body></html>

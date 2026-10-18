@@ -16,7 +16,8 @@ rawtriage-web            # starts http://127.0.0.1:8765 and opens the browser
 rawtriage-web --port N   # different port
 rawtriage-web --no-browser
 rawtriage-web --host 0.0.0.0   # reachable from the phone (home Wi-Fi / Tailscale); no login
-                         # the page works on a phone: tap a row, decide from the bottom bar
+                         # the page works on a phone: tap a row, decide from the bottom sheet
+rawtriage-web --notes /tmp/copy/RawNotes --log /tmp/copy/triage.log --port 8766   # try it on a copy
 rawtriage-web --restart   # stop the server already running (e.g. old version), start this one
 ```
 
@@ -26,62 +27,78 @@ No dependencies beyond python3. `server.py` is the API + file mover,
 **Version:** shown in the page heading. When you change the app, bump
 `VERSION` in `server.py` and add an entry to `CHANGELOG.md`.
 
+## Words (same in the web app, the CLI and RawNotes/CLAUDE.md)
+
+Places: **Inbox** (undecided notes), **Projects** (promoted work on a ship-by clock), **Archive** (`done/`),
+**Pulse** (stats). Decisions: **Promote**, **Reference**, **Keep**, **Kill**. Statuses:
+Open → Cooking → Promoted / Reference / Killed (`status: dead` on disk). Every project has a **done means**
+and a **ship by** date.
+
 ## Decisions per note
 
-| Button   | What happens |
-|----------|--------------|
-| Promote  | Copy to `../active/<slug>/NOTES.md` or `../experiments/<slug>/NOTES.md` (learning/templates get a flat `<slug>.md`). Stamps `promoted:` and `due:` dates and a `## Plan` block with your definition of done. Capture is marked promoted and moved to `done/`. |
-| Durable  | Copy to `../reference/<slug>.md` as a reference note, with YAML frontmatter so Obsidian can read it. Capture to `done/`. Add it to `../reference/README.md`. |
-| Archive  | `status: dead`, your one-line reason under `## Outcome`, moved to `done/`. |
-| Keep     | Set `open` or `cooking`, optionally add a next-step line. Stays in the backlog. |
+| Button (key) | What happens |
+|--------------|--------------|
+| Promote (P)   | Copy to `../active/<slug>/NOTES.md` or `../experiments/<slug>/NOTES.md` (learning/templates get a flat `<slug>.md`). Stamps `promoted:` and `due:` (ship by) and a `## Plan` block with your **done means** (required). Capture is marked promoted and moved to `done/`. |
+| Reference (R) | Copy to `../reference/<slug>.md` with YAML frontmatter so Obsidian can read it. Capture to `done/`. Add it to `../reference/README.md`. |
+| Keep (C)      | Set `open` or `cooking`, optionally add a next-step line. Stays in the Inbox. |
+| Kill (X)      | `status: dead`, your one-line reason under `## Outcome`, moved to `done/`. |
 
-Nothing is ever deleted; every move is logged.
+The old API names `durable` and `archive` still work. Nothing is ever deleted; every move is logged.
 
-## In flight strip
+**Undo (Z):** every change made through the page (decisions, batch, merge, restore, project status) can be
+undone, newest first, while the server is running. Undo checks first and refuses, changing nothing, if any
+file it would touch has been edited since.
 
-Scans the sibling project folders for markdown files with a `due:` line and
-shows days left. Red = late, amber = due within 2 days. Set that file's
-`status:` to `done`, `shipped`, or `dead` to clear it.
+**Stacks:** three or more Inbox notes whose names start with the same two words (e.g. `arcane-bomb-*`) collapse
+into one stack. Open it, tick the notes, then **Merge into one** (a new note with each source as a section,
+newest first, sources moved to `done/` pointing at it; optionally promote or file the merged note straight
+away), or Keep / Kill / Reference them all as one step.
 
-Keys: `j`/`k` move, `p` promote, `d` durable, `a` archive, `c` keep,
-`Enter` apply.
+**Archive:** filter by Promoted / Reference / Killed / Merged; **Restore to Inbox** brings a note back as cooking.
 
-## Active Projects tab
+Keys: `j`/`k` move, `p` `r` `c` `x` decide, `Enter` apply, `Esc` cancel, `z` undo, `y` copy path, `/` search,
+`Ctrl K` search everything, `1`–`4` switch pages, `?` all keys.
 
-Lists folders in the sibling `active/` directory, including projects without Git.
-Select a project to see a README (or NOTES) excerpt, its current branch, ten
-recent commits, and feature commits (`feat:` / `feat(scope):`) from the latest
-100 commits on that branch. These are source excerpts and commit labels, not
-AI-generated summaries or a guarantee that features have been released.
+## Projects page
 
-For repositories with a GitHub `origin`, the tab also loads the ten most recently
-updated pull requests across all states using the optional `gh` CLI and its
-existing authentication. Missing authentication, network access, or history is
-shown explicitly. Each row starts with a GitHub label: green **GH** = pushed, amber **GH ↑N** = N commits not pushed yet,
-red **No GH** = not on GitHub (hover for why).
+One board for everything promoted, replacing the old Active Projects tab and In flight strip. Columns:
+**Overdue**, **Ship this week**, **Later**, **No ship-by date** (folders in `active/` without a `due:` line),
+plus **Closed** (status `shipped`, `done` or `dead`). It scans the sibling folders for markdown files with a
+`due:` line. Each card shows a countdown ring (red = late, amber = 2 days or less) and its GitHub state:
+**On GitHub**, **GH ↑N** (N commits not pushed), **Not pushed**, **Local git** or **No git**.
 
-Each project also shows its **definition of done** at the top (the line Promote writes into
-`NOTES.md`, a `Definition of done:` paragraph, or a "What does done look like" heading in NOTES, PROJECT,
-README or SPEC). If it is missing or still `<fill in>`, the row gets a red badge, the detail pane a red
-callout, and the tab header counts how many projects need one. **Edit** (or **Fill in**) opens a text box,
-**Review change** shows the file plus before/after, and only **Confirm and save** writes anything. The write
-is refused if the file changed since you opened it.
+Select a card for the side panel: **done means**, the clock, recent commits and pull requests (via the optional
+`gh` CLI), and a README/NOTES excerpt. Excerpts and commit labels are quoted from the source, not AI summaries.
+Buttons: **Mark shipped** (sets `status: shipped` + `shipped:` date), **+7 days** (pushes `due:` from today or
+the current date, whichever is later), **Browse repo**, **Kill** (asks twice). All three writes can be undone.
 
-Refresh reloads the project list and selected project's activity.
-All project inspection is read-only; no fetch, checkout, or repository edits occur.
+**Done means** is found in NOTES, PROJECT, README or SPEC: the line Promote writes, a `Definition of done:`
+paragraph, or a "What does done look like" heading. Missing or `<fill in>` gets a red "Define done means" on the
+card and a count in the header tiles. **Edit** (or **Fill in**) → **Review change** (before/after) → **Confirm
+and save**; the write is refused if the file changed since you opened it.
 
-## GitHub activity strip
+Project inspection is otherwise read-only; no fetch, checkout or repository edits.
 
-Always visible under the heading: a year-long graph of commits you have pushed to GitHub, totals
-and streak, and the repos you pushed to in the last 30 days (🔒 = private). It counts commits on
-the default branch of repos you own or collaborate on, so private repos are included and local-only
-repos (like RawNotes) never show up. Commits on side branches count once merged. Uses `gh api graphql`
-and the same sign-in as the PR list, so no new setup. Cached 10 minutes (`ACTIVITY_TTL`); the
-Refresh button bypasses the cache.
+## Pulse page
+
+- **Pushed to GitHub:** a year-long graph of commits you pushed (default branch of repos you own or collaborate on,
+  so private repos count and local-only repos like RawNotes never show). Uses `gh api graphql` with your existing
+  sign-in; cached 10 minutes (`ACTIVITY_TTL`); Refresh bypasses the cache. The rail shows a 16-week sparkline.
+- **Inbox flow:** notes captured (by file date) vs. decided (from `triage.log`) per week, last 8 weeks, with a table
+  view. Undone decisions still count as decided.
+- **Median wait** of the notes in the Inbox, against the 7-day goal.
+- **Where the commits went:** repos pushed to in the last 30 days; click one to browse it.
+
+## Look
+
+Palette and type borrowed from Rulecraft's Elven Glass: sage background, forest green, gold, Cormorant
+Garamond + Lato + JetBrains Mono. Fonts are served by the app (`static/fonts`, OFL), so it works offline
+and on the phone. Dark mode follows the system; the rail toggle overrides it. Under 800px wide it switches
+to the phone layout: bottom tab bar, and the decision panel as a bottom sheet.
 
 ## Repo viewer
 
-"Review repository" (project detail) and the repo chips in the activity strip open a read-only view of the
+"Browse repo" (Projects panel) and the repo rows on Pulse open a read-only view of the
 GitHub repo inside the page: README, files, recent commits, pull requests, open issues. The server fetches
 everything through `gh`, so a private repo needs no GitHub login in the browser, including on the phone.
 It only serves repos owned by the signed-in `gh` user and only issues GET requests. Because this page has no
