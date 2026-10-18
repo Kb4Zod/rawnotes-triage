@@ -223,7 +223,8 @@ GITHUB_REMOTE = re.compile(r"(?:https://(?:www\.)?github\.com/|git@(?:ssh\.)?git
 def github_repo_of(url):
     """'owner/name' for any way git can spell a GitHub remote (https, git@, ssh://, and ssh.github.com:443), else ''."""
     m = GITHUB_REMOTE.fullmatch((url or "").strip())
-    return m[1] if m else ""
+    if not m or any(not seg.strip(".") for seg in m[1].split("/")): return ""  # "..", "." are not names
+    return m[1]
 
 def git_out(path, args, timeout=5):
     try:
@@ -242,7 +243,8 @@ def github_state(path):
 
 def projects_listing():
     projects = active_projects()
-    for p in projects: p["gh"] = github_state(p["abs_path"])
+    with ThreadPoolExecutor(max_workers=8) as pool:  # one slow repo must not hold up the list
+        for p, state in zip(projects, pool.map(lambda p: github_state(p["abs_path"]), projects)): p["gh"] = state
     return projects
 
 def project_detail(name):

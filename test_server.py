@@ -422,7 +422,8 @@ class ApiTestCase(unittest.TestCase):
         for url in ("ssh://git@ssh.github.com:443/me/r.git", "git@github.com:me/r.git", "git@ssh.github.com:me/r.git",
                     "https://github.com/me/r.git", "https://github.com/me/r", "ssh://git@github.com/me/r.git", "https://github.com/me/r/"):
             self.assertEqual(server.github_repo_of(url), "me/r", url)
-        for url in ("", None, "https://gitlab.com/me/r.git", "https://github.com/me/r/extra", "https://notgithub.com/me/r"):
+        for url in ("", None, "https://gitlab.com/me/r.git", "https://github.com/me/r/extra", "https://notgithub.com/me/r",
+                    "https://github.com/../..", "https://github.com/me/..", "git@github.com:./r.git"):
             self.assertEqual(server.github_repo_of(url), "", url)
 
     def git(self, path, *args):

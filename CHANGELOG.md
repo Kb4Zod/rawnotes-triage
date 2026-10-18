@@ -11,6 +11,9 @@ with every change. Versions 1.00-1.03 were numbered after the fact from git hist
 - Active Projects rows start with a GitHub label: green **GH** (pushed), amber **GH ↑N** (N commits
   not pushed yet), red **No GH** (not a Git repo, no GitHub remote, or remote set but nothing pushed).
   Hover for the reason; the detail pane repeats it.
+- Review fixes (folded into 1.14 before merge): the GH state of each project is now checked in parallel, so
+  one slow or hung repo no longer stalls the whole list; remotes like `github.com/../..` are no longer
+  accepted as a repo name.
 
 ## 1.13 — 2026-10-18
 - In-app repo viewer, so private repos can be reviewed without a GitHub login in the browser (or on the
