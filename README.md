@@ -57,7 +57,10 @@ AI-generated summaries or a guarantee that features have been released.
 For repositories with a GitHub `origin`, the tab also loads the ten most recently
 updated pull requests across all states using the optional `gh` CLI and its
 existing authentication. Missing authentication, network access, or history is
-shown explicitly. Each project also shows its **definition of done** at the top (the line Promote writes into
+shown explicitly. Each row starts with a GitHub label: green **GH** = pushed, amber **GH ↑N** = N commits not pushed yet,
+red **No GH** = not on GitHub (hover for why).
+
+Each project also shows its **definition of done** at the top (the line Promote writes into
 `NOTES.md`, a `Definition of done:` paragraph, or a "What does done look like" heading in NOTES, PROJECT,
 README or SPEC). If it is missing or still `<fill in>`, the row gets a red badge, the detail pane a red
 callout, and the tab header counts how many projects need one. **Edit** (or **Fill in**) opens a text box,
