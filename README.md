@@ -84,3 +84,5 @@ everything through `gh`, so a private repo needs no GitHub login in the browser,
 It only serves repos owned by the signed-in `gh` user and only issues GET requests. Because this page has no
 login, serving it beyond localhost (`--host 0.0.0.0`) also makes your private repo contents readable to anyone
 who can reach it; keep that to the tailnet or a trusted network.
+On a localhost bind the server also refuses requests whose `Host` is not localhost, requests from another
+origin, and non-JSON POSTs, so a web page you visit cannot drive it.

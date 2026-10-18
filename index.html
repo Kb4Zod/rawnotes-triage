@@ -180,7 +180,7 @@ function renderInflight(){const el=$('#inflight');const f=data.inflight;
   el.innerHTML='<b>In flight:</b> '+f.map(x=>{const cls=x.done?'done':x.days_left<0?'late':x.days_left<=2?'soon':'';
     const when=x.done?'done':x.days_left<0?`${-x.days_left}d late`:x.days_left===0?'due today':`${x.days_left}d left`;
     return `<span class="chip ${cls}" title="${x.path}" onclick="openPath('${x.path}')">${esc(x.title)} · ${x.dest} · ${when}</span>`}).join('')}
-function openPath(p){if(narrow())return;fetch('/api/open',{method:'POST',body:JSON.stringify({path:data.notes_dir+'/../'+p})})}
+function openPath(p){if(narrow())return;fetch('/api/open',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:data.notes_dir+'/../'+p})})}
 function renderList(){if(tab==='projects'){projectList();return}const items=tab==='live'?data.live:data.done;
   $('#list').innerHTML=items.length?items.map(n=>`<div class="row ${n.file===sel?'sel':''}" data-f="${n.file}">
     <div class="t">${esc(n.title)}</div><span style="display:flex;gap:6px;align-items:center"><span class="badge ${n.status}">${n.status}</span><button class="act row-copy" type="button" data-path="${esc(n.abs_path)}" title="Copy full path" style="padding:1px 8px;font-size:11px">Copy</button></span>
@@ -228,7 +228,7 @@ function setMode(m,slug){mode=m;document.querySelectorAll('#decide .act').forEac
   f.innerHTML=F;const i=f.querySelector('input[autofocus]');if(i)i.focus()}
 async function apply(){if(!mode||!sel)return;const g=id=>{const e=document.getElementById(id);return e?e.value:undefined};
   const body={file:sel,action:mode,note:g('note'),dest:g('dest'),slug:g('slug'),due_days:g('due'),status:g('status')};
-  const r=await fetch('/api/action',{method:'POST',body:JSON.stringify(body)});const j=await r.json();
+  const r=await fetch('/api/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const j=await r.json();
   const go=$('.go');if(!go)return;let t=go.querySelector('.toast');if(!t){t=document.createElement('span');t.className='toast';go.appendChild(t)}
   if(j.error){t.className='toast err';t.textContent=j.error;return}
   t.textContent=j.msg;
@@ -263,7 +263,7 @@ function renderDod(p,mode,draft){const el=$('#dod');if(!el)return;const d=p.done
       <div class="dodbtns"><button class="act go" id="dodSave">Confirm and save</button><button class="act" id="dodBack">Back to editing</button><span class="err" id="dodErr"></span></div></div>`;
     $('#dodBack').onclick=()=>renderDod(p,'edit',draft);
     $('#dodSave').onclick=async()=>{const b=$('#dodSave');b.disabled=true;b.textContent='Saving…';
-      try{const r=await fetch('/api/done',{method:'POST',body:JSON.stringify({name:p.name,text:draft,expected:old})});const j=await r.json();
+      try{const r=await fetch('/api/done',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:p.name,text:draft,expected:old})});const j=await r.json();
         if(j.error){$('#dodErr').textContent=j.error;b.disabled=false;b.textContent='Confirm and save';return}
         const pr=await fetch('/api/projects');projects=(await pr.json()).projects;projectList();renderDodCount();showProject(p.name)}
       catch(e){$('#dodErr').textContent='Could not reach the triage server.';b.disabled=false;b.textContent='Confirm and save'}};return}
