@@ -25,6 +25,8 @@ VERSION = "1.14"  # bump on every change; history in CHANGELOG.md
 HERE = os.path.dirname(os.path.abspath(__file__))
 NOTES = os.path.expanduser("~/Projects/RawNotes")
 PROJECTS = None
+BIND_HOST = "127.0.0.1"  # set from --host; the Host/Origin guard depends on it
+_done_lock = threading.Lock()
 STARTED = dt.datetime.now().isoformat(timespec="seconds")
 DUE_DAYS = 7
 ACTIVITY_TTL = 600  # seconds; GitHub contribution data barely changes minute to minute
@@ -140,6 +142,7 @@ def find_done(path):
             for nxt in lines[i + 1:]:  # same paragraph / same section
                 if m and (not nxt.strip() or re.match(r"^\s*([-*]\s|#)", nxt)): break
                 if h and re.match(r"^#{1,4}\s", nxt): break
+                if h and any(parts) and not nxt.strip(): break  # first paragraph only
                 parts.append(nxt.strip()); end += 1
             text = re.sub(r"<!--.*?-->", "", " ".join(x for x in parts if x), flags=re.S).strip()
             text = re.sub(r"\s+", " ", text)[:DONE_MAX]
@@ -158,6 +161,15 @@ def definition_of_done(path):
     return {"defined": hit["defined"], "text": hit["text"] if hit["defined"] else "", "source": hit["file"]}
 
 def set_done(name, text, expected):
+    with _done_lock: return _set_done(name, text, expected)
+
+def _read_lines(target):
+    """(lines, eol): the file split on its own line ending, undecodable bytes kept as surrogates."""
+    with open(target, encoding="utf-8", errors="surrogateescape", newline="") as fh: raw = fh.read()
+    eol = "\r\n" if "\r\n" in raw else "\n"
+    return raw.split(eol), eol
+
+def _set_done(name, text, expected):
     """Write a project's definition of done in place (or into NOTES.md's Plan if it has none).
     `expected` is the text the user was looking at; if the file moved on since, refuse rather than overwrite."""
     if name not in {p["name"] for p in active_projects()}: raise ValueError("unknown project")
@@ -168,18 +180,20 @@ def set_done(name, text, expected):
     now = hit["text"] if hit and hit["defined"] else ""
     if re.sub(r"\s+", " ", expected or "").strip() != now:
         raise ValueError("This definition changed on disk since you opened it. Refresh and try again.")
+    eol = "\n"
     if hit:
-        target = os.path.join(path, hit["file"]); lines = open(target, encoding="utf-8", errors="replace").read().split("\n")
+        target = os.path.join(path, hit["file"]); lines, eol = _read_lines(target)
         if hit["kind"] == "line":
             prefix = hit["prefix"] if hit["prefix"].rstrip().endswith(":") or hit["prefix"].rstrip().endswith(":**") else hit["prefix"].rstrip() + ": "
             lines[hit["start"]:hit["end"]] = [prefix + text]
         else:
-            lines[hit["start"] + 1:hit["end"]] = ["", text, ""]
+            tail = [""] if hit["end"] < len(lines) and lines[hit["end"]].strip() else []
+            lines[hit["start"] + 1:hit["end"]] = ["", text] + tail
     else:
         names = {f.lower(): f for f in os.listdir(path)}; target = os.path.join(path, names.get("notes.md", "NOTES.md"))
         item = "- definition of done: " + text
         if os.path.exists(target):
-            lines = open(target, encoding="utf-8", errors="replace").read().split("\n")
+            lines, eol = _read_lines(target)
             plan = next((i for i, l in enumerate(lines) if re.match(r"^##\s+Plan\s*$", l)), None)
             if plan is None:
                 while lines and not lines[-1].strip(): lines.pop()
@@ -189,7 +203,7 @@ def set_done(name, text, expected):
     if os.path.realpath(target) != os.path.join(os.path.realpath(path), os.path.basename(os.path.realpath(target))):
         raise ValueError("refusing to write outside the project folder")
     tmp = target + ".triage-tmp"
-    with open(tmp, "w", encoding="utf-8") as fh: fh.write("\n".join(lines))
+    with open(tmp, "w", encoding="utf-8", errors="surrogateescape", newline="") as fh: fh.write(eol.join(lines))
     if os.path.exists(target): shutil.copymode(target, tmp)
     os.replace(tmp, target)
     log(f"done {name} -> {os.path.basename(target)}: {text[:80]}")
@@ -550,8 +564,22 @@ class H(BaseHTTPRequestHandler):
         self.send_response(code); self.send_header("Content-Type", ctype + "; charset=utf-8")
         self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data)
     def log_message(self, *a): pass
+    def _refuse(self, post):
+        """Browser-attack guard (no login here, so the page you are on must not be able to drive it).
+        Loopback bind: only localhost Host names (stops DNS rebinding). Any bind: a request carrying an
+        Origin must come from this same host (stops cross-site forms), and POST bodies must be JSON."""
+        host = self.headers.get("Host", "")
+        if BIND_HOST in ("127.0.0.1", "localhost", "::1") and urlparse("//" + host).hostname not in ("127.0.0.1", "localhost", "::1"):
+            return "unexpected Host header"
+        origin = self.headers.get("Origin")
+        if origin is not None and urlparse(origin).netloc != host: return "cross-origin request refused"
+        if post and self.headers.get("Content-Type", "").split(";")[0].strip().lower() != "application/json":
+            return "Content-Type must be application/json"
+        return None
     def do_GET(self):
         u = urlparse(self.path); q = parse_qs(u.query)
+        bad = self._refuse(False)
+        if bad: return self._send(403, {"error": bad})
         try:
             if u.path == "/": return self._send(200, open(os.path.join(HERE, "index.html"), "rb").read().replace(b"__VERSION__", VERSION.encode()), "text/html")
             if u.path == "/api/version": return self._send(200, {"version": VERSION, "started": STARTED, "pid": os.getpid()})
@@ -566,6 +594,8 @@ class H(BaseHTTPRequestHandler):
             self._send(404, {"error": "not found"})
         except Exception as e: self._send(400, {"error": str(e)})
     def do_POST(self):
+        bad = self._refuse(True)
+        if bad: return self._send(403, {"error": bad})
         try:
             n = int(self.headers.get("Content-Length", 0)); req = json.loads(self.rfile.read(n) or b"{}")
             if urlparse(self.path).path == "/api/action": return self._send(200, act(req))
@@ -608,7 +638,7 @@ if __name__ == "__main__":
     ap.add_argument("--host", default="127.0.0.1", help="interface to listen on; 0.0.0.0 = all (no auth, trusted networks only)")
     ap.add_argument("--notes", default=NOTES); ap.add_argument("--no-browser", action="store_true")
     ap.add_argument("--restart", action="store_true", help="stop a server already on the port, then start this one")
-    a = ap.parse_args(); NOTES = os.path.abspath(os.path.expanduser(a.notes)); PROJECTS = os.path.dirname(NOTES)
+    a = ap.parse_args(); BIND_HOST = a.host; NOTES = os.path.abspath(os.path.expanduser(a.notes)); PROJECTS = os.path.dirname(NOTES)
     url = f"http://127.0.0.1:{a.port}/"
     info = running_server(a.port)
     if info and a.restart:

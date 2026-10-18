@@ -19,6 +19,15 @@ with every change. Versions 1.00-1.03 were numbered after the fact from git hist
   requests and open issues. The server reads it all through `gh` (same sign-in as before); the browser
   never talks to GitHub. Limited to repos owned by the signed-in gh user. New `GET /api/repo` and
   `GET /api/repo/path`; responses cached 60 s. Files over 300 KB and binaries link out to GitHub instead.
+- Review fixes (folded into 1.13 before merge):
+  - Browser-attack guard on every request: on a localhost bind the `Host` header must be localhost/127.0.0.1
+    (stops DNS rebinding reading private repos), a request with an `Origin` must come from the same host, and
+    POSTs must be `application/json` (stops cross-site form posts writing to your notes). The page now sends
+    that header.
+  - Saving a definition of done keeps CRLF line endings and non-UTF-8 bytes in the file, and two saves at
+    once no longer share a temp file.
+  - A `## Definition of done` heading now means its first paragraph only, so saving no longer replaces the
+    whole section (bullets and background text below it stay).
 
 ## 1.12 — 2026-10-18
 - Definition of done is editable from Active Projects: Edit (or Fill in) -> Review change -> a confirm

@@ -232,7 +232,7 @@ class ApiTestCase(unittest.TestCase):
 
     def post_done(self, name, text, expected=""):
         req = urllib.request.Request(f"http://127.0.0.1:{self.port}/api/done", method="POST",
-                                     data=json.dumps({"name": name, "text": text, "expected": expected}).encode())
+                                     headers={"Content-Type": "application/json"}, data=json.dumps({"name": name, "text": text, "expected": expected}).encode())
         try:
             with urllib.request.urlopen(req) as r: return r.status, json.loads(r.read())
         except urllib.error.HTTPError as e: return e.code, json.loads(e.read())
@@ -256,6 +256,47 @@ class ApiTestCase(unittest.TestCase):
         self.make_project("c"); self.write("c", "README.md", "# C\n\n## What does done look like?\n\nA demo.\n\n## Next\n\nstuff\n")
         self.assertEqual(self.post_done("c", "A shipped app", "A demo.")[0], 200)
         self.assertEqual(self.read("c", "README.md"), "# C\n\n## What does done look like?\n\nA shipped app\n\n## Next\n\nstuff\n")
+
+    def raw(self, project, name, data=None):
+        p = os.path.join(self.tmp, "active", project, name)
+        if data is None:
+            with open(p, "rb") as f: return f.read()
+        with open(p, "wb") as f: f.write(data)
+
+    def test_set_done_keeps_crlf_line_endings(self):
+        self.make_project("w"); self.raw("w", "NOTES.md", b"## Plan\r\n\r\n- definition of done: Old.\r\n- first step: go\r\n")
+        self.assertEqual(self.post_done("w", "New", "Old.")[0], 200)
+        self.assertEqual(self.raw("w", "NOTES.md"), b"## Plan\r\n\r\n- definition of done: New\r\n- first step: go\r\n")
+
+    def test_set_done_keeps_undecodable_bytes(self):
+        self.make_project("u"); self.raw("u", "NOTES.md", b"caf\xe9 notes\n- definition of done: Old.\n")
+        self.assertEqual(self.post_done("u", "New", "Old.")[0], 200)
+        self.assertEqual(self.raw("u", "NOTES.md"), b"caf\xe9 notes\n- definition of done: New\n")
+
+    def test_heading_definition_is_only_its_first_paragraph(self):
+        self.make_project("s"); self.write("s", "README.md", "# S\n\n## Definition of done\n\nWorks on the phone.\n\nBackground that is not the definition.\n\n- a list\n")
+        self.assertEqual(self.done("s")["text"], "Works on the phone.")
+        self.assertEqual(self.post_done("s", "Ships", "Works on the phone.")[0], 200)
+        self.assertEqual(self.read("s", "README.md"), "# S\n\n## Definition of done\n\nShips\n\nBackground that is not the definition.\n\n- a list\n")
+
+    def request(self, path, method="GET", headers=None, body=None):
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}", method=method, headers=headers or {}, data=body)
+        try:
+            with urllib.request.urlopen(req) as r: return r.status
+        except urllib.error.HTTPError as e: return e.code
+
+    def test_browser_guard_refuses_foreign_host_origin_and_form_posts(self):
+        self.make_project("g"); self.write("g", "NOTES.md", "- definition of done:\n")
+        body = json.dumps({"name": "g", "text": "Hacked", "expected": ""}).encode()
+        js = {"Content-Type": "application/json"}
+        self.assertEqual(self.request("/api/projects", headers={"Host": "evil.example:8765"}), 403)  # DNS rebinding
+        self.assertEqual(self.request("/api/projects", headers={"Origin": "http://evil.example"}), 403)
+        self.assertEqual(self.request("/api/done", "POST", {"Content-Type": "text/plain"}, body), 403)  # cross-site form post
+        self.assertEqual(self.request("/api/done", "POST", {**js, "Origin": "http://evil.example"}, body), 403)
+        self.assertEqual(self.read("g", "NOTES.md"), "- definition of done:\n")
+        self.assertEqual(self.request("/api/projects"), 200)
+        self.assertEqual(self.request("/api/projects", headers={"Host": f"localhost:{self.port}"}), 200)
+        self.assertEqual(self.request("/api/done", "POST", {**js, "Origin": f"http://127.0.0.1:{self.port}"}, body), 200)
 
     def test_set_done_fills_placeholder_in_place(self):
         self.make_project("ph"); self.write("ph", "NOTES.md", "## Plan\n\n- definition of done: <fill in>\n- first step:\n")
