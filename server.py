@@ -20,7 +20,7 @@ import argparse, json, os, re, shutil, subprocess, threading, time, datetime as 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
-VERSION = "1.09"  # bump on every change; history in CHANGELOG.md
+VERSION = "1.10"  # bump on every change; history in CHANGELOG.md
 HERE = os.path.dirname(os.path.abspath(__file__))
 NOTES = os.path.expanduser("~/Projects/RawNotes")
 PROJECTS = None

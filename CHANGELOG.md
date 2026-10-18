@@ -4,6 +4,9 @@ The version shows in the page heading ("RawNotes Triage version X.XX") and
 in the startup line. Bump `VERSION` in `server.py` and add an entry here
 with every change. Versions 1.00-1.03 were numbered after the fact from git history.
 
+## 1.10 — 2026-10-18
+- Activity strip text 15% larger (12px → 13.8px).
+
 ## 1.09 — 2026-10-18
 - Activity strip now counts commits that reached GitHub, private repos included. GitHub's profile
   calendar hides private-repo commits unless a profile setting is on, so the graph is built from
