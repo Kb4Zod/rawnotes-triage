@@ -4,6 +4,17 @@ The version shows in the page heading ("RawNotes Triage version X.XX") and
 in the startup line. Bump `VERSION` in `server.py` and add an entry here
 with every change. Versions 1.00-1.03 were numbered after the fact from git history.
 
+## 1.14 — 2026-10-18
+- Fix: projects whose remote is written `ssh://git@ssh.github.com:443/...` (GitHub's SSH-over-443
+  address) were not recognised as GitHub repos, so they had no "Review repository" button, no
+  GitHub link and no pull-request list. All GitHub remote spellings are now accepted.
+- Active Projects rows start with a GitHub label: green **GH** (pushed), amber **GH ↑N** (N commits
+  not pushed yet), red **No GH** (not a Git repo, no GitHub remote, or remote set but nothing pushed).
+  Hover for the reason; the detail pane repeats it.
+- Review fixes (folded into 1.14 before merge): the GH state of each project is now checked in parallel, so
+  one slow or hung repo no longer stalls the whole list; remotes like `github.com/../..` are no longer
+  accepted as a repo name.
+
 ## 1.13 — 2026-10-18
 - In-app repo viewer, so private repos can be reviewed without a GitHub login in the browser (or on the
   phone). "Review repository" in a project's detail, and every repo chip in the activity strip, open a

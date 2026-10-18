@@ -21,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
-VERSION = "1.13"  # bump on every change; history in CHANGELOG.md
+VERSION = "1.14"  # bump on every change; history in CHANGELOG.md
 HERE = os.path.dirname(os.path.abspath(__file__))
 NOTES = os.path.expanduser("~/Projects/RawNotes")
 PROJECTS = None
@@ -218,12 +218,41 @@ def active_projects():
             for name in sorted(os.listdir(base), key=str.casefold)
             if not name.startswith(".") and os.path.isdir(os.path.join(base, name))]
 
+GITHUB_REMOTE = re.compile(r"(?:https://(?:www\.)?github\.com/|git@(?:ssh\.)?github\.com:|ssh://git@(?:ssh\.)?github\.com(?::\d+)?/)([\w.-]+/[\w.-]+?)(?:\.git)?/?")
+
+def github_repo_of(url):
+    """'owner/name' for any way git can spell a GitHub remote (https, git@, ssh://, and ssh.github.com:443), else ''."""
+    m = GITHUB_REMOTE.fullmatch((url or "").strip())
+    if not m or any(not seg.strip(".") for seg in m[1].split("/")): return ""  # "..", "." are not names
+    return m[1]
+
+def git_out(path, args, timeout=5):
+    try:
+        proc = subprocess.run(["git"] + args, cwd=path, capture_output=True, text=True, timeout=timeout, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+        return proc.stdout.strip() if proc.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired): return None
+
+def github_state(path):
+    """Is this project on GitHub? git: has a repo; repo: 'owner/name' of a GitHub origin; pushed: that remote has
+    received something (a remote-tracking ref exists); unpushed: commits on this checkout that no origin ref contains."""
+    if not os.path.exists(os.path.join(path, ".git")): return {"git": False, "repo": "", "pushed": False, "unpushed": 0}
+    repo = github_repo_of(git_out(path, ["remote", "get-url", "origin"]))
+    pushed = bool(repo and git_out(path, ["for-each-ref", "--count=1", "refs/remotes/origin"]))
+    ahead = git_out(path, ["rev-list", "--count", "HEAD", "--not", "--remotes=origin"]) if pushed else None
+    return {"git": True, "repo": repo, "pushed": pushed, "unpushed": int(ahead) if ahead and ahead.isdigit() else 0}
+
+def projects_listing():
+    projects = active_projects()
+    with ThreadPoolExecutor(max_workers=8) as pool:  # one slow repo must not hold up the list
+        for p, state in zip(projects, pool.map(lambda p: github_state(p["abs_path"]), projects)): p["gh"] = state
+    return projects
+
 def project_detail(name):
     if name not in {p["name"] for p in active_projects()}: raise ValueError("unknown project")
     path = os.path.join(PROJECTS, "active", name)
     result = {"name": name, "path": "active/" + name, "abs_path": path, "summary": "No README or project notes yet.",
               "summary_source": None, "commits": [], "features": [], "prs": [],
-              "pr_status": "No Git repository in this project.", "branch": "", "remote": "", "repo": "",
+              "pr_status": "No Git repository in this project.", "branch": "", "remote": "", "repo": "", "gh": {"git": False, "repo": "", "pushed": False, "unpushed": 0},
               "done": definition_of_done(path)}
     files = {f.lower(): f for f in sorted(os.listdir(path))}
     for candidate in ("readme.md", "readme.rst", "readme.txt", "readme", "notes.md"):
@@ -244,11 +273,11 @@ def project_detail(name):
                                   env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "GH_PROMPT_DISABLED": "1"})
             return proc.stdout.strip() if proc.returncode == 0 else None
         except (OSError, subprocess.TimeoutExpired): return None
+    result["gh"] = github_state(path)
     result["branch"] = run(["git", "branch", "--show-current"]) or "Detached HEAD / no commits"
     remote = run(["git", "remote", "get-url", "origin"]) or ""
-    match = re.fullmatch(r"(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)([\w.-]+/[\w.-]+?)(?:\.git)?/?", remote)
-    if match: result["remote"] = "https://github.com/" + match[1]
-    if match: result["repo"] = match[1]
+    match = github_repo_of(remote)
+    if match: result["remote"] = "https://github.com/" + match; result["repo"] = match
     history = run(["git", "log", "-100", "--format=%h%x09%cs%x09%s"])
     commits = []
     for line in (history or "").splitlines():
@@ -258,7 +287,7 @@ def project_detail(name):
     result["features"] = [c for c in commits if re.match(r"^feat(?:ure)?(?:\([^)]*\))?!?:", c["title"], re.I)][:10]
     result["pr_status"] = "PRs require a GitHub origin remote."
     if match:
-        prs = run(["gh", "pr", "list", "--repo", match[1], "--state", "all", "--limit", "10",
+        prs = run(["gh", "pr", "list", "--repo", match, "--state", "all", "--limit", "10",
                    "--json", "number,title,state,url,updatedAt,mergedAt", "--search", "sort:updated-desc"], timeout=12)
         result["pr_status"] = "GitHub PRs unavailable. Check gh installation, sign-in, and network access."
         if prs is not None:
@@ -556,7 +585,7 @@ class H(BaseHTTPRequestHandler):
         try:
             if u.path == "/": return self._send(200, open(os.path.join(HERE, "index.html"), "rb").read().replace(b"__VERSION__", VERSION.encode()), "text/html")
             if u.path == "/api/version": return self._send(200, {"version": VERSION, "started": STARTED, "pid": os.getpid()})
-            if u.path == "/api/projects": return self._send(200, {"projects": active_projects()})
+            if u.path == "/api/projects": return self._send(200, {"projects": projects_listing()})
             if u.path == "/api/project": return self._send(200, project_detail(q.get("name", [""])[0]))
             if u.path == "/api/activity": return self._send(200, github_activity(q.get("refresh") == ["1"]))
             if u.path == "/api/repo": return self._send(200, repo_overview(q.get("name", [""])[0]))

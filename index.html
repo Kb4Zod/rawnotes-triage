@@ -22,6 +22,7 @@ aside{border-right:1px solid var(--line);overflow:auto;background:var(--panel)}
 .badge.dead{color:var(--bad);border-color:var(--bad)}.badge.promoted{color:var(--ok);border-color:var(--ok)}
 .stale{color:var(--bad);font-weight:600}
 .badge.nodone{color:var(--bad);border-color:var(--bad)}
+.badge.gh{font-weight:700;margin-right:6px}.badge.gh.ok{color:var(--ok);border-color:var(--ok)}.badge.gh.warn{color:var(--warn);border-color:var(--warn)}.badge.gh.no{color:var(--bad);border-color:var(--bad)}
 .dod{border:1px solid var(--line);border-left:4px solid var(--ok);border-radius:6px;padding:8px 14px;margin:12px 0;background:var(--panel)}
 .dod h2{margin:0 0 4px;border:0;font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--mute)}
 .dod p{margin:0}.dod.missing{border-color:var(--bad);border-left-color:var(--bad)}.dod.missing h2,.dod.missing p{color:var(--bad)}
@@ -117,6 +118,12 @@ function md(src){ // small markdown renderer: headings, lists, code, bold/italic
     para.push(raw)}
   flush();return out.join('\n')}
 let repoState=null;const enc=encodeURIComponent;
+function ghInfo(g){g=g||{};
+  if(g.pushed&&g.unpushed)return{label:'GH ↑'+g.unpushed,cls:'warn',text:`On GitHub (${g.repo}), but ${g.unpushed} commit${g.unpushed===1?'':'s'} here ${g.unpushed===1?'is':'are'} not pushed yet`};
+  if(g.pushed)return{label:'GH',cls:'ok',text:'Pushed to GitHub: '+g.repo};
+  if(g.repo)return{label:'No GH',cls:'no',text:`GitHub remote is set (${g.repo}) but nothing has been pushed yet`};
+  return{label:'No GH',cls:'no',text:g.git?'Git repository with no GitHub remote: not on GitHub':'Not a Git repository: not on GitHub'}}
+const ghBadge=g=>{const i=ghInfo(g);return`<span class="badge gh ${i.cls}" title="${esc(i.text)}">${i.label}</span>`};
 const ghUrl=u=>/^https:\/\/github\.com\//.test(u||'')?u:'#';
 const fmtSize=n=>n<1024?n+' B':n<1048576?(n/1024).toFixed(1)+' KB':(n/1048576).toFixed(1)+' MB';
 function closeRepo(){repoState=null;
@@ -235,7 +242,7 @@ async function apply(){if(!mode||!sel)return;const g=id=>{const e=document.getEl
   const idx=data.live.findIndex(n=>n.file===sel);const next=data.live[idx+1]||data.live[idx-1];
   if(mode==='keep'){await load(true)}else{sel=next?next.file:null;await load(true)}}
 function projectList(){
-  $('#list').innerHTML=projects.length?projects.map((p,i)=>`<div class="row ${sel===p.name?'sel':''}" data-project="${i}" role="button" tabindex="0"><div class="t">${esc(p.name)}</div><span style="display:flex;gap:6px;align-items:center">${p.done_defined?'':'<span class="badge nodone" title="No definition of done yet">No done defined</span>'}<span class="badge">${p.repo?'Git':'Folder'}</span><button class="act row-copy" type="button" data-path="${esc(p.abs_path)}" title="Copy full path" style="padding:1px 8px;font-size:11px">Copy</button></span><div class="m">${esc(p.path)}</div></div>`).join(''):'<div class="empty">No active projects yet. Promote a note to active to start one.</div>';
+  $('#list').innerHTML=projects.length?projects.map((p,i)=>`<div class="row ${sel===p.name?'sel':''}" data-project="${i}" role="button" tabindex="0"><div class="t">${ghBadge(p.gh)}${esc(p.name)}</div><span style="display:flex;gap:6px;align-items:center">${p.done_defined?'':'<span class="badge nodone" title="No definition of done yet">No done defined</span>'}<span class="badge">${p.repo?'Git':'Folder'}</span><button class="act row-copy" type="button" data-path="${esc(p.abs_path)}" title="Copy full path" style="padding:1px 8px;font-size:11px">Copy</button></span><div class="m">${esc(p.path)}</div></div>`).join(''):'<div class="empty">No active projects yet. Promote a note to active to start one.</div>';
   document.querySelectorAll('[data-project]').forEach(el=>{el.onclick=()=>showProject(projects[Number(el.dataset.project)].name,true);el.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();el.click()}}});
   document.querySelectorAll('.row-copy').forEach(b=>{
     b.onclick=e=>{e.stopPropagation();copyPath(b.dataset.path,b)};
@@ -291,6 +298,7 @@ async function showProject(name,nav){
     const commits=items=>items.map(c=>`<li>${esc(c.title)} <span class="meta">· ${esc(c.date)} · ${esc(c.sha)}</span></li>`).join('');
     $('#view').innerHTML=`<div class="meta"><span class="copy-path" id="detailPath" tabindex="0" role="button" title="Click to copy full path" data-path="${esc(p.abs_path)}">${esc(p.abs_path)}</span>${p.branch?' · '+esc(p.branch):''}</div><h1>${esc(p.name)}</h1>
       ${p.repo?`<p><button class="act" id="repoOpen" type="button">Review repository</button> ${link(p.remote,'Open on GitHub ↗')}</p>`:''}
+      <p class="meta">${ghBadge(p.gh)} ${esc(ghInfo(p.gh).text)}</p>
       <div id="dod"></div>
       <h2>Repository summary</h2><p style="white-space:pre-wrap">${esc(p.summary)}</p>${p.summary_source?`<div class="meta">Excerpt from ${esc(p.summary_source)}</div>`:''}
       <h2>Recent pull requests</h2>${p.pr_status?`<p class="meta">${esc(p.pr_status)}</p>`:`<ul>${p.prs.map(pr=>`<li>${link(pr.url,'#'+pr.number+' '+pr.title)} <span class="badge">${esc(pr.mergedAt?'MERGED':pr.state)}</span> <span class="meta">${esc(pr.updatedAt.slice(0,10))}</span></li>`).join('')}</ul>`}

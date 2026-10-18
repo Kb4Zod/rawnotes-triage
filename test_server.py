@@ -19,9 +19,10 @@ class ApiTestCase(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self.notes = os.path.join(self.tmp, "RawNotes")
         os.makedirs(self.notes)
-        self.old_notes, self.old_projects = server.NOTES, server.PROJECTS
+        self.old_notes, self.old_projects, self.old_log = server.NOTES, server.PROJECTS, server.log
         server.NOTES = self.notes
         server.PROJECTS = self.tmp
+        server.log = lambda msg: None  # never write test actions into the real triage.log
         self.addCleanup(self._restore)
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.H)
         self.port = self.httpd.server_address[1]
@@ -32,6 +33,7 @@ class ApiTestCase(unittest.TestCase):
 
     def _restore(self):
         server.NOTES, server.PROJECTS = self.old_notes, self.old_projects
+        server.log = self.old_log
 
     def make_project(self, name):
         path = os.path.join(self.tmp, "active", name)
@@ -415,6 +417,41 @@ class ApiTestCase(unittest.TestCase):
         subprocess.run(["git", "remote", "add", "origin", "git@github.com:me/withgit.git"], cwd=path, check=True)
         self.assertEqual(self.get("/api/project?name=withgit")["repo"], "me/withgit")
         self.make_project("nogit"); self.assertEqual(self.get("/api/project?name=nogit")["repo"], "")
+
+    def test_github_remote_spellings(self):
+        for url in ("ssh://git@ssh.github.com:443/me/r.git", "git@github.com:me/r.git", "git@ssh.github.com:me/r.git",
+                    "https://github.com/me/r.git", "https://github.com/me/r", "ssh://git@github.com/me/r.git", "https://github.com/me/r/"):
+            self.assertEqual(server.github_repo_of(url), "me/r", url)
+        for url in ("", None, "https://gitlab.com/me/r.git", "https://github.com/me/r/extra", "https://notgithub.com/me/r",
+                    "https://github.com/../..", "https://github.com/me/..", "git@github.com:./r.git"):
+            self.assertEqual(server.github_repo_of(url), "", url)
+
+    def git(self, path, *args):
+        import subprocess
+        return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.com"] + list(args), cwd=path, check=True, capture_output=True, text=True).stdout
+
+    def test_projects_report_whether_they_are_on_github(self):
+        self.make_project("folder")
+        loc = self.make_project("local"); self.git(loc, "init", "-q"); self.git(loc, "commit", "-q", "--allow-empty", "-m", "one")
+        fresh = self.make_project("fresh"); self.git(fresh, "init", "-q"); self.git(fresh, "remote", "add", "origin", "ssh://git@ssh.github.com:443/me/fresh.git")
+        gh = self.make_project("pushed"); self.git(gh, "init", "-q"); self.git(gh, "remote", "add", "origin", "ssh://git@ssh.github.com:443/me/pushed.git")
+        self.git(gh, "commit", "-q", "--allow-empty", "-m", "one"); self.git(gh, "update-ref", "refs/remotes/origin/main", "HEAD")
+        ahead = self.make_project("ahead"); self.git(ahead, "init", "-q"); self.git(ahead, "remote", "add", "origin", "git@github.com:me/ahead.git")
+        self.git(ahead, "commit", "-q", "--allow-empty", "-m", "one"); self.git(ahead, "update-ref", "refs/remotes/origin/main", "HEAD")
+        self.git(ahead, "commit", "-q", "--allow-empty", "-m", "two"); self.git(ahead, "commit", "-q", "--allow-empty", "-m", "three")
+        states = {p["name"]: p["gh"] for p in self.get("/api/projects")["projects"]}
+        self.assertEqual(states["folder"], {"git": False, "repo": "", "pushed": False, "unpushed": 0})
+        self.assertEqual(states["local"], {"git": True, "repo": "", "pushed": False, "unpushed": 0})  # git, never on GitHub
+        self.assertEqual(states["fresh"], {"git": True, "repo": "me/fresh", "pushed": False, "unpushed": 0})  # remote set, nothing pushed
+        self.assertEqual(states["pushed"], {"git": True, "repo": "me/pushed", "pushed": True, "unpushed": 0})
+        self.assertEqual(states["ahead"], {"git": True, "repo": "me/ahead", "pushed": True, "unpushed": 2})
+
+    def test_project_with_ssh_443_remote_gets_repo_link_and_state(self):
+        path = self.make_project("viaport"); self.git(path, "init", "-q")
+        self.git(path, "remote", "add", "origin", "ssh://git@ssh.github.com:443/me/viaport.git")
+        d = self.get("/api/project?name=viaport")
+        self.assertEqual((d["repo"], d["remote"]), ("me/viaport", "https://github.com/me/viaport"))
+        self.assertEqual(d["gh"]["repo"], "me/viaport")
 
 
 if __name__ == "__main__":
