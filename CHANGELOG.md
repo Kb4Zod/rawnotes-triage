@@ -4,6 +4,11 @@ The version shows in the page heading ("RawNotes Triage version X.XX") and
 in the startup line. Bump `VERSION` in `server.py` and add an entry here
 with every change. Versions 1.00-1.03 were numbered after the fact from git history.
 
+## 2.03 — 2026-10-18
+- **Archive filter is readable again.** The five outcome segments (All / Promoted / Reference / Killed / Merged)
+  overlapped in the 400px list pane; each segment now stacks its count under the label and wider labels get more
+  room. The group is labelled "Outcome" for screen readers. Inbox filters unchanged.
+
 ## 2.02 — 2026-10-18
 - **Projects board shows experiments.** Every folder in `../experiments` is now a project card, not just ones with a
   promoted note in them, labelled with a teal **Experiment** chip (also in the drawer). Folder-only experiments sit
