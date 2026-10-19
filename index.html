@@ -213,7 +213,9 @@ textarea.input{min-height:72px;resize:vertical;line-height:1.5}
 button.tile{cursor:pointer;font:inherit;color:inherit}
 .tile .num{font-size:38px;font-weight:700;line-height:1}
 .tile .lab{font-size:12.5px;color:var(--mute);margin-top:6px;display:flex;gap:6px;align-items:center}
-.board{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) 380px;gap:16px;align-items:start}
+.board{display:flex;gap:16px;align-items:flex-start;width:max-content;min-width:100%}
+.board>.col{flex:1 0 260px;max-width:360px}
+.board>.drawer{flex:0 0 380px}
 .col h3{font:900 11px var(--sans);letter-spacing:.18em;text-transform:uppercase;color:var(--mute);margin:0 0 10px;display:flex;gap:8px;align-items:center}
 .pc{padding:14px 15px;margin-bottom:10px;cursor:pointer;display:block;width:100%;text-align:left;font:inherit;color:inherit}
 .pc:hover{border-color:var(--line2)}
@@ -281,7 +283,6 @@ button.tile{cursor:pointer;font:inherit;color:inherit}
 .keys table{width:100%;border-collapse:collapse;font-size:13.5px}.keys td{padding:5px 0;border-bottom:1px solid var(--line)}.keys td:first-child{width:140px}
 /* phone */
 .mtop,.tabbar{display:none}
-@media(max-width:1180px){.board{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.board .drawer{grid-column:1/-1;position:relative;top:0;max-height:none;order:-1}.board .drawer.none{display:none}}
 @media(max-width:800px){
   body{font-size:15px}
   .app{display:block;height:auto;min-height:100vh;padding-bottom:84px}
@@ -309,7 +310,7 @@ button.tile{cursor:pointer;font:inherit;color:inherit}
   .doc{padding:20px 18px}.doc h1.title{font-size:32px}
   .scroll{height:auto;overflow:visible;padding:0 14px 30px}
   .tiles{grid-template-columns:1fr 1fr}
-  .board{grid-template-columns:1fr}
+  .board{display:block;width:auto;min-width:0}.board>.col{max-width:none}
   .board .drawer{display:none}
   body.detail .board>.col,body.detail .tiles,body.detail .pane-h{display:none}
   body.detail .board .drawer{display:block}
@@ -701,28 +702,31 @@ function renderProjects(){
   const late=open.filter(c=>c.f&&c.f.days_left!==null&&c.f.days_left<0),week=open.filter(c=>c.f&&c.f.days_left>=0&&c.f.days_left<=7),
     later=open.filter(c=>c.f&&!c.f.open_ended&&(c.f.days_left>7||c.f.days_left===null)),exps=open.filter(c=>c.f?c.f.open_ended:c.exp),
     none=open.filter(c=>!c.f&&!c.exp),closed=cards.filter(c=>c.closed);
-  if(!S.psel||!cards.some(c=>c.id===S.psel))S.psel=(late[0]||week[0]||later[0]||exps[0]||none[0]||{}).id||null;
+  if(S.psel&&!cards.some(c=>c.id===S.psel))S.psel=null;
   const act=(S.projects||[]).filter(p=>p.kind==='active'),nodod=act.filter(p=>!p.done_defined).length,gh=act.filter(p=>p.gh&&p.gh.pushed).length;
   const card=c=>{const dm=c.p?(c.p.done_defined?null:'＋ Define “done means”'):null;
     return `<button type="button" class="card pc ${c.id===S.psel?'sel':''} ${c.closed?'closed':''}" data-pid="${esc(c.id)}"><div class="top"><h4>${esc(c.title)}</h4>${c.f&&!c.f.done?ring(c.f):''}</div>
       <div class="dm ${dm?'miss':''}">${dm||esc(c.f&&c.f.title!==c.title?c.f.title:(c.p?c.p.path:c.f.path))}</div>
       <div class="row">${expChip(c)}${c.closed?st(c.status==='dead'?'killed':'shipped',stLabel[c.status]||c.status):''}${c.p?ghChip(c.p.gh):c.exp?'':st('plain',c.f.dest)}${c.f&&c.f.due&&!c.f.done?`<span class="st plain">ship by ${c.f.due.slice(5)}</span>`:''}${c.f&&c.f.open_ended&&!c.f.done?`<span class="st plain">since ${esc((c.f.promoted||'').slice(5))}</span>`:''}</div></button>`};
-  const col=(cls,label,cs,more='')=>`<div class="col"><h3>${st(cls,label)} ${cs.length}</h3>${cs.map(card).join('')||'<div class="muted" style="padding:0 4px 14px;font-size:13px">Nothing here.</div>'}${more}</div>`;
+  // Left to right by urgency; empty columns are hidden. The drawer opens right after the selected card's column.
+  const cols=[['late','Overdue',late],['soon','Due this week',week],['ok','Later',later],['plain','No ship date',none],['exp','Experiments',exps],['plain','Closed',closed]].filter(x=>x[2].length);
+  const board=cols.map(([cls,label,cs])=>`<div class="col"><h3>${st(cls,label)} ${cs.length}</h3>${cs.map(card).join('')}</div>`
+    +(cs.some(c=>c.id===S.psel)?'<div class="card drawer" id="drawer"></div>':'')).join('')||'<div class="muted" style="font-size:13px">No projects yet. Promote a note to start one.</div>';
   $('#main').innerHTML=`<div class="scroll" id="pscroll"><div class="pane-h" style="padding-left:0;display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap"><div><h1>Projects</h1><div class="sub">Active work by its ship-by date, experiments open-ended</div></div>
     <button class="btn sm" id="pref" style="margin-left:auto">Refresh</button></div>
    <div class="tiles"><div class="card tile"><div class="num" style="color:${late.length?'var(--rust)':'inherit'}">${late.length}</div><div class="lab">${st('late','Overdue')}</div></div>
-    <div class="card tile"><div class="num">${week.length}</div><div class="lab">${st('soon','Ship this week')}</div></div>
+    <div class="card tile"><div class="num">${week.length}</div><div class="lab">${st('soon','Due this week')}</div></div>
     <div class="card tile"><div class="num">${nodod}</div><div class="lab">${st('killed','No “done means”')}</div></div>
     <div class="card tile"><div class="num">${gh}<span style="font-size:20px;color:var(--mute)">/${act.length}</span></div><div class="lab">${st('ok','On GitHub')}</div></div></div>
-   <div class="board">${col('late','Overdue',late,later.length?`<h3 style="margin-top:18px">${st('ok','Later')} ${later.length}</h3>${later.map(card).join('')}`:'')}
-    ${col('soon','Ship this week',week,closed.length?`<h3 style="margin-top:18px">${st('plain','Closed')} ${closed.length}</h3>${closed.map(card).join('')}`:'')}
-    ${col('exp','Experiments',exps,`<h3 style="margin-top:18px">${st('plain','No ship-by date')} ${none.length}</h3>${none.map(card).join('')||'<div class="muted" style="padding:0 4px 14px;font-size:13px">Nothing here.</div>'}`)}
-    <div class="card drawer ${S.psel?'':'none'}" id="drawer"></div></div></div>`;
+   <div class="board">${board}</div></div>`;
   $('#pref').onclick=async()=>{S.projects=null;S.pdetail=null;await loadNotes();render()};
   $$('[data-pid]').forEach(b=>b.onclick=()=>selectProject(b.dataset.pid,true));
   renderDrawer()}
-function selectProject(id,nav){S.psel=id;$$('[data-pid]').forEach(b=>b.classList.toggle('sel',b.dataset.pid===id));renderDrawer();
-  if(nav&&narrow()){document.body.classList.add('detail');scrollTo(0,0)}}
+// Click a card to open its drawer beside its column; click it again to close it (phone: always opens the detail view).
+function selectProject(id,nav){const ph=nav&&narrow();S.psel=id===S.psel&&!ph?null:id;
+  const sc=$('#pscroll'),t=sc?sc.scrollTop:0,l=sc?sc.scrollLeft:0;renderProjects();
+  const sc2=$('#pscroll');if(sc2){sc2.scrollTop=t;sc2.scrollLeft=l}
+  if(ph){document.body.classList.add('detail');scrollTo(0,0)}else $('#drawer')?.scrollIntoView({block:'nearest',inline:'nearest'})}
 async function renderDrawer(){const d=$('#drawer');if(!d)return;const c=projectCards().find(x=>x.id===S.psel);if(!c){d.innerHTML='';return}
   const f=c.f,p=c.p;
   const clock=f&&f.open_ended?`<div class="sec label">Clock</div><div style="font-size:13px">${f.promoted?`Promoted <b>${esc(f.promoted)}</b> · `:''}open-ended experiment, no ship-by date${f.done?` · <b>${esc(stLabel[f.status]||f.status)}</b>`:''}</div>`
@@ -873,7 +877,7 @@ document.addEventListener('keydown',e=>{
   if(k==='?'){openKeys();return}
   if(k==='z'||k==='Z'){doUndo();return}
   if('1234'.includes(k)&&k.length===1){location.hash='#/'+['inbox','projects','archive','pulse'][+k-1];return}
-  if(k==='Escape'){if(S.repo){S.repo=null;render()}else if(S.mode)setMode(null);else if(document.body.classList.contains('note')||document.body.classList.contains('detail'))backToList();return}
+  if(k==='Escape'){if(S.repo){S.repo=null;render()}else if(S.mode)setMode(null);else if(document.body.classList.contains('note')||document.body.classList.contains('detail'))backToList();else if(S.route==='projects'&&S.psel)selectProject(S.psel);return}
   const down=k==='j'||k==='ArrowDown',up=k==='k'||k==='ArrowUp';
   if(S.route==='inbox'&&S.notes){const ord=navOrder(inboxModel()),i=ord.indexOf(S.sel);
     if(down||up){e.preventDefault();const n=ord[i+(down?1:-1)];if(n)selectNote(n);return}
