@@ -4,6 +4,13 @@ The version shows in the page heading ("RawNotes Triage version X.XX") and
 in the startup line. Bump `VERSION` in `server.py` and add an entry here
 with every change. Versions 1.00-1.03 were numbered after the fact from git history.
 
+## 2.02 — 2026-10-18
+- **Projects board shows experiments.** Every folder in `../experiments` is now a project card, not just ones with a
+  promoted note in them, labelled with a teal **Experiment** chip (also in the drawer). Folder-only experiments sit
+  in the Experiments column with an open-ended clock; the column header is teal to match. Done means, recent
+  activity and GitHub state work for experiments too (`kind` on `/api/projects`, `/api/project` and `/api/done`;
+  defaults to `active`, so a folder with the same name in both places stays two projects).
+
 ## 2.01 — 2026-10-18
 Bug fixes after the 2.00 redesign.
 - **Fix: page and server out of step.** The server read `index.html` from disk on every request, so a 1.14 server

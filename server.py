@@ -23,7 +23,7 @@ from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
-VERSION = "2.01"  # bump on every change; history in CHANGELOG.md
+VERSION = "2.02"  # bump on every change; history in CHANGELOG.md
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOG_PATH = os.path.join(HERE, "triage.log")
 FONT_RE = re.compile(r"^/static/fonts/[A-Za-z0-9-]+\.woff2$")
@@ -182,8 +182,8 @@ def definition_of_done(path):
     if not hit: return {"defined": False, "text": "", "source": None}
     return {"defined": hit["defined"], "text": hit["text"] if hit["defined"] else "", "source": hit["file"]}
 
-def set_done(name, text, expected):
-    with _done_lock: return _set_done(name, text, expected)
+def set_done(name, text, expected, kind="active"):
+    with _done_lock: return _set_done(name, text, expected, kind)
 
 def _read_lines(target):
     """(lines, eol): the file split on its own line ending, undecodable bytes kept as surrogates."""
@@ -191,14 +191,14 @@ def _read_lines(target):
     eol = "\r\n" if "\r\n" in raw else "\n"
     return raw.split(eol), eol
 
-def _set_done(name, text, expected):
+def _set_done(name, text, expected, kind="active"):
     """Write a project's definition of done in place (or into NOTES.md's Plan if it has none).
     `expected` is the text the user was looking at; if the file moved on since, refuse rather than overwrite."""
-    if name not in {p["name"] for p in active_projects()}: raise ValueError("unknown project")
+    path = project_dir(name, kind)
     text = re.sub(r"\s+", " ", text or "").strip()
     if done_placeholder(text): raise ValueError("Write what done looks like first.")
     if len(text) > DONE_MAX: raise ValueError(f"Keep it under {DONE_MAX} characters.")
-    path = os.path.join(PROJECTS, "active", name); hit = find_done(path)
+    hit = find_done(path)
     now = hit["text"] if hit and hit["defined"] else ""
     if re.sub(r"\s+", " ", expected or "").strip() != now:
         raise ValueError("This definition changed on disk since you opened it. Refresh and try again.")
@@ -231,14 +231,26 @@ def _set_done(name, text, expected):
     log(f"done {name} -> {os.path.basename(target)}: {text[:80]}")
     return {"ok": True, "file": os.path.basename(target), "msg": f"Saved to {os.path.basename(target)}"}
 
-def active_projects():
-    base = os.path.join(PROJECTS, "active")
-    if not os.path.isdir(base): return []
-    return [{"name": name, "path": "active/" + name, "abs_path": os.path.join(base, name),
-             "repo": os.path.exists(os.path.join(base, name, ".git")),
-             "done_defined": definition_of_done(os.path.join(base, name))["defined"]}
-            for name in sorted(os.listdir(base), key=str.casefold)
-            if not name.startswith(".") and os.path.isdir(os.path.join(base, name))]
+PROJECT_KINDS = ("active", "experiments")  # folders whose subfolders are projects on the board
+
+def project_folders():
+    """Every project folder under ../active and ../experiments; `kind` says which (experiments are labelled on the board)."""
+    out = []
+    for kind in PROJECT_KINDS:
+        base = os.path.join(PROJECTS, kind)
+        if not os.path.isdir(base): continue
+        out += [{"name": name, "kind": kind, "path": f"{kind}/{name}", "abs_path": os.path.join(base, name),
+                 "repo": os.path.exists(os.path.join(base, name, ".git")),
+                 "done_defined": definition_of_done(os.path.join(base, name))["defined"]}
+                for name in sorted(os.listdir(base), key=str.casefold)
+                if not name.startswith(".") and os.path.isdir(os.path.join(base, name))]
+    return out
+
+def project_dir(name, kind="active"):
+    """Absolute folder of a listed project; anything not on the board is refused."""
+    kind = kind or "active"
+    if not any(p["name"] == name and p["kind"] == kind for p in project_folders()): raise ValueError("unknown project")
+    return os.path.join(PROJECTS, kind, name)
 
 GITHUB_REMOTE = re.compile(r"(?:https://(?:www\.)?github\.com/|git@(?:ssh\.)?github\.com:|ssh://git@(?:ssh\.)?github\.com(?::\d+)?/)([\w.-]+/[\w.-]+?)(?:\.git)?/?")
 
@@ -264,15 +276,14 @@ def github_state(path):
     return {"git": True, "repo": repo, "pushed": pushed, "unpushed": int(ahead) if ahead and ahead.isdigit() else 0}
 
 def projects_listing():
-    projects = active_projects()
+    projects = project_folders()
     with ThreadPoolExecutor(max_workers=8) as pool:  # one slow repo must not hold up the list
         for p, state in zip(projects, pool.map(lambda p: github_state(p["abs_path"]), projects)): p["gh"] = state
     return projects
 
-def project_detail(name):
-    if name not in {p["name"] for p in active_projects()}: raise ValueError("unknown project")
-    path = os.path.join(PROJECTS, "active", name)
-    result = {"name": name, "path": "active/" + name, "abs_path": path, "summary": "No README or project notes yet.",
+def project_detail(name, kind="active"):
+    path = project_dir(name, kind); kind = kind or "active"
+    result = {"name": name, "kind": kind, "path": f"{kind}/{name}", "abs_path": path, "summary": "No README or project notes yet.",
               "summary_source": None, "commits": [], "features": [], "prs": [],
               "pr_status": "No Git repository in this project.", "branch": "", "remote": "", "repo": "", "gh": {"git": False, "repo": "", "pushed": False, "unpushed": 0},
               "done": definition_of_done(path)}
@@ -819,7 +830,7 @@ class H(BaseHTTPRequestHandler):
             if u.path == "/": return self._send(200, INDEX_HTML, "text/html")
             if u.path == "/api/version": return self._send(200, {"version": VERSION, "started": STARTED, "pid": os.getpid()})
             if u.path == "/api/projects": return self._send(200, {"projects": projects_listing()})
-            if u.path == "/api/project": return self._send(200, project_detail(q.get("name", [""])[0]))
+            if u.path == "/api/project": return self._send(200, project_detail(q.get("name", [""])[0], q.get("kind", ["active"])[0]))
             if u.path == "/api/activity": return self._send(200, github_activity(q.get("refresh") == ["1"]))
             if u.path == "/api/repo": return self._send(200, repo_overview(q.get("name", [""])[0]))
             if u.path == "/api/repo/path": return self._send(200, repo_path(q.get("name", [""])[0], q.get("path", [""])[0]))
@@ -845,7 +856,7 @@ class H(BaseHTTPRequestHandler):
             if path == "/api/restore": return self._send(200, restore(req))
             if path == "/api/project/status": return self._send(200, project_status(req))
             if path == "/api/undo": return self._send(200, undo())
-            if urlparse(self.path).path == "/api/done": return self._send(200, set_done(req.get("name", ""), req.get("text", ""), req.get("expected", "")))
+            if urlparse(self.path).path == "/api/done": return self._send(200, set_done(req.get("name", ""), req.get("text", ""), req.get("expected", ""), req.get("kind") or "active"))
             if urlparse(self.path).path == "/api/open":
                 import subprocess; subprocess.Popen(["xdg-open", req["path"]]); return self._send(200, {"ok": True})
             self._send(404, {"error": "not found"})

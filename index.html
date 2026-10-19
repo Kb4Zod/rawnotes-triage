@@ -94,7 +94,7 @@ svg.i{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.9;stro
 .st.open,.st.cooking,.st.soon{color:var(--gold-ink);background:var(--gold-soft)}
 .st.open .dot{border:2px solid var(--gold);width:9px;height:9px}.st.cooking .dot,.st.soon .dot{background:var(--gold)}
 .st.promoted,.st.ok,.st.shipped{color:var(--green-ink);background:var(--green-soft)}.st.promoted .dot,.st.ok .dot,.st.shipped .dot{background:var(--green)}
-.st.reference,.st.merged{color:var(--teal-ink);background:var(--teal-soft)}.st.reference .dot,.st.merged .dot{background:var(--teal)}
+.st.reference,.st.merged,.st.exp{color:var(--teal-ink);background:var(--teal-soft)}.st.reference .dot,.st.merged .dot,.st.exp .dot{background:var(--teal)}
 .st.dead,.st.killed,.st.late{color:var(--rust-ink);background:var(--rust-soft)}.st.dead .dot,.st.killed .dot,.st.late .dot{background:var(--rust)}
 .st.plain{color:var(--ink2);background:var(--sunk);padding-left:9px}.st.plain .dot{display:none}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:8px 15px;border-radius:9px;border:1px solid var(--line2);background:var(--solid);font-weight:700;font-size:13.5px;cursor:pointer;text-decoration:none;color:var(--ink)}
@@ -677,11 +677,13 @@ async function renderArchiveReader(){const r=$('#reader');const n=S.notes.done.f
 
 /* ---------- Projects ---------- */
 function projectCards(){
-  const inf=S.notes.inflight,ps=S.projects||[];const byName={};ps.forEach(p=>byName[p.name]=p);
-  const cards=inf.map(f=>{const p=f.dest==='active'&&byName[f.project];return{id:f.path,title:p?p.name:(f.project||f.title),f,p}});
-  const used=new Set(inf.filter(f=>f.dest==='active').map(f=>f.project));
-  ps.filter(p=>!used.has(p.name)).forEach(p=>cards.push({id:p.path,title:p.name,f:null,p}));
+  const inf=S.notes.inflight,ps=S.projects||[];const byPath={};ps.forEach(p=>byPath[p.path]=p);
+  const cards=inf.map(f=>{const p=f.project&&byPath[f.dest+'/'+f.project];return{id:f.path,title:p?p.name:(f.project||f.title),f,p,exp:f.dest==='experiments'}});
+  const used=new Set(cards.filter(c=>c.p).map(c=>c.p.path));
+  ps.filter(p=>!used.has(p.path)).forEach(p=>cards.push({id:p.path,title:p.name,f:null,p,exp:p.kind==='experiments'}));
   return cards}
+const expChip=c=>c.exp?st('exp','Experiment'):'';
+const pq=p=>'name='+enc(p.name)+'&kind='+enc(p.kind||'active');
 function ring(f){if(!f||f.days_left===null)return'';const l=f.days_left;
   let total=7;if(f.promoted&&f.due){const t=(new Date(f.due)-new Date(f.promoted))/864e5;if(t>0)total=t}
   const p=l<0?1:Math.min(1,Math.max(.04,1-l/total)),c=l<0?'var(--rust)':l<=2?'var(--gold)':'var(--green)';
@@ -692,14 +694,14 @@ function renderProjects(){
     loadProjects().then(()=>{if(S.route==='projects')render()}).catch(e=>{$('#main').innerHTML=`<div class="scroll"><p class="err">${esc(e.message)}</p></div>`});return}
   const cards=projectCards(),open=cards.filter(c=>!c.f||!c.f.done);
   const late=open.filter(c=>c.f&&c.f.days_left!==null&&c.f.days_left<0),week=open.filter(c=>c.f&&c.f.days_left>=0&&c.f.days_left<=7),
-    later=open.filter(c=>c.f&&!c.f.open_ended&&(c.f.days_left>7||c.f.days_left===null)),exps=open.filter(c=>c.f&&c.f.open_ended),
-    none=open.filter(c=>!c.f),closed=cards.filter(c=>c.f&&c.f.done);
+    later=open.filter(c=>c.f&&!c.f.open_ended&&(c.f.days_left>7||c.f.days_left===null)),exps=open.filter(c=>c.f?c.f.open_ended:c.exp),
+    none=open.filter(c=>!c.f&&!c.exp),closed=cards.filter(c=>c.f&&c.f.done);
   if(!S.psel||!cards.some(c=>c.id===S.psel))S.psel=(late[0]||week[0]||later[0]||exps[0]||none[0]||{}).id||null;
   const nodod=(S.projects||[]).filter(p=>!p.done_defined).length,gh=(S.projects||[]).filter(p=>p.gh&&p.gh.pushed).length;
   const card=c=>{const dm=c.p?(c.p.done_defined?null:'＋ Define “done means”'):null;
     return `<button type="button" class="card pc ${c.id===S.psel?'sel':''} ${c.f&&c.f.done?'closed':''}" data-pid="${esc(c.id)}"><div class="top"><h4>${esc(c.title)}</h4>${c.f&&!c.f.done?ring(c.f):''}</div>
       <div class="dm ${dm?'miss':''}">${dm||esc(c.f&&c.f.title!==c.title?c.f.title:(c.p?c.p.path:c.f.path))}</div>
-      <div class="row">${c.f&&c.f.done?st(c.f.status==='dead'?'killed':'shipped',stLabel[c.f.status]||c.f.status):''}${c.p?ghChip(c.p.gh):st('plain',c.f.dest)}${c.f&&c.f.due&&!c.f.done?`<span class="st plain">ship by ${c.f.due.slice(5)}</span>`:''}${c.f&&c.f.open_ended&&!c.f.done?`<span class="st plain">since ${esc((c.f.promoted||'').slice(5))}</span>`:''}</div></button>`};
+      <div class="row">${expChip(c)}${c.f&&c.f.done?st(c.f.status==='dead'?'killed':'shipped',stLabel[c.f.status]||c.f.status):''}${c.p?ghChip(c.p.gh):c.exp?'':st('plain',c.f.dest)}${c.f&&c.f.due&&!c.f.done?`<span class="st plain">ship by ${c.f.due.slice(5)}</span>`:''}${c.f&&c.f.open_ended&&!c.f.done?`<span class="st plain">since ${esc((c.f.promoted||'').slice(5))}</span>`:''}</div></button>`};
   const col=(cls,label,cs,more='')=>`<div class="col"><h3>${st(cls,label)} ${cs.length}</h3>${cs.map(card).join('')||'<div class="muted" style="padding:0 4px 14px;font-size:13px">Nothing here.</div>'}${more}</div>`;
   $('#main').innerHTML=`<div class="scroll" id="pscroll"><div class="pane-h" style="padding-left:0;display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap"><div><h1>Projects</h1><div class="sub">Everything you promoted: active work by its ship-by date, experiments open-ended</div></div>
     <button class="btn sm" id="pref" style="margin-left:auto">Refresh</button></div>
@@ -709,7 +711,7 @@ function renderProjects(){
     <div class="card tile"><div class="num">${gh}<span style="font-size:20px;color:var(--mute)">/${(S.projects||[]).length}</span></div><div class="lab">${st('ok','On GitHub')}</div></div></div>
    <div class="board">${col('late','Overdue',late,later.length?`<h3 style="margin-top:18px">${st('ok','Later')} ${later.length}</h3>${later.map(card).join('')}`:'')}
     ${col('soon','Ship this week',week,closed.length?`<h3 style="margin-top:18px">${st('plain','Closed')} ${closed.length}</h3>${closed.map(card).join('')}`:'')}
-    ${col('ok','Experiments',exps,`<h3 style="margin-top:18px">${st('plain','No ship-by date')} ${none.length}</h3>${none.map(card).join('')||'<div class="muted" style="padding:0 4px 14px;font-size:13px">Nothing here.</div>'}`)}
+    ${col('exp','Experiments',exps,`<h3 style="margin-top:18px">${st('plain','No ship-by date')} ${none.length}</h3>${none.map(card).join('')||'<div class="muted" style="padding:0 4px 14px;font-size:13px">Nothing here.</div>'}`)}
     <div class="card drawer ${S.psel?'':'none'}" id="drawer"></div></div></div>`;
   $('#pref').onclick=async()=>{S.projects=null;S.pdetail=null;await loadNotes();render()};
   $$('[data-pid]').forEach(b=>b.onclick=()=>selectProject(b.dataset.pid,true));
@@ -721,11 +723,12 @@ async function renderDrawer(){const d=$('#drawer');if(!d)return;const c=projectC
   const clock=f&&f.open_ended?`<div class="sec label">Clock</div><div style="font-size:13px">${f.promoted?`Promoted <b>${esc(f.promoted)}</b> · `:''}open-ended experiment, no ship-by date${f.done?` · <b>${esc(stLabel[f.status]||f.status)}</b>`:''}</div>`
     :f?`<div class="sec label">Clock</div><div style="font-size:13px">${f.promoted?`Promoted <b>${esc(f.promoted)}</b> · `:''}ship by <b>${esc(f.due)}</b>${f.done?` · <b>${esc(stLabel[f.status]||f.status)}</b>`:''}
      ${!f.done&&f.days_left!==null?`<div class="clockbar"><i style="width:${f.days_left<0?100:Math.max(4,100-f.days_left/Math.max(7,f.days_left)*100)}%;background:${f.days_left<0?'var(--rust)':f.days_left<=2?'var(--gold)':'var(--green)'}"></i></div>`:''}</div>`
+    :c.exp?`<div class="sec label">Clock</div><div class="muted" style="font-size:13px">Open-ended experiment in <span class="mono">experiments/</span>, no ship-by date.</div>`
     :`<div class="sec label">Clock</div><div class="muted" style="font-size:13px">Not on the clock. Add a <span class="mono">- due: YYYY-MM-DD</span> line to its NOTES.md to give it a ship-by date.</div>`;
   const acts=f&&!f.done?`<div class="acts"><button class="btn primary" data-pa="shipped">${I.check}Mark shipped</button>${f.open_ended?'':`<button class="btn" data-pa="extend">${I.clock}+7 days</button>`}
      ${p&&p.gh&&p.gh.repo?`<button class="btn" id="browse">${I.gh}Browse repo</button>`:`<button class="btn" id="openf">${I.folder}Open folder</button>`}<button class="btn" data-pa="kill" style="color:var(--rust)">${I.x}Kill</button></div>`
     :`<div class="acts">${p&&p.gh&&p.gh.repo?`<button class="btn" id="browse">${I.gh}Browse repo</button>`:''}<button class="btn" id="openf">${I.folder}Open folder</button></div>`;
-  const head=`<button class="back" onclick="backToList()">‹ Projects</button><div style="display:flex;gap:6px;flex-wrap:wrap">${f&&!f.done&&f.days_left!==null?st(f.days_left<0?'late':f.days_left<=2?'soon':'ok',f.days_left<0?`${-f.days_left} days late`:`${f.days_left} days left`):''}${p?ghChip(p.gh):''}</div>
+  const head=`<button class="back" onclick="backToList()">‹ Projects</button><div style="display:flex;gap:6px;flex-wrap:wrap">${expChip(c)}${f&&!f.done&&f.days_left!==null?st(f.days_left<0?'late':f.days_left<=2?'soon':'ok',f.days_left<0?`${-f.days_left} days late`:`${f.days_left} days left`):''}${p?ghChip(p.gh):''}</div>
     <h2>${esc(c.title)}</h2><span class="copy mono" data-copy="${esc(p?p.abs_path:S.notes.notes_dir.replace(/RawNotes$/,'')+f.path)}" tabindex="0" role="button">${I.copy}<span>~/Projects/${esc(p?p.path:f.path)}</span></span>`;
   d.innerHTML=head+`<div id="dodbox"></div>`+clock+`<div id="pmore"></div>`+acts+`<div class="err" id="perr" style="margin-top:8px"></div>`;
   wireCopy(d);
@@ -735,7 +738,7 @@ async function renderDrawer(){const d=$('#drawer');if(!d)return;const c=projectC
   if(narrow()&&$('#openf'))$('#openf').style.display='none';
   if(!p){$('#dodbox').innerHTML='';return}
   $('#dodbox').innerHTML='<div class="sec label">Done means</div><div class="muted">Loading…</div>';
-  try{const j=await api('/api/project?name='+enc(p.name));if(S.psel!==c.id)return;S.pdetail=j;renderDod(j);
+  try{const j=await api('/api/project?'+pq(p));if(S.psel!==c.id)return;S.pdetail=j;renderDod(j);
     const prs=j.prs&&j.prs.length?`<div class="sec label">Pull requests</div><ul class="tl">${j.prs.slice(0,5).map(x=>`<li><a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">#${x.number} ${esc(x.title)}</a><span class="muted">${esc(x.mergedAt?'merged':x.state.toLowerCase())}</span></li>`).join('')}</ul>`:'';
     $('#pmore').innerHTML=(j.commits.length?`<div class="sec label">Recent activity${j.branch?' · '+esc(j.branch):''}</div><ul class="tl">${j.commits.slice(0,5).map(x=>`<li><span>${esc(x.title)}</span><span class="muted">${esc(x.date.slice(5))}</span></li>`).join('')}</ul>`:'')
       +prs+`<div class="sec label">From ${esc(j.summary_source||'the project')}</div><div style="font-size:13px;color:var(--ink2);white-space:pre-wrap;max-height:9.5em;overflow:hidden">${esc(j.summary)}</div>`}
@@ -758,7 +761,7 @@ function renderDod(p,mode,draft){const el=$('#dodbox');if(!el)return;const d=p.d
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn sm primary" id="dodSave">Confirm and save</button><button class="btn sm ghost" id="dodBack">Back</button><span class="err" id="dodErr"></span></div></div>`;
     $('#dodBack').onclick=()=>renderDod(p,'edit',draft);
     $('#dodSave').onclick=async()=>{const b=$('#dodSave');b.disabled=true;b.textContent='Saving…';
-      try{await api('/api/done',{name:p.name,text:draft,expected:old});await loadProjects();toast('Saved “done means” to '+file);render()}
+      try{await api('/api/done',{name:p.name,kind:p.kind||'active',text:draft,expected:old});await loadProjects();toast('Saved “done means” to '+file);render()}
       catch(e){$('#dodErr').textContent=e.message;b.disabled=false;b.textContent='Confirm and save'}};return}
   el.innerHTML=d.defined?`<div class="sec label" style="display:flex;justify-content:space-between;align-items:center">Done means <button class="btn sm ghost" id="dodEdit">Edit</button></div><div class="dod">${esc(d.text)}</div><div class="muted" style="font-size:12px;margin-top:4px">From ${esc(d.source)}</div>`
     :`<div class="sec label" style="display:flex;justify-content:space-between;align-items:center">Done means <button class="btn sm" id="dodEdit">Fill in</button></div><div class="dod missing">Not defined yet. What does done look like? It goes into <span class="mono">${esc(file)}</span>.</div>`;

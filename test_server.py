@@ -336,6 +336,26 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(self.post_done("l", "Hacked", "Safe")[0], 400)
         self.assertEqual(open(outside).read(), "- definition of done: Safe\n")
 
+    def test_experiments_are_projects_labelled_by_kind(self):
+        self.make_project("ship"); os.makedirs(os.path.join(self.tmp, "experiments", "spike"))
+        os.makedirs(os.path.join(self.tmp, "experiments", "ship"))  # same name in both folders stays two projects
+        ps = {p["path"]: p for p in self.get("/api/projects")["projects"]}
+        self.assertEqual(set(ps), {"active/ship", "experiments/spike", "experiments/ship"})
+        self.assertEqual(ps["experiments/spike"]["kind"], "experiments"); self.assertEqual(ps["active/ship"]["kind"], "active")
+        d = self.get("/api/project?name=spike&kind=experiments")
+        self.assertEqual((d["kind"], d["path"]), ("experiments", "experiments/spike"))
+        self.assertEqual(self.get("/api/project?name=ship")["path"], "active/ship")  # kind defaults to active
+        with self.assertRaises(urllib.error.HTTPError): self.get("/api/project?name=spike")  # not an active project
+        with self.assertRaises(urllib.error.HTTPError): self.get("/api/project?name=spike&kind=learning")
+
+    def test_set_done_on_an_experiment(self):
+        path = os.path.join(self.tmp, "experiments", "spike"); os.makedirs(path)
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}/api/done", method="POST", headers={"Content-Type": "application/json"},
+                                     data=json.dumps({"name": "spike", "kind": "experiments", "text": "We know if it works."}).encode())
+        with urllib.request.urlopen(req) as r: self.assertEqual(r.status, 200)
+        self.assertIn("- definition of done: We know if it works.", open(os.path.join(path, "NOTES.md")).read())
+        self.assertEqual(self.post_done("spike", "Wrong folder")[0], 400)  # no kind -> active -> unknown
+
     def stub_rest(self, answers):
         """Replace the GitHub layer: answers maps a REST path to its JSON (or an Exception to raise)."""
         calls = []
