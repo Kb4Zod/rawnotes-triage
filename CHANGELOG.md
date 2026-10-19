@@ -10,6 +10,12 @@ with every change. Versions 1.00-1.03 were numbered after the fact from git hist
   in the Experiments column with an open-ended clock; the column header is teal to match. Done means, recent
   activity and GitHub state work for experiments too (`kind` on `/api/projects`, `/api/project` and `/api/done`;
   defaults to `active`, so a folder with the same name in both places stays two projects).
+- **Close any project from the board.** A project folder with no promoted note (most experiments) now has
+  Mark shipped and Kill in its drawer; they write `- status:` into its NOTES.md (created if missing, undoable).
+  A folder whose NOTES.md says `done`, `shipped` or `dead` moves to Closed.
+- **Tiles count active projects only:** experiments no longer add to "No done means" or the On GitHub total.
+- Review fixes: project names are checked without rescanning every folder; the done-means log line names
+  `kind/name`.
 
 ## 2.01 — 2026-10-18
 Bug fixes after the 2.00 redesign.

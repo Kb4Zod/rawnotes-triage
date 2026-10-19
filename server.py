@@ -31,6 +31,7 @@ NOTES = os.path.expanduser("~/Projects/RawNotes")
 PROJECTS = None
 BIND_HOST = "127.0.0.1"  # set from --host; the Host/Origin guard depends on it
 _done_lock = threading.Lock()
+CLOSED = ("done", "shipped", "dead")  # a project file or folder with one of these statuses is finished
 STARTED = dt.datetime.now().isoformat(timespec="seconds")
 # the page is read once, so it always matches the API of the process serving it (restart to pick up edits)
 with open(os.path.join(HERE, "index.html"), "rb") as _fh: INDEX_HTML = _fh.read().replace(b"__VERSION__", VERSION.encode())
@@ -134,7 +135,7 @@ def inflight():
                 out.append({"path": rel, "title": title_of(text, f), "project": rel.split(os.sep)[1] if rel.count(os.sep) >= 2 else "",
                             "dest": dest, "promoted": field(text, "promoted"), "due": due,
                             "days_left": left, "open_ended": open_ended, "status": field(text, "status") or "?",
-                            "done": field(text, "status") in ("done", "shipped", "dead")})
+                            "done": field(text, "status") in CLOSED})
     out.sort(key=lambda x: (x["done"], x["days_left"] if x["days_left"] is not None else 999))
     return out
 
@@ -182,7 +183,7 @@ def definition_of_done(path):
     if not hit: return {"defined": False, "text": "", "source": None}
     return {"defined": hit["defined"], "text": hit["text"] if hit["defined"] else "", "source": hit["file"]}
 
-def set_done(name, text, expected, kind="active"):
+def set_done(name, text, expected, kind=None):
     with _done_lock: return _set_done(name, text, expected, kind)
 
 def _read_lines(target):
@@ -191,10 +192,10 @@ def _read_lines(target):
     eol = "\r\n" if "\r\n" in raw else "\n"
     return raw.split(eol), eol
 
-def _set_done(name, text, expected, kind="active"):
+def _set_done(name, text, expected, kind=None):
     """Write a project's definition of done in place (or into NOTES.md's Plan if it has none).
     `expected` is the text the user was looking at; if the file moved on since, refuse rather than overwrite."""
-    path = project_dir(name, kind)
+    path, kind = project_dir(name, kind)
     text = re.sub(r"\s+", " ", text or "").strip()
     if done_placeholder(text): raise ValueError("Write what done looks like first.")
     if len(text) > DONE_MAX: raise ValueError(f"Keep it under {DONE_MAX} characters.")
@@ -212,7 +213,7 @@ def _set_done(name, text, expected, kind="active"):
             tail = [""] if hit["end"] < len(lines) and lines[hit["end"]].strip() else []
             lines[hit["start"] + 1:hit["end"]] = ["", text] + tail
     else:
-        names = {f.lower(): f for f in os.listdir(path)}; target = os.path.join(path, names.get("notes.md", "NOTES.md"))
+        target = notes_file(path)
         item = "- definition of done: " + text
         if os.path.exists(target):
             lines, eol = _read_lines(target)
@@ -228,10 +229,21 @@ def _set_done(name, text, expected, kind="active"):
     with open(tmp, "w", encoding="utf-8", errors="surrogateescape", newline="") as fh: fh.write(eol.join(lines))
     if os.path.exists(target): shutil.copymode(target, tmp)
     os.replace(tmp, target)
-    log(f"done {name} -> {os.path.basename(target)}: {text[:80]}")
+    log(f"done {kind}/{name} -> {os.path.basename(target)}: {text[:80]}")
     return {"ok": True, "file": os.path.basename(target), "msg": f"Saved to {os.path.basename(target)}"}
 
 PROJECT_KINDS = ("active", "experiments")  # folders whose subfolders are projects on the board
+
+def notes_file(path):
+    """The project's NOTES.md (whatever its case), or where a new one would go."""
+    names = {f.lower(): f for f in os.listdir(path)}
+    return os.path.join(path, names.get("notes.md", "NOTES.md"))
+
+def folder_status(path):
+    """The `- status:` line in the project's NOTES.md, if it has one."""
+    try:
+        with open(notes_file(path), encoding="utf-8", errors="replace") as fh: return field(fh.read(4000), "status")
+    except OSError: return ""
 
 def project_folders():
     """Every project folder under ../active and ../experiments; `kind` says which (experiments are labelled on the board)."""
@@ -241,16 +253,19 @@ def project_folders():
         if not os.path.isdir(base): continue
         out += [{"name": name, "kind": kind, "path": f"{kind}/{name}", "abs_path": os.path.join(base, name),
                  "repo": os.path.exists(os.path.join(base, name, ".git")),
+                 "status": folder_status(os.path.join(base, name)),
                  "done_defined": definition_of_done(os.path.join(base, name))["defined"]}
                 for name in sorted(os.listdir(base), key=str.casefold)
                 if not name.startswith(".") and os.path.isdir(os.path.join(base, name))]
     return out
 
-def project_dir(name, kind="active"):
-    """Absolute folder of a listed project; anything not on the board is refused."""
+def project_dir(name, kind=None):
+    """(absolute folder, kind) of a project on the board; kind defaults to active. Anything else is refused."""
     kind = kind or "active"
-    if not any(p["name"] == name and p["kind"] == kind for p in project_folders()): raise ValueError("unknown project")
-    return os.path.join(PROJECTS, kind, name)
+    if kind not in PROJECT_KINDS or not name or name.startswith(".") or "/" in name or os.sep in name: raise ValueError("unknown project")
+    path = os.path.join(PROJECTS, kind, name)
+    if not os.path.isdir(path): raise ValueError("unknown project")
+    return path, kind
 
 GITHUB_REMOTE = re.compile(r"(?:https://(?:www\.)?github\.com/|git@(?:ssh\.)?github\.com:|ssh://git@(?:ssh\.)?github\.com(?::\d+)?/)([\w.-]+/[\w.-]+?)(?:\.git)?/?")
 
@@ -281,8 +296,8 @@ def projects_listing():
         for p, state in zip(projects, pool.map(lambda p: github_state(p["abs_path"]), projects)): p["gh"] = state
     return projects
 
-def project_detail(name, kind="active"):
-    path = project_dir(name, kind); kind = kind or "active"
+def project_detail(name, kind=None):
+    path, kind = project_dir(name, kind)
     result = {"name": name, "kind": kind, "path": f"{kind}/{name}", "abs_path": path, "summary": "No README or project notes yet.",
               "summary_source": None, "commits": [], "features": [], "prs": [],
               "pr_status": "No Git repository in this project.", "branch": "", "remote": "", "repo": "", "gh": {"git": False, "repo": "", "pushed": False, "unpushed": 0},
@@ -750,8 +765,10 @@ def restore(req):
         return {"ok": True, "msg": f"Restored “{title}” to the Inbox", "file": os.path.basename(dst)}
 
 def project_status(req):
-    """On a promoted project file (one with a due: line): mark it shipped, push the ship-by date, or kill it."""
+    """On a promoted project file (one with a due: line): mark it shipped, push the ship-by date, or kill it.
+    A project folder with no promoted file ({name, kind} instead of path) can be shipped or killed through its NOTES.md."""
     with _write_lock:
+        if not req.get("path"): return folder_project_status(req)
         rel = req.get("path", "")
         if rel not in {x["path"] for x in inflight()}: raise ValueError("unknown project file")
         path = os.path.join(PROJECTS, rel)
@@ -775,6 +792,20 @@ def project_status(req):
         else: raise ValueError("unknown project action")
         tx.write(path, text); tx.label = label; tx.commit(); log(f"project {action} {rel}")
         return {"ok": True, "msg": msg}
+
+def folder_project_status(req):
+    path, kind = project_dir(req.get("name", ""), req.get("kind")); name = os.path.basename(path)
+    target = notes_file(path); action = req.get("action"); t = today().isoformat()
+    if os.path.islink(target): raise ValueError("refusing to write through a symlink")
+    text = _read(target) if os.path.exists(target) else f"# {name}\n"
+    if action == "shipped":
+        text = set_field(set_field(text, "status", "shipped"), "shipped", t); msg = f"Shipped {name} 🎉"
+    elif action == "kill":
+        text = append_outcome(set_field(text, "status", "dead"), f"**Killed {t}:** {(req.get('note') or '').strip() or 'stopped.'}"); msg = f"Killed {name}"
+    else: raise ValueError("unknown project action")
+    tx = Tx(f"{'ship' if action == 'shipped' else 'kill'} {name}"); tx.write(target, text); tx.commit()
+    log(f"project {action} {kind}/{name}")
+    return {"ok": True, "msg": msg}
 
 def stats(weeks=8):
     """Inbox flow for the Pulse page: notes captured vs. decided per week, and how long the Inbox waits."""
@@ -830,7 +861,7 @@ class H(BaseHTTPRequestHandler):
             if u.path == "/": return self._send(200, INDEX_HTML, "text/html")
             if u.path == "/api/version": return self._send(200, {"version": VERSION, "started": STARTED, "pid": os.getpid()})
             if u.path == "/api/projects": return self._send(200, {"projects": projects_listing()})
-            if u.path == "/api/project": return self._send(200, project_detail(q.get("name", [""])[0], q.get("kind", ["active"])[0]))
+            if u.path == "/api/project": return self._send(200, project_detail(q.get("name", [""])[0], q.get("kind", [""])[0]))
             if u.path == "/api/activity": return self._send(200, github_activity(q.get("refresh") == ["1"]))
             if u.path == "/api/repo": return self._send(200, repo_overview(q.get("name", [""])[0]))
             if u.path == "/api/repo/path": return self._send(200, repo_path(q.get("name", [""])[0], q.get("path", [""])[0]))
@@ -856,7 +887,7 @@ class H(BaseHTTPRequestHandler):
             if path == "/api/restore": return self._send(200, restore(req))
             if path == "/api/project/status": return self._send(200, project_status(req))
             if path == "/api/undo": return self._send(200, undo())
-            if urlparse(self.path).path == "/api/done": return self._send(200, set_done(req.get("name", ""), req.get("text", ""), req.get("expected", ""), req.get("kind") or "active"))
+            if urlparse(self.path).path == "/api/done": return self._send(200, set_done(req.get("name", ""), req.get("text", ""), req.get("expected", ""), req.get("kind")))
             if urlparse(self.path).path == "/api/open":
                 import subprocess; subprocess.Popen(["xdg-open", req["path"]]); return self._send(200, {"ok": True})
             self._send(404, {"error": "not found"})

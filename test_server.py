@@ -591,6 +591,23 @@ class DecisionTestCase(unittest.TestCase):
         self.post("/api/undo", {}); self.assertFalse(self.get("/api/notes")["inflight"][0]["done"])
         self.assertIn("unknown", self.post("/api/project/status", {"path": "../etc/passwd", "action": "shipped"}, ok=False)["error"])
 
+    def test_folder_project_without_promoted_file_can_be_shipped_or_killed(self):
+        spike = os.path.join(self.tmp, "experiments", "spike"); os.makedirs(spike)
+        old = os.path.join(self.tmp, "experiments", "old"); os.makedirs(old)
+        with open(os.path.join(old, "notes.md"), "w") as fh: fh.write("# old\n\nSome notes.\n")
+        status = lambda: {p["path"]: p["status"] for p in self.get("/api/projects")["projects"]}
+        self.assertEqual(status(), {"experiments/spike": "", "experiments/old": ""})
+        self.post("/api/project/status", {"name": "spike", "kind": "experiments", "action": "shipped"})
+        self.assertEqual(status()["experiments/spike"], "shipped")
+        self.post("/api/undo", {})
+        self.assertFalse(os.path.exists(os.path.join(spike, "NOTES.md")))  # undo removes the file it created
+        self.post("/api/project/status", {"name": "old", "kind": "experiments", "action": "kill", "note": "Went nowhere."})
+        text = open(os.path.join(old, "notes.md")).read()  # existing file kept its name and content
+        self.assertIn("- status: dead", text); self.assertIn("Some notes.", text); self.assertIn("Went nowhere.", text)
+        for bad in ({"name": "spike", "kind": "experiments", "action": "extend"}, {"name": "spike", "action": "shipped"},
+                    {"name": "../experiments/spike", "kind": "active", "action": "shipped"}, {"name": "spike", "kind": "learning", "action": "shipped"}):
+            self.post("/api/project/status", bad, ok=False)
+
     def test_stats_counts_captures_and_decisions_by_week(self):
         server.LOG_PATH = os.path.join(self.tmp, "triage.log"); self.addCleanup(setattr, server, "LOG_PATH", self.old_log_path)
         today = server.today().isoformat()
