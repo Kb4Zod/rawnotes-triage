@@ -1,0 +1,8 @@
+# No package dependencies (Python standard library only), so only the
+# GitHub Actions used by pr-review.yml are kept current.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"

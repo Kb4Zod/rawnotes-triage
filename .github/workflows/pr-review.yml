@@ -1,0 +1,207 @@
+# PR review pipeline: test -> code-review -> security-review -> merge-gate
+#
+# Copy to <repo>/.github/workflows/pr-review.yml. Also copy
+# .claude/skills/security-review/SKILL.md and paste CLAUDE-merge-gate.md into
+# the repo's CLAUDE.md. Secret needed: CLAUDE_CODE_OAUTH_TOKEN
+# (run `claude setup-token` locally, or `claude` -> /install-github-app).
+#
+# Required checks (where branch protection exists): `test`, `secrets`, `merge-gate`.
+# On private repos without branch protection, BLOCK converts the PR to draft instead. merge-gate fails
+# ONLY when the verdict is BLOCK. Fork PRs on public repos get no secrets,
+# so the Claude jobs are limited to same-repo branches.
+
+name: PR Review
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+
+concurrency:
+  group: pr-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # Plain CI: Python standard library only, no dependencies to install.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - run: python3 -m unittest -v test_server
+
+  secrets:
+    # gitleaks over the PR's commits. Replaces GitHub push protection on
+    # private repos (not available on a free account). Binary, not
+    # gitleaks-action, so no license key is ever needed.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Install gitleaks
+        run: |
+          set -euo pipefail
+          curl -sSL -o /tmp/gitleaks.tgz \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          sudo tar -xzf /tmp/gitleaks.tgz -C /usr/local/bin gitleaks
+          gitleaks version
+      - name: Scan PR commits for secrets
+        run: |
+          gitleaks git --redact --no-banner --verbose \
+            --log-opts="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}" .
+
+  code-review:
+    if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          plugin_marketplaces: "https://github.com/anthropics/claude-code.git"
+          plugins: "code-review@claude-code-plugins"
+          prompt: "/code-review:code-review --comment ${{ github.repository }}/pull/${{ github.event.pull_request.number }}"
+          claude_args: |
+            --model claude-opus-5-5
+            --allowedTools "mcp__github_inline_comment__create_inline_comment"
+
+  security-review:
+    # Runs AFTER code-review on purpose: the code-review plugin skips any PR
+    # that already has a comment from Claude, so nothing else may comment first.
+    needs: code-review
+    if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0   # the skill diffs against origin/<default branch>
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            Run /security-review on this branch.
+
+            Then post the complete report as ONE comment on pull request
+            ${{ github.repository }}#${{ github.event.pull_request.number }} using
+            `gh pr comment ${{ github.event.pull_request.number }} --body-file <file>`.
+            The comment must begin with the exact lines:
+
+            <!-- security-review -->
+            ## Security review
+
+            If there are no High or Medium findings, the body is just
+            "No High or Medium security findings in this diff."
+            For each finding include: severity, category, file:line,
+            exploit scenario, and recommended fix.
+          claude_args: |
+            --model claude-opus-5-5
+            --max-turns 30
+            --allowedTools "Bash(gh pr comment:*),Write"
+
+  merge-gate:
+    # Synthesis only. Reads the two reviews + CI result, never the diff.
+    needs: [test, secrets, code-review, security-review]
+    if: always() && github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      actions: read
+      id-token: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PR: ${{ github.event.pull_request.number }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1   # only so CLAUDE.md (merge-gate rules) is on disk
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            You are the merge gate for pull request ${{ github.repository }}#${{ github.event.pull_request.number }}.
+            Follow the "Merge gate" section of CLAUDE.md exactly.
+
+            DO NOT review the code or read the diff. Synthesize only from:
+
+            1. CI results from this workflow run:
+               - test: ${{ needs.test.result }}
+               - secrets (gitleaks): ${{ needs.secrets.result }}  # failure = committed secret = BLOCK
+               - code-review job: ${{ needs.code-review.result }}
+               - security-review job: ${{ needs.security-review.result }}
+            2. Inline review comments left by the code reviewer:
+               `gh api repos/${{ github.repository }}/pulls/$PR/comments --paginate`
+               Ignore any comment whose "position" is null (the line has since
+               changed, so treat the finding as addressed).
+            3. The latest issue comment that starts with "<!-- security-review -->":
+               `gh api repos/${{ github.repository }}/issues/$PR/comments --paginate`
+            4. Any other failing checks: `gh pr checks $PR` (ignore the merge-gate check itself).
+
+            Decide MERGEABLE, NEEDS WORK, or BLOCK using the CLAUDE.md rules.
+
+            Post or update ONE comment (if a comment starting with
+            "<!-- merge-gate -->" already exists, edit it with
+            `gh api -X PATCH repos/${{ github.repository }}/issues/comments/<id> -f body=@<file>`;
+            otherwise `gh pr comment $PR --body-file <file>`). Format:
+
+            <!-- merge-gate -->
+            ## Merge gate
+            <one short paragraph: what drove the decision, citing the specific
+            finding(s) or failing check(s)>
+            - <bullet per blocking or needs-work item, with file:line where known>
+
+            Verdict: <MERGEABLE|NEEDS WORK|BLOCK>
+
+            The final line must be exactly `Verdict: ` followed by one of the
+            three words, nothing after it.
+          claude_args: |
+            --model claude-sonnet-5-5
+            --max-turns 20
+            --allowedTools "Bash(gh api:*),Bash(gh pr checks:*),Bash(gh pr comment:*),Bash(gh pr view:*),Write,Read"
+
+      - name: Fail the check on BLOCK
+        run: |
+          set -euo pipefail
+          verdict=$(gh api "repos/${{ github.repository }}/issues/$PR/comments" --paginate \
+            --jq '[.[] | select(.body | startswith("<!-- merge-gate -->"))] | last | .body' \
+            | grep -E '^Verdict: ' | tail -n1 || true)
+          echo "Merge gate said: ${verdict:-<no verdict comment found>}"
+          case "$verdict" in
+            "Verdict: BLOCK")
+              echo "::error::Merge gate verdict is BLOCK"
+              # Soft gate for repos without branch protection (private repos on
+              # a free account): a draft PR has its merge button disabled.
+              # Marking it ready fires ready_for_review and re-runs this pipeline.
+              node_id=$(gh api "repos/${{ github.repository }}/pulls/$PR" --jq .node_id)
+              gh api graphql -f id="$node_id" -f query='mutation($id: ID!) {
+                convertPullRequestToDraft(input: {pullRequestId: $id}) { pullRequest { isDraft } }
+              }' >/dev/null && echo "Converted PR #$PR to draft"
+              gh label create blocked --color B60205 --description "Merge gate said BLOCK" 2>/dev/null || true
+              gh pr edit "$PR" --add-label blocked || true
+              exit 1 ;;
+            "Verdict: NEEDS WORK")   echo "::warning::Merge gate verdict is NEEDS WORK (check passes)"; ;;
+            "Verdict: MERGEABLE")    gh pr edit "$PR" --remove-label blocked 2>/dev/null || true ;;
+            *) echo "::error::No usable verdict line found"; exit 1 ;;
+          esac
