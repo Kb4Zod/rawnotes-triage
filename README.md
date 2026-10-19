@@ -64,13 +64,14 @@ Keys: `j`/`k` move, `p` `r` `c` `x` decide, `Enter` apply, `Esc` cancel, `z` und
 
 ## Projects page
 
-One board for everything promoted, replacing the old Active Projects tab and In flight strip. Columns:
-**Overdue**, **Ship this week**, **Later**, **Experiments** (promoted experiments, open-ended), **No ship-by date** (folders in `active/` without a `due:` line),
-plus **Closed** (status `shipped`, `done` or `dead`). It scans the sibling folders for markdown files with a
+One board for everything promoted, replacing the old Active Projects tab and In flight strip. Columns, left to
+right: **Overdue**, **Due this week**, **Later**, **No ship date** (folders in `active/` without a `due:` line),
+**Experiments** (open-ended), then **Closed** (status `shipped`, `done` or `dead`). Empty columns are hidden; on a
+narrow screen the board scrolls sideways. It scans the sibling folders for markdown files with a
 `due:` line. Each card shows a countdown ring (red = late, amber = 2 days or less) and its GitHub state:
 **On GitHub**, **GH ↑N** (N commits not pushed), **Not pushed**, **Local git** or **No git**.
 
-Select a card for the side panel: **done means**, the clock, recent commits and pull requests (via the optional
+Select a card to open its panel as a column right beside it (select it again, or `Esc`, to close it): **done means**, the clock, recent commits and pull requests (via the optional
 `gh` CLI), and a README/NOTES excerpt. Excerpts and commit labels are quoted from the source, not AI summaries.
 Buttons: **Mark shipped** (sets `status: shipped` + `shipped:` date), **+7 days** (pushes `due:` from today or
 the current date, whichever is later), **Browse repo**, **Kill** (asks twice). All three writes can be undone.
