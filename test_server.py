@@ -336,6 +336,26 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(self.post_done("l", "Hacked", "Safe")[0], 400)
         self.assertEqual(open(outside).read(), "- definition of done: Safe\n")
 
+    def test_experiments_are_projects_labelled_by_kind(self):
+        self.make_project("ship"); os.makedirs(os.path.join(self.tmp, "experiments", "spike"))
+        os.makedirs(os.path.join(self.tmp, "experiments", "ship"))  # same name in both folders stays two projects
+        ps = {p["path"]: p for p in self.get("/api/projects")["projects"]}
+        self.assertEqual(set(ps), {"active/ship", "experiments/spike", "experiments/ship"})
+        self.assertEqual(ps["experiments/spike"]["kind"], "experiments"); self.assertEqual(ps["active/ship"]["kind"], "active")
+        d = self.get("/api/project?name=spike&kind=experiments")
+        self.assertEqual((d["kind"], d["path"]), ("experiments", "experiments/spike"))
+        self.assertEqual(self.get("/api/project?name=ship")["path"], "active/ship")  # kind defaults to active
+        with self.assertRaises(urllib.error.HTTPError): self.get("/api/project?name=spike")  # not an active project
+        with self.assertRaises(urllib.error.HTTPError): self.get("/api/project?name=spike&kind=learning")
+
+    def test_set_done_on_an_experiment(self):
+        path = os.path.join(self.tmp, "experiments", "spike"); os.makedirs(path)
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}/api/done", method="POST", headers={"Content-Type": "application/json"},
+                                     data=json.dumps({"name": "spike", "kind": "experiments", "text": "We know if it works."}).encode())
+        with urllib.request.urlopen(req) as r: self.assertEqual(r.status, 200)
+        self.assertIn("- definition of done: We know if it works.", open(os.path.join(path, "NOTES.md")).read())
+        self.assertEqual(self.post_done("spike", "Wrong folder")[0], 400)  # no kind -> active -> unknown
+
     def stub_rest(self, answers):
         """Replace the GitHub layer: answers maps a REST path to its JSON (or an Exception to raise)."""
         calls = []
@@ -570,6 +590,23 @@ class DecisionTestCase(unittest.TestCase):
         self.assertTrue(self.get("/api/notes")["inflight"][0]["done"])
         self.post("/api/undo", {}); self.assertFalse(self.get("/api/notes")["inflight"][0]["done"])
         self.assertIn("unknown", self.post("/api/project/status", {"path": "../etc/passwd", "action": "shipped"}, ok=False)["error"])
+
+    def test_folder_project_without_promoted_file_can_be_shipped_or_killed(self):
+        spike = os.path.join(self.tmp, "experiments", "spike"); os.makedirs(spike)
+        old = os.path.join(self.tmp, "experiments", "old"); os.makedirs(old)
+        with open(os.path.join(old, "notes.md"), "w") as fh: fh.write("# old\n\nSome notes.\n")
+        status = lambda: {p["path"]: p["status"] for p in self.get("/api/projects")["projects"]}
+        self.assertEqual(status(), {"experiments/spike": "", "experiments/old": ""})
+        self.post("/api/project/status", {"name": "spike", "kind": "experiments", "action": "shipped"})
+        self.assertEqual(status()["experiments/spike"], "shipped")
+        self.post("/api/undo", {})
+        self.assertFalse(os.path.exists(os.path.join(spike, "NOTES.md")))  # undo removes the file it created
+        self.post("/api/project/status", {"name": "old", "kind": "experiments", "action": "kill", "note": "Went nowhere."})
+        text = open(os.path.join(old, "notes.md")).read()  # existing file kept its name and content
+        self.assertIn("- status: dead", text); self.assertIn("Some notes.", text); self.assertIn("Went nowhere.", text)
+        for bad in ({"name": "spike", "kind": "experiments", "action": "extend"}, {"name": "spike", "action": "shipped"},
+                    {"name": "../experiments/spike", "kind": "active", "action": "shipped"}, {"name": "spike", "kind": "learning", "action": "shipped"}):
+            self.post("/api/project/status", bad, ok=False)
 
     def test_stats_counts_captures_and_decisions_by_week(self):
         server.LOG_PATH = os.path.join(self.tmp, "triage.log"); self.addCleanup(setattr, server, "LOG_PATH", self.old_log_path)
