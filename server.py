@@ -1089,7 +1089,9 @@ class H(BaseHTTPRequestHandler):
         if ctype.startswith("font/"): self.send_header("Cache-Control", "max-age=604800")
         else: self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data)
+        self.send_header("Content-Length", str(len(data)))
+        try: self.end_headers(); self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError): pass  # the page cancelled this request (it moved on); nothing to report
     def _fail(self, e):
         """Bad requests are the caller's (400); a file that vanished is 404; anything else is ours (500)."""
         code = (500 if isinstance(e, MutationFailed) else 400 if isinstance(e, (ValueError, KeyError, TypeError, AttributeError, RuntimeError))

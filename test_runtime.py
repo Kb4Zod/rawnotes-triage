@@ -193,6 +193,8 @@ class GithubActivity(Fixture):
     def test_activity_is_described_as_commits_not_pushes(self):
         data, _ = self.run_with([self.repos([]),])
         self.assertIn("commit", data["basis"]); self.assertIn("by commit date", data["basis"])
+        page = server.INDEX_HTML.decode()
+        for stale in ("pushes this year", "commits pushed this year", "Pushed to GitHub", "you pushed"): self.assertFalse(stale in page, "page still says: " + stale)
 
     def test_concurrent_callers_share_one_fetch_and_nobody_holds_a_lock_while_waiting(self):
         gate = threading.Event(); calls = []
