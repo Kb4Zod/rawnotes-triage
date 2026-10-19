@@ -133,6 +133,23 @@ class Keyboard(BrowserCase):
         self.page.key("Enter"); self.page.wait("window.__calls.some(c=>c.url.includes('/api/batch'))")
         self.assertEqual(json.loads(self.page.eval("JSON.stringify(window.__calls.length)")) >= 1, True)
 
+    def test_enter_on_the_focused_stack_row_submits_after_a_deliberate_choice(self):
+        self.focus(".item.stack"); self.page.key("Enter"); self.page.wait("document.querySelector('.item.member')")
+        self.assertEqual(self.active(), "stack:arcane-bomb")
+        self.page.key("x"); self.settle(0.2); self.assertEqual(self.posts(), [])  # choosing is not submitting
+        self.assertEqual(self.page.eval("S.armed"), "stack:arcane-bomb")           # and the choice survives focus being on the row
+        self.page.key("Enter"); self.page.wait("window.__calls.some(c=>c.url.includes('/api/batch'))"); self.settle(0.3)
+        self.assertEqual(len(self.calls("POST", "/api/batch")), 1)
+
+    def test_a_double_or_held_enter_submits_once(self):
+        self.page.click("#list .item[data-f='2026-10-15-recent.md']"); self.page.key("c"); self.page.wait("document.querySelector('#form.keep')")
+        self.focus("#note"); self.page.type("step one")
+        self.page.key("Enter"); self.page.key("Enter"); self.page.key("Enter"); self.settle(0.6)
+        self.assertEqual(len(self.calls("POST", "/api/action")), 1)
+        self.assertEqual(self.read_note("2026-10-15-recent.md").count("step one"), 1)
+
+    def read_note(self, name): return open(os.path.join(self.notes, name), encoding="utf-8").read()
+
     def test_a_single_note_decision_still_works_from_the_keyboard(self):
         self.page.eval("document.activeElement&&document.activeElement.blur()")
         self.page.key("x"); self.page.wait("document.querySelector('#form.kill')")
@@ -249,11 +266,20 @@ class StaleReplies(BrowserCase):
         self.assertIn("Not defined", self.text("#dodbox")); self.assertNotIn("It ships.", self.text("#drawer"))
         self.assertEqual(self.page.collect_errors(), [])
 
+    def test_a_projects_load_in_flight_cannot_repopulate_the_cache_a_change_just_dropped(self):
+        self.open("projects"); self.page.eval("location.hash='#/inbox'"); self.page.wait("document.querySelector('#main h1').textContent==='Inbox'")
+        self.assertTrue(self.page.eval("Array.isArray(S.projects)"))
+        self.page.eval("window.__holds.push({match:'/api/projects'}); void (window.__p=refresh())"); self.page.wait("window.__holds[0].hit")
+        self.page.eval("void (window.__q=changed())"); self.settle(0.3)
+        self.page.eval("window.__holds[0].release('ok')"); self.settle(0.5)
+        self.assertIsNone(self.page.eval("S.projects"))  # the next visit to Projects reloads instead of showing pre-change data
+
     def test_a_late_project_failure_after_leaving_the_page_is_ignored(self):
         self.open("projects")
         self.page.eval("window.__holds.push({match:'/api/project?name=demo'})")
         self.page.click("[data-pid='active/demo/NOTES.md']"); self.page.wait("window.__holds[0].hit")
         self.page.eval("location.hash='#/inbox'"); self.page.wait("document.querySelector('#main h1').textContent==='Inbox'")
+        self.page.wait("document.querySelector('#doc .title')")  # the Inbox reader has finished loading by itself
         before = self.text("#main"); self.page.eval("window.__holds[0].release('fail')"); self.settle(0.4)
         self.assertEqual(self.text("#main"), before); self.assertEqual(self.page.collect_errors(), [])
 
@@ -287,6 +313,20 @@ class Drafts(BrowserCase):
         self.assertTrue(self.page.eval("(()=>{const e=new Event('beforeunload',{cancelable:true});window.dispatchEvent(e);return e.defaultPrevented})()"))
         self.page.eval("document.querySelector('#dodCancel').click()")
         self.assertFalse(self.page.eval("(()=>{const e=new Event('beforeunload',{cancelable:true});window.dispatchEvent(e);return e.defaultPrevented})()"))
+
+    def test_opening_the_editor_without_typing_is_not_unsaved_work(self):
+        self.open("projects"); self.page.click("[data-pid='active/demo/NOTES.md']"); self.page.wait("document.querySelector('#dodEdit')")
+        self.page.click("#dodEdit"); self.page.wait("document.querySelector('#dodText')")
+        self.assertFalse(self.page.eval("dirty()"))
+        self.assertFalse(self.page.eval("(()=>{const e=new Event('beforeunload',{cancelable:true});window.dispatchEvent(e);return e.defaultPrevented})()"))
+        self.focus("#dodText"); self.page.type("x"); self.assertTrue(self.page.eval("dirty()"))
+
+    def test_an_exact_ship_by_date_restores_with_the_day_buttons_off(self):
+        self.page.click("#list .item[data-f='2026-10-15-recent.md']"); self.page.key("p"); self.page.wait("document.querySelector('#form.promote')")
+        self.page.eval("(()=>{const d=document.querySelector('#dueDate');d.value='2027-01-05';d.dispatchEvent(new Event('input',{bubbles:true}))})()")
+        self.page.eval("setMode(null);setMode('promote')")
+        self.assertEqual(self.page.eval("document.querySelector('#dueDate').value"), "2027-01-05")
+        self.assertEqual(self.page.eval("document.querySelectorAll('[data-seg=due] button.on').length"), 0)
 
     def test_a_refresh_still_picks_up_new_notes_when_nothing_is_being_edited(self):
         self.note("2026-10-16-brand-new.md", "Brand new")
@@ -358,6 +398,11 @@ class Overlays(BrowserCase):
         self.page.key("k", ctrl=True); self.page.wait("document.querySelector('#pq')"); self.page.type("go to proj"); self.settle(0.2)
         self.page.key("Enter"); self.page.wait("document.querySelector('#main h1')&&document.querySelector('#main h1').textContent==='Projects'")
         self.page.wait("document.activeElement&&document.activeElement.tagName==='H1'")
+
+    def test_enter_with_no_palette_matches_keeps_the_dialog_open(self):
+        self.page.key("k", ctrl=True); self.page.wait("document.querySelector('#pq')"); self.page.type("zzzzqq"); self.settle(0.2)
+        self.page.key("Enter"); self.settle(0.2)
+        self.assertTrue(self.exists("[role=dialog]")); self.assertEqual(self.active(), "pq")
 
     def test_keys_overlay_is_a_dialog_too(self):
         self.page.eval("document.activeElement&&document.activeElement.blur()"); self.page.key("?", shift=True)

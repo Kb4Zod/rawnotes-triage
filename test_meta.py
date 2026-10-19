@@ -67,7 +67,42 @@ class Header(unittest.TestCase):
         self.assertEqual(notemeta.with_eol(set_field(notemeta.to_lf(raw), "status", "x"), "\r\n"), "# T\r\n- status: x\r\n")
 
 
+class Review2(unittest.TestCase):
+    def test_leading_frontmatter_is_skipped_not_written_above(self):
+        t = "---\ntags: [a]\n---\n# T\n\n- date: x\n- status: open\n"
+        self.assertEqual(field(t, "status"), "open")
+        self.assertEqual(set_field(t, "status", "dead"), "---\ntags: [a]\n---\n# T\n\n- date: x\n- status: dead\n")
+        self.assertEqual(set_field("---\ntags: [a]\n---\n# T\n", "status", "dead"), "---\ntags: [a]\n---\n# T\n\n- status: dead\n")
+        self.assertEqual(set_field("---\nnever closed\n# T\n", "status", "dead").count("- status: dead"), 1)
+
+    def test_question_with_a_fenced_heading_is_not_cut(self):
+        q = "Q1\n\n```\n## foo\n```\n\nafter"
+        t = f"# T\n\n## What's the question / problem?\n\n{q}\n\n## Notes\n\nn\n"
+        self.assertEqual(notemeta.question_of(t), q); self.assertEqual(notemeta.note_body(t), "## Notes\n\nn")
+        self.assertEqual(notemeta.question_of("## What's the question\n\n## Notes\nx"), "")
+
+    def test_outcome_line_goes_to_the_end_of_the_outcome_section(self):
+        self.assertEqual(notemeta.append_outcome("# T\n\n## Outcome\n\nold\n\n## Other\n\nx\n", "NEW"), "# T\n\n## Outcome\n\nold\nNEW\n\n## Other\n\nx\n")
+        self.assertEqual(notemeta.append_outcome("# T\n\n## Outcome\n\nold\n", "NEW"), "# T\n\n## Outcome\n\nold\nNEW\n")
+        self.assertEqual(notemeta.append_outcome("# T\n", "NEW"), "# T\n\n## Outcome\n\nNEW\n")
+
+
 class HeaderThroughTheApp(Fixture):
+    def test_keep_next_step_is_not_lost_when_notes_is_the_last_line(self):
+        path = os.path.join(self.notes, "2026-10-01-eof.md")
+        with open(path, "w") as fh: fh.write("# T\n\n- status: open\n\n## Notes")
+        self.post("/api/action", {"file": "2026-10-01-eof.md", "action": "keep", "note": "do the thing"})
+        text = open(path).read(); self.assertIn("do the thing", text); self.assertIn("- status: cooking", text)
+
+    def test_done_means_in_a_file_with_mixed_line_endings_edits_the_right_line(self):
+        d = self.project("mix"); path = os.path.join(d, "NOTES.md")
+        with open(path, "wb") as fh: fh.write(b"# T\n\n## Plan\n\n- definition of done: old thing\r\n- other\r\n")
+        self.post("/api/done", {"name": "mix", "text": "new thing", "expected": "old thing"})
+        got = open(path, "rb").read()
+        self.assertEqual(got.count(b"definition of done"), 1); self.assertIn(b"- definition of done: new thing", got); self.assertIn(b"- other", got)
+        self.assertNotIn(b"old thing", got)
+
+
     def test_keep_on_a_blank_status_note_does_not_corrupt_it(self):
         path = os.path.join(self.notes, "2026-10-01-blank.md")
         with open(path, "w") as fh: fh.write("# X\n- status:\n- type: research\n")

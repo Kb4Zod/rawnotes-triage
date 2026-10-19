@@ -42,6 +42,15 @@ class Faults(Fixture):
         self.post("/api/action", {"file": "2026-10-01-a.md", "action": "kill"})
         self.assertEqual(len(server._undo), 1)
 
+    def test_a_rolled_back_change_writes_no_log_lines(self):
+        server.log = self.saved[2]; server.LOG_PATH = os.path.join(self.tmp, "triage.log")
+        self.fail_nth("os.rename", 3)
+        self.post("/api/batch", {"files": ["2026-10-01-a.md", "2026-10-02-b.md", "2026-10-03-c.md"], "action": "kill", "note": "x"}, ok=False)
+        self.assertFalse(os.path.exists(server.LOG_PATH) and open(server.LOG_PATH).read().strip())  # nothing decided, nothing logged
+        mock.patch.stopall()
+        self.post("/api/batch", {"files": ["2026-10-01-a.md", "2026-10-02-b.md"], "action": "kill", "note": "x"})
+        self.assertEqual(len(open(server.LOG_PATH).read().strip().splitlines()), 2)  # the successful one logs once per note
+
     # ---- 1: prevalidation
     def test_merge_with_a_duplicate_source_changes_nothing(self):
         r = self.post("/api/merge", {"files": ["2026-10-01-a.md", "2026-10-01-a.md"], "title": "Dup"}, ok=False)

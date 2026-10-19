@@ -164,8 +164,7 @@ def find_done(path):
     blank = None
     for name in DONE_FILES:
         if name not in files: continue
-        try:
-            with open(os.path.join(path, files[name]), encoding="utf-8", errors="replace") as fh: lines = fh.read(1000000).split("\n")
+        try: lines = _read_lines(os.path.join(path, files[name]))[0]
         except OSError: continue
         for i, line in enumerate(lines):
             m = DONE_LINE.match(line); h = DONE_HEAD.match(line)
@@ -177,7 +176,7 @@ def find_done(path):
                 if h and any(parts) and not nxt.strip(): break  # first paragraph only
                 parts.append(nxt.strip()); end += 1
             text = re.sub(r"<!--.*?-->", "", " ".join(x for x in parts if x), flags=re.S).strip()
-            text = re.sub(r"\s+", " ", text)[:DONE_MAX]
+            text = re.sub(r"\s+", " ", text)[:DONE_MAX].encode("utf-8", "replace").decode("utf-8")
             hit = {"file": files[name], "start": i, "end": end, "kind": "line" if m else "head",
                    "prefix": line[:m.start(1)] if m else "", "text": text, "defined": not done_placeholder(text)}
             if hit["defined"]: return hit
@@ -193,10 +192,11 @@ def definition_of_done(path):
     return {"defined": hit["defined"], "text": hit["text"] if hit["defined"] else "", "source": hit["file"]}
 
 def _read_lines(target):
-    """(lines, eol): the file split on its own line ending, undecodable bytes kept as surrogates."""
-    with open(target, encoding="utf-8", errors="surrogateescape", newline="") as fh: raw = fh.read()
-    eol = "\r\n" if "\r\n" in raw else "\n"
-    return raw.split(eol), eol
+    """(lines, eol): the file split on any line ending, so find_done's line numbers and set_done's agree even in a
+    file with mixed endings (those are written back with the dominant one: CRLF only if every line was CRLF).
+    Undecodable bytes are kept as surrogates."""
+    with open(target, "rb") as fh: raw = fh.read().decode("utf-8", "surrogateescape")
+    return re.split(r"\r\n|\r|\n", raw), eol_of(raw)
 
 def set_done(name, text, expected, kind=None):
     """Write a project's definition of done in place (or into NOTES.md's Plan if it has none), as one undoable change.
@@ -650,7 +650,8 @@ class Tx:
     """One change to the files, applied step by step. Each step that succeeds is recorded, so the whole change can be
     rolled back if a later step fails, or undone later. Every path must be a real (non-symlink) path inside the notes
     folder or the projects root; a write replaces the file atomically and keeps its permissions."""
-    def __init__(self, label=""): self.label, self.ops, self.select = label, [], None
+    def __init__(self, label=""): self.label, self.ops, self.select, self.logs = label, [], None, []
+    def log(self, msg): self.logs.append(msg)  # written to triage.log only once the whole change has gone through
     def write(self, path, text, eol="\n"):
         path = _stored(path)
         try:
@@ -747,6 +748,7 @@ def mutation(label=""):
             _push_undo({"label": f"unfinished: {tx.label or label}", "ops": left, "select": None})
             raise MutationFailed(f"{e}. {len(left)} change(s) could not be rolled back; press Undo to finish putting them back.") from e
         tx.commit()
+    for line in tx.logs: _log(line)  # after the undo entry exists and the lock is released: a log failure can't matter
 
 def undo():
     """Reverse the newest change. Checked on a dry run first: refuses (and changes nothing) if any file it
@@ -822,17 +824,18 @@ def _act(req, tx):
         status = req.get("status", "cooking")
         text = set_field(text, "status", status)
         if note:
+            if not text.endswith("\n"): text += "\n"
             if re.search(r"^## Notes[ \t]*$", text, re.M):
                 text = re.sub(r"(^## Notes[ \t]*\n)", lambda m: f"{m.group(1)}\n- next step ({t}): {note}\n", text, count=1, flags=re.M)
             else: text = text.rstrip("\n") + f"\n\n- next step ({t}): {note}\n"
         tx.write(src, text, eol)
-        _log(f"keep {fname} status={status}"); return {"ok": True, "msg": f"Kept “{title}” ({status})", "label": f"keep “{title}”"}
+        tx.log(f"keep {fname} status={status}"); return {"ok": True, "msg": f"Kept “{title}” ({status})", "label": f"keep “{title}”"}
 
     if action == "kill":
         text = set_field(text, "status", "dead")
         text = append_outcome(text, f"**Killed {t}:** {note or 'no longer useful.'}")
         tx.write(src, text, eol)
-        dst = to_done(src, tx); _log(f"kill {fname} -> {dst}")
+        dst = to_done(src, tx); tx.log(f"kill {fname} -> {dst}")
         return {"ok": True, "msg": f"Killed “{title}” → Archive", "label": f"kill “{title}”"}
 
     dest = "reference" if action == "reference" else req.get("dest")
@@ -860,7 +863,7 @@ def _act(req, tx):
     text = set_field(text, "status", "promoted")
     text = append_outcome(text, f"**Promoted {t}** -> `../{rel}`" + (f" ({note})" if note and action == 'reference' else ""))
     tx.write(src, text, eol)
-    dst = to_done(src, tx); _log(f"{'durable' if action == 'reference' else action} {fname} -> {rel}; capture -> {dst}")
+    dst = to_done(src, tx); tx.log(f"{'durable' if action == 'reference' else action} {fname} -> {rel}; capture -> {dst}")
     verb = "Promoted" if action == "promote" else "Filed"
     return {"ok": True, "msg": f"{verb} “{title}” → {rel}", "target": rel, "label": f"{action} “{title}”"}
 
@@ -951,7 +954,7 @@ def merge(req):
             text, eol = notes[p]
             text = set_field(text, "status", "merged")
             text = append_outcome(text, f"**Merged {t}** -> `RawNotes/{tname}`")
-            tx.write(p, text, eol); to_done(p, tx); _log(f"merge {os.path.basename(p)} -> {tname}")
+            tx.write(p, text, eol); to_done(p, tx); tx.log(f"merge {os.path.basename(p)} -> {tname}")
         msg = f"Merged {len(srcs)} notes into “{title}”"; tx.select = tname
         if then != "inbox":
             res = _act({**req, "file": tname, "action": then, "slug": req.get("slug") or ""}, tx)

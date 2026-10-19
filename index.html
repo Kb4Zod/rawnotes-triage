@@ -460,14 +460,15 @@ function loadNotes(){const my=++notesSeq;const p=notesP=api('/api/notes').then(d
 function loadProjects(fresh){const my=++projSeq;const p=projP=api('/api/projects'+(fresh?'?refresh=1':'')).then(d=>{if(my===projSeq)S.projects=d.projects});return p.then(()=>my===projSeq?undefined:projP)}
 // After ANY change (decide, batch, merge, restore, project action, done means, undo) what the other screens cached is wrong:
 // drop it, and reload what the current screen needs.
-async function changed(){S.projects=null;S.pdetail=null;S.stats=null;await loadNotes();
+async function changed(){projSeq++;S.projects=null;S.pdetail=null;S.stats=null;await loadNotes();
   if(S.route==='projects')await loadProjects().catch(()=>{})}
 async function loadActivity(force){try{S.activity=await api('/api/activity'+(force?'?refresh=1':''))}catch(e){S.activity={error:e.message}}renderRail();
   if(S.route==='pulse'&&S.notes&&!S.repo)render()}  // opened straight onto Pulse: the graph arrives after the page first drew
 async function loadStats(){try{S.stats=await api('/api/stats')}catch(e){S.stats={error:e.message}}}
 async function refresh(){await loadNotes();if(S.projects||S.route==='projects')await loadProjects().catch(()=>{});if(S.route==='pulse')await loadStats()}
 // true while the user has something typed that a re-render would throw away
-const dirty=()=>!!(S.mode||$('#overlay').innerHTML||Object.values(S.dods).some(d=>d&&d.mode)&&S.route==='projects'||(S.sel&&S.sel.startsWith('stack:')&&S.route==='inbox'))
+const dodDirty=d=>!!d&&(d.mode==='confirm'||(d.mode==='edit'&&d.text!==d.orig));  // typed something, or reviewing a change
+const dirty=()=>!!(S.mode||$('#overlay').innerHTML||Object.values(S.dods).some(dodDirty)&&S.route==='projects'||(S.sel&&S.sel.startsWith('stack:')&&S.route==='inbox'))
 
 /* ---------- rail & tabbar ---------- */
 function counts(){const n=S.notes;if(!n)return{};const late=n.inflight.filter(x=>!x.done&&x.days_left!==null&&x.days_left<0).length;
@@ -555,7 +556,9 @@ function renderInboxList(fromSearch){
   el.querySelectorAll('[data-f]').forEach(r=>{
     r.onclick=e=>{if(e.target.closest('[data-cb]'))return;selectNote(r.dataset.f,true)};
     // Enter and Space OPEN a row, nothing more. The key is marked handled so no page-level shortcut also acts on it.
-    if(r.getAttribute('role')==='button')r.onkeydown=e=>{if((e.key==='Enter'||e.key===' ')&&e.target===r){e.preventDefault();selectNote(r.dataset.f,true)}}});
+    if(r.getAttribute('role')==='button')r.onkeydown=e=>{if((e.key==='Enter'||e.key===' ')&&e.target===r){e.preventDefault();
+      if(e.key==='Enter'&&!e.repeat&&S.armed&&S.armed===r.dataset.f&&S.sel===r.dataset.f){apply();return}  // an action was chosen on purpose for this stack: Enter submits it
+      if(!e.repeat)selectNote(r.dataset.f,true)}}});
   el.querySelectorAll('[data-cb]').forEach(b=>{b.onclick=e=>e.stopPropagation();
     b.onchange=()=>{const f=b.dataset.cb;b.checked?S.batch.add(f):S.batch.delete(f);renderInboxList();
       const nb=[...$$('#list [data-cb]')].find(x=>x.dataset.cb===f);nb&&nb.focus({preventScroll:true});
@@ -626,7 +629,7 @@ function renderReader(){const r=$('#reader');if(!r)return;r.scrollTop=0;
 // What was typed into a decision form is kept per note and decision, so a refresh or a trip to another note doesn't lose it.
 function formState(f){const o={};f.querySelectorAll('input.input,textarea.input').forEach(i=>{if(i.id)o[i.id]=i.value});f.querySelectorAll('[data-seg]').forEach(s=>{const b=s.querySelector('.on');if(b)o['seg:'+s.dataset.seg]=b.dataset.v});return o}
 function restoreForm(f,o){if(!o)return;for(const k in o){if(k.startsWith('seg:')){const s=f.querySelector(`[data-seg="${k.slice(4)}"]`);s&&s.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.v===o[k]))}
-  else{const i=document.getElementById(k);if(i&&f.contains(i)){i.value=o[k];if(k==='dueDate')i.classList.toggle('on',!!o[k])}}}}
+  else{const i=document.getElementById(k);if(i&&f.contains(i)){i.value=o[k];if(k==='dueDate'){i.classList.toggle('on',!!o[k]);if(o[k])f.querySelectorAll('[data-seg=due] button').forEach(b=>b.classList.remove('on'))}}}}}
 function wireDecide(n){
   $$('#decide .opt').forEach(b=>b.onclick=()=>setMode(S.mode===b.dataset.m?null:b.dataset.m));
   const f=$('#form');if(!f)return;
@@ -657,19 +660,23 @@ async function copyPath(path,el){try{await navigator.clipboard.writeText(path)}c
   const s=el&&el.querySelector('span:last-child');if(s){const o=s.textContent;s.textContent='Copied';setTimeout(()=>s.textContent=o,1000)}}
 function backToList(){document.body.classList.remove('note','detail');S.mode=null;if(S.route==='inbox'||S.route==='archive')render();scrollTo(0,0)}
 
+// A key held down (or pressed twice quickly) must not submit twice: one change is in flight at a time.
+let submitting=false;
 async function apply(){
+  if(submitting)return;
   if(S.sel&&S.sel.startsWith('stack:'))return applyBatch();
   if(!S.mode||!S.sel)return;const go=$('#go'),err=$('#ferr');
   const val=id=>{const e=document.getElementById(id);return e?e.value.trim():undefined};
   const body={file:S.sel,action:S.mode,note:val('note'),slug:val('slug'),dest:segVal('dest'),status:segVal('status'),...(S.mode==='promote'?shipBody(segVal('dest')):{})};
   if(S.mode==='promote'&&!body.note){err.textContent='Say what done means first.';$('#note').focus();return}
-  go.disabled=true;err.textContent='';
+  go.disabled=true;err.textContent='';submitting=true;
   try{const ord=navOrder(inboxModel()),i=ord.indexOf(S.sel);
     const r=await api('/api/action',body);S.undoCount++;
     const next=ord.slice(i+1).find(f=>!f.startsWith('stack:'))||ord.slice(0,i).reverse().find(f=>!f.startsWith('stack:'));
     delete S.forms[S.sel+'|'+S.mode];await changed();S.sel=next&&S.notes.live.some(n=>n.file===next)?next:null;S.mode=null;
     render();toast(r.msg,{undo:true})}
-  catch(e){go.disabled=false;err.textContent=e.message}}
+  catch(e){go.disabled=false;err.textContent=e.message}
+  finally{submitting=false}}
 
 /* ---------- stacks: batch + merge ---------- */
 function renderBatch(){const k=S.sel.slice(6),stk=inboxModel().stacks[k];const r=$('#reader');
@@ -710,11 +717,12 @@ async function applyBatch(){const files=[...S.batch],m=S.batchMode,go=$('#go'),e
   if(!files.length){err.textContent='Tick at least one note.';return}
   if(m==='merge'&&files.length<2){err.textContent='Merging needs at least two notes.';return}
   if(m==='merge'&&segVal('then')==='promote'&&!val('note')){err.textContent='Say what done means first.';$('#note').focus();return}
-  go.disabled=true;err.textContent='';
+  go.disabled=true;err.textContent='';submitting=true;
   try{const r=m==='merge'?await api('/api/merge',{files,title:val('mtitle'),then:segVal('then'),dest:segVal('dest'),...shipBody(segVal('dest')),slug:val('slug'),note:val('note')})
       :await api('/api/batch',{files,action:m,note:val('note'),status:segVal('status')});
     S.undoCount++;await changed();S.expanded=null;S.armed=null;S.batch=new Set();S.sel=r.file||null;render();toast(r.msg,{undo:true})}
-  catch(e){go.disabled=false;err.textContent=e.message}}
+  catch(e){go.disabled=false;err.textContent=e.message}
+  finally{submitting=false}}
 
 /* ---------- Archive ---------- */
 function renderArchive(){
@@ -831,7 +839,7 @@ async function projectAction(c,a,btn){
 // "Done means" editor: edit -> review before/after -> confirm (writes only on confirm; refused if the file changed).
 // The text being edited lives in S.dods, so a refresh, a re-render or a trip to another page doesn't lose it.
 function renderDod(p,mode,draft){const el=$('#dodbox');if(!el)return;const d=p.done,file=d.source||'NOTES.md',old=d.defined?d.text:'',key=p.path;
-  const keep=(m,t)=>{if(m)S.dods[key]={mode:m,text:t};else delete S.dods[key]};
+  const keep=(m,t)=>{if(m)S.dods[key]={mode:m,text:t,orig:old};else delete S.dods[key]};
   if(mode==='edit'){keep('edit',draft??old);
     el.innerHTML=`<h3 class="sec label"><label for="dodText">Done means · editing</label></h3><textarea class="input" id="dodText" rows="3" maxlength="600" placeholder="One or two sentences: what does shipped look like?">${esc(S.dods[key].text)}</textarea>
       <div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap"><button class="btn sm primary" id="dodReview">Review change</button><button class="btn sm ghost" id="dodCancel">Cancel</button><span class="err" id="dodErr" role="alert"></span></div>
@@ -851,7 +859,7 @@ function renderDod(p,mode,draft){const el=$('#dodbox');if(!el)return;const d=p.d
   el.innerHTML=d.defined?`<h3 class="sec label" style="display:flex;justify-content:space-between;align-items:center">Done means ${can?'<button class="btn sm ghost" id="dodEdit">Edit</button>':''}</h3><div class="dod">${esc(d.text)}</div><div class="muted" style="font-size:12px;margin-top:4px">From ${esc(d.source)}</div>`
     :`<h3 class="sec label" style="display:flex;justify-content:space-between;align-items:center">Done means ${can?'<button class="btn sm" id="dodEdit">Fill in</button>':''}</h3><div class="dod missing">Not defined yet. What does done look like? It goes into <span class="mono">${esc(file)}</span>.</div>`;
   $('#dodEdit')&&($('#dodEdit').onclick=()=>renderDod(p,'edit'))}
-addEventListener('beforeunload',e=>{if(Object.values(S.dods).some(d=>d&&d.mode)){e.preventDefault();e.returnValue=''}});
+addEventListener('beforeunload',e=>{if(Object.values(S.dods).some(dodDirty)){e.preventDefault();e.returnValue=''}});
 
 /* ---------- repo viewer (read-only, through gh on the server) ---------- */
 const ghUrl=u=>/^https:\/\/github\.com\//.test(u||'')?u:'#';
@@ -953,12 +961,13 @@ function palRender(q){q=q.trim().toLowerCase();const hit=s=>!q||s.toLowerCase().
   $('#palStatus').textContent=pal.items.length?`${pal.items.length} result${pal.items.length===1?'':'s'}`:'No matches';
   $('#pq').setAttribute('aria-activedescendant',pal.items.length?'po'+pal.i:'');
   $$('#pres [data-pi]').forEach(r=>{r.onclick=()=>palGo(+r.dataset.pi);r.onmousemove=()=>{if(pal.i!==+r.dataset.pi)palSelect(+r.dataset.pi)}})}
-function palGo(i){const it=pal&&pal.items[i];closeOverlay(true);if(it){it.go();setTimeout(focusMain,60)}}  // after any route change has rendered
+function palGo(i){const it=pal&&pal.items[i];if(!it)return;closeOverlay(true);it.go();setTimeout(focusMain,60)}  // after any route change has rendered
 // after a jump to another page the keyboard user should land on that page, not on whatever the palette was opened from
 function focusMain(){const h=$('#main h1')||$('#main');if(h){h.setAttribute('tabindex','-1');h.focus({preventScroll:true})}}
 
 document.addEventListener('keydown',e=>{
   if(e.defaultPrevented)return;  // something closer already handled this key (a row opening itself, a button, a form)
+  if(e.repeat&&e.key==='Enter')return;  // holding Enter must never repeat a decision
   if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();pal?closeOverlay():openPalette();return}
   if($('#overlay').innerHTML){
     if(e.key==='Escape'){e.preventDefault();closeOverlay();return}

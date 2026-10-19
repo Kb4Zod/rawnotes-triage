@@ -53,7 +53,13 @@ dependencies; `safefs.py` and `notemeta.py` are small stdlib helpers next to `se
   search boxes, keyboard-reachable scrolling regions; the mobile toast floats above the tab bar or sheet with a 44 px
   Undo; 44 px touch targets; no page-wide overflow at 1280, 390 or 320 px. The promote form's preview no longer clips at
   desktop widths.
-- Tests: 62 → 184 (engine fault injection, headers, safety, caches/concurrency, GitHub, a real-browser suite with
+- Found by an independent review before release and fixed: a held or doubled Enter could submit a decision twice; a rolled-back
+  change had already written its log lines (they now wait for the commit); `done means` in a file with mixed line endings
+  could edit the wrong line; Keep dropped the next step when `## Notes` was the last line; notes with YAML frontmatter
+  got their status written above it; a fenced `##` line cut the question short; an Outcome line went to the end of the
+  note instead of its section; armed stack + Enter on the focused row silently disarmed; a stale Projects reload could
+  repopulate a dropped cache; Enter on "No matches" closed the palette.
+- Tests: 62 → 206 (engine fault injection, headers, safety, caches/concurrency, GitHub, a real-browser suite with
   optional axe sweeps); `loadcheck.py` for the load scenario.
 
 ## 2.04 — 2026-10-18

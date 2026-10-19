@@ -25,15 +25,25 @@ def with_eol(text, eol): return text if eol == "\n" else text.replace("\n", eol)
 def to_lf(raw): return raw.replace("\r\n", "\n") if eol_of(raw) == "\r\n" else raw
 
 
+def body_start(lines):
+    """Index of the first line after a leading `---` YAML frontmatter block (0 if there is none)."""
+    i = 0
+    while i < len(lines) and not lines[i].strip(): i += 1
+    if i < len(lines) and lines[i].rstrip() == "---":
+        for j in range(i + 1, len(lines)):
+            if lines[j].rstrip() in ("---", "..."): return j + 1
+    return 0
+
+
 def title_index(lines):
-    for i, l in enumerate(lines):
-        if l.strip(): return i if re.match(r"^#\s+\S", l) else None
+    for i in range(body_start(lines), len(lines)):
+        if lines[i].strip(): return i if re.match(r"^#\s+\S", lines[i]) else None
     return None
 
 
 def header_lines(lines):
     """Indexes of the header's `- key: value` lines (empty list if the note has none)."""
-    i = (title_index(lines) + 1) if title_index(lines) is not None else 0
+    i = (title_index(lines) + 1) if title_index(lines) is not None else body_start(lines)
     prose = 0
     while i < len(lines) and not HEAD_LINE.match(lines[i]):
         if SECTION.match(lines[i]) or re.match(r"^#\s", lines[i]): return []  # a heading came first: no header
@@ -78,7 +88,7 @@ def set_field(text, key, value):
     if head: lines.insert(head[-1] + 1, new)
     else:
         t = title_index(lines)
-        if t is None: lines[0:0] = [new, ""]
+        if t is None: b = body_start(lines); lines[b:b] = [new, ""]
         elif lines[t + 1:t + 2] == [""]: lines[t + 2:t + 2] = [new, ""]
         else: lines[t + 1:t + 1] = ["", new, ""]
     return "\n".join(lines)
@@ -97,19 +107,28 @@ def title_of(text, fname):
 
 
 def append_outcome(text, line):
-    if re.search(r"^## Outcome[ \t]*$", text, re.M): return text.rstrip("\n") + f"\n{line}\n"
-    return text.rstrip("\n") + f"\n\n## Outcome\n\n{line}\n"
+    """Add `line` to the end of the ## Outcome section (adding the section at the end of the note if it has none)."""
+    m = re.search(r"^## Outcome[ \t]*$", text, re.M)
+    if not m: return text.rstrip("\n") + f"\n\n## Outcome\n\n{line}\n"
+    nxt = re.compile(r"^## ", re.M).search(text, m.end())
+    if not nxt: return text.rstrip("\n") + f"\n{line}\n"
+    return text[:nxt.start()].rstrip("\n") + f"\n{line}\n\n" + text[nxt.start():]
 
 
 QUESTION_HEAD = re.compile(r"^##[ \t]+What.?s the question[^\n]*$", re.M | re.I)
 
 
 def question_span(text):
-    """(start, end) character offsets of the question section's body, or None. It runs to the next `## ` heading."""
+    """(start, end) character offsets of the question section's body, or None. It runs to the next `## ` heading
+    (a `## ` line inside a fenced code block doesn't end it)."""
     m = QUESTION_HEAD.search(text)
     if not m: return None
-    nxt = re.compile(r"^## ", re.M).search(text, m.end())
-    return m.end(), nxt.start() if nxt else len(text)
+    pos, fence = m.end(), False
+    for line in text[m.end():].split("\n"):
+        if line.lstrip().startswith("```"): fence = not fence
+        elif not fence and line.startswith("## ") and pos > m.end(): return m.end(), pos
+        pos += len(line) + 1
+    return m.end(), len(text)
 
 
 def question_of(text):

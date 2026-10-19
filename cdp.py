@@ -159,8 +159,14 @@ class Page:
         for ch in text: self.cmd("Input.dispatchKeyEvent", {"type": "keyDown", "text": ch, "key": ch}); self.cmd("Input.dispatchKeyEvent", {"type": "keyUp", "key": ch})
 
     def click(self, selector):
-        r = self.eval(f"(()=>{{const e=document.querySelector({json.dumps(selector)});if(!e)return null;e.scrollIntoView({{block:'center'}});const b=e.getBoundingClientRect();return [b.x+b.width/2,b.y+b.height/2]}})()")
+        probe = f"(()=>{{const e=document.querySelector({json.dumps(selector)});if(!e)return null;e.scrollIntoView({{block:'center'}});const b=e.getBoundingClientRect();return [b.x+b.width/2,b.y+b.height/2]}})()"
+        r = self.eval(probe)
         if not r: raise LookupError("no element " + selector)
+        for _ in range(20):  # wait for layout to stop moving (a panel loading above the target shifts it), as a person would
+            time.sleep(0.05); again = self.eval(probe)
+            if again == r: break
+            r = again
+            if not r: raise LookupError("no element " + selector)
         for t in ("mousePressed", "mouseReleased"):
             self.cmd("Input.dispatchMouseEvent", {"type": t, "x": r[0], "y": r[1], "button": "left", "clickCount": 1})
 
