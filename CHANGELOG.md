@@ -4,6 +4,12 @@ The version shows in the page heading ("RawNotes Triage version X.XX") and
 in the startup line. Bump `VERSION` in `server.py` and add an entry here
 with every change. Versions 1.00-1.03 were numbered after the fact from git history.
 
+## 2.07 — 2026-10-19
+- Replace the search and keyboard-help dialog backdrop blur with the existing plain dimmed overlay. This avoids
+  mirrored/repeated background imagery observed in the preview browser. Modal focus handling is unchanged.
+- Track persistent undo, race-resistant filesystem operations, and physical-phone, screen-reader and authenticated
+  GitHub verification as separate follow-up tickets under `.scratch/`.
+
 ## 2.06 — 2026-10-19
 Two defects found by independent verification of 2.05, fixed before release (2.05 was never released).
 - **Open folder works again.** 2.05 ran `xdg-open -- <path>`, but the installed `xdg-open` rejects `--` ("unexpected

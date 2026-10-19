@@ -27,7 +27,7 @@ import safefs
 from notemeta import (field, set_field, drop_field, title_of, append_outcome, question_of, question_summary, note_body,
                       eol_of, with_eol, to_lf, header_lines, title_index, HEAD_LINE)
 
-VERSION = "2.06"  # bump on every change; history in CHANGELOG.md
+VERSION = "2.07"  # bump on every change; history in CHANGELOG.md
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOG_PATH = os.path.join(HERE, "triage.log")
 FONT_RE = re.compile(r"^/static/fonts/[A-Za-z0-9-]+\.woff2$")
