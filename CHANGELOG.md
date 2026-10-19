@@ -4,6 +4,27 @@ The version shows in the page heading ("RawNotes Triage version X.XX") and
 in the startup line. Bump `VERSION` in `server.py` and add an entry here
 with every change. Versions 1.00-1.03 were numbered after the fact from git history.
 
+## 2.06 — 2026-10-19
+Two defects found by independent verification of 2.05, fixed before release (2.05 was never released).
+- **Open folder works again.** 2.05 ran `xdg-open -- <path>`, but the installed `xdg-open` rejects `--` ("unexpected
+  option '--'") and exits without opening anything, while the page reported success. The command is now
+  `xdg-open <absolute path>`: the path was already validated and absolute, so it always starts with `/` and can never
+  be read as an option (a relative path is refused). An opener that fails at once is now reported on the page instead of
+  swallowed. A new test runs the real `/usr/bin/xdg-open` on the exact command line the app builds, in a clean
+  environment with no display and a stub handler, so nothing is ever opened; the old `--` form is asserted to be refused.
+- **Undo, rollback and redo can't write through a symlink.** 2.05 checked containment when a change was made but not
+  when it was reversed, so renaming a project folder away and putting a symlink in its place between requests let Undo
+  edit the real files behind the link. Every path an undo entry recorded (the file, a move's source *and* destination, a
+  created folder) is now checked again, for all steps, before the first one is touched; Undo then refuses with "Nothing
+  was changed", keeps the entry on the undo list and works again once the folder is put right. The same check runs
+  immediately before each reverse step, each rollback step and each "put it back" step after a half-failed undo, which
+  then reports the step as not put back rather than writing through the link. Covered: folder swapped for a link to a
+  renamed folder inside or outside the projects root, the file itself swapped for a link with identical content, a
+  move's destination folder or source name replaced, a promotion's new folder, rollback and redo recovery.
+- Still not covered (same as 2.05): a swap in the instant *between* a check and the write inside one request; Triage
+  assumes the folders are not being rearranged under it by another local process at that moment.
+- Tests: 206 → 220.
+
 ## 2.05 — 2026-10-19
 Reliability, accessibility and load fixes from the v2.04 code review and browser audit (no new features, no new
 dependencies; `safefs.py` and `notemeta.py` are small stdlib helpers next to `server.py`).
@@ -30,13 +51,13 @@ dependencies; `safefs.py` and `notemeta.py` are small stdlib helpers next to `se
   (done means editor, decision forms); closing the tab with an unsaved edit asks first.
 - **Projects/Pulse never show stale data after a change:** promotion, batch, merge, restore, project actions, done
   means and undo all drop the cached lists (a promoted note's card now has its done-means editor straight away).
-- **Symlinks can't redirect a write.** Writes need real paths inside `RawNotes/` or the projects folders with no
+- **Symlinks can't redirect a write.** (Undo and rollback were not covered until 2.06.) Writes need real paths inside `RawNotes/` or the projects folders with no
   symlink on the way (the old check only looked at the final file). Symlinked project folders are still listed,
   read-only, with a note.
 - **`--restart` verifies what it stops:** the port must serve the triage page *and* its owner must be a triage
   `server.py` (command line checked); an HTTP error from some other service is no longer taken for an old triage.
 - **`/api/open` only launches a project folder or promoted file the board lists** (`{name, kind}` or `{path}`), only for a
-  client on the server's own machine, with `xdg-open --` and no shell. URLs and arbitrary paths are refused.
+  client on the server's own machine, with `xdg-open` and no shell (2.05 passed `--`, which the installed `xdg-open` rejects; fixed in 2.06). URLs and arbitrary paths are refused.
 - **Reads no longer fail beside writes.** Listings take a shared lock that changes hold exclusively (and skip a file
   that vanished or can't be read), so 16 clients doing 160 listings + 40 kills got 116/200 HTTP 400s before and 0 now.
   Per-note summaries are cached by file stat (not trusted within 2 s of an edit); git inspection is cached for 20 s

@@ -51,7 +51,7 @@ The old API names `durable` and `archive` still work. Nothing is ever deleted; e
 
 **Undo (Z):** every change made through the page (decisions, batch, merge, restore, project status, done means) can be
 undone, newest first, while the server is running. Undo checks first and refuses, changing nothing, if any
-file it would touch has been edited since. Changes are all-or-nothing: notes are checked before anything is
+file it would touch has been edited since, or is now behind a symlink or outside the notes and projects folders. Changes are all-or-nothing: notes are checked before anything is
 written (a note listed twice, a missing one, a bad date), each file is replaced atomically (permissions, line
 endings and odd bytes survive), and if a step fails half-way the steps already taken are rolled back. In the rare
 case a rollback can't finish, an "unfinished" step stays on the undo list so Z can finish it.
@@ -92,7 +92,9 @@ Git facts per project (on GitHub? unpushed commits?) are cached for 20 seconds; 
 
 **Symlinked project folders** are shown (read-only) with a note, but Triage never writes into one: a symlink
 could point anywhere. Every write must land on real files inside `RawNotes/` or the projects folders, with no symlink
-on the way, or it is refused.
+on the way, or it is refused. Undo, rollback and redo check the same rule again, for every file they would touch, before
+changing anything. Not covered: another local process swapping a folder for a link in the instant between a check and
+the write inside one request.
 
 **Done means** is found in NOTES, PROJECT, README or SPEC: the line Promote writes, a `Definition of done:`
 paragraph, or a "What does done look like" heading. Missing or `<fill in>` gets a red "Define done means" on the

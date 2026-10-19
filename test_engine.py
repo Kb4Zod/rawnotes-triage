@@ -238,5 +238,121 @@ class Faults(Fixture):
         self.assertEqual(self.snapshot().keys() - self.before.keys(), {"active/", "active/p/", "active/p/NOTES.md"})
 
 
+class UndoContainment(Fixture):
+    """v2.06: undo, rollback and redo recovery check every recorded path again, right before touching it. A folder renamed
+    away and replaced by a symlink between requests (or a file swapped for a link) makes them refuse - changing nothing
+    and keeping the history - instead of writing through the link."""
+    def setUp(self):
+        super().setUp()
+        self.outside = os.path.realpath(self.tmp + "-outside"); os.makedirs(self.outside)
+        self.addCleanup(__import__("shutil").rmtree, self.outside, ignore_errors=True)
+
+    def swap_for_link(self, path, target):
+        """Rename the real folder/file `path` to `target` (outside the roots) and leave a symlink with its old name."""
+        os.rename(path, target); os.symlink(target, path)
+
+    def assertRefused(self, snapshot, msg="symlink"):
+        n = len(server._undo)
+        r = self.post("/api/undo", {}, ok=False)
+        self.assertIn(msg, r["error"]); self.assertIn("Nothing was changed", r["error"])
+        self.assertEqual((self.snapshot(self.tmp), len(server._undo)), (snapshot, n))  # files and history untouched
+
+    def shipped_demo(self):
+        p = self.project("demo", notes="# Demo\n\n- status: promoted\n- due: 2026-12-01\n")
+        self.post("/api/project/status", {"path": "active/demo/NOTES.md", "action": "shipped"})
+        return p
+
+    def test_undo_refuses_when_the_project_folder_became_a_symlink_to_the_renamed_folder_inside_the_projects_root(self):
+        p = self.shipped_demo(); ext = os.path.join(self.tmp, "external")
+        self.swap_for_link(p, ext); before = self.snapshot(); outside_text = open(ext + "/NOTES.md").read()
+        self.assertRefused(before)
+        self.assertEqual(open(ext + "/NOTES.md").read(), outside_text); self.assertIn("shipped", outside_text)
+
+    def test_undo_refuses_when_the_project_folder_became_a_symlink_to_a_folder_outside_the_roots(self):
+        p = self.shipped_demo(); ext = os.path.join(self.outside, "demo")
+        self.swap_for_link(p, ext); before = self.snapshot(self.outside); n = len(server._undo)
+        r = self.post("/api/undo", {}, ok=False); self.assertIn("symlink", r["error"])
+        self.assertEqual((self.snapshot(self.outside), len(server._undo)), (before, n)); self.assertIn("shipped", open(ext + "/NOTES.md").read())
+
+    def test_undo_refuses_when_the_file_itself_was_swapped_for_a_link_with_identical_content(self):
+        p = self.shipped_demo(); copy = os.path.join(self.outside, "NOTES.md")
+        os.replace(p + "/NOTES.md", copy); os.symlink(copy, p + "/NOTES.md")
+        before = self.snapshot(self.outside)
+        r = self.post("/api/undo", {}, ok=False); self.assertIn("symlink", r["error"])
+        self.assertEqual((self.snapshot(self.outside), len(server._undo)), (before, 1)); self.assertTrue(os.path.islink(p + "/NOTES.md"))
+
+    def test_undo_of_a_move_refuses_a_destination_folder_replaced_by_a_link(self):
+        self.note("2026-10-01-a.md", "A"); self.post("/api/action", {"file": "2026-10-01-a.md", "action": "kill", "note": "x"})
+        self.swap_for_link(os.path.join(self.notes, "done"), os.path.join(self.outside, "done")); before = self.snapshot(self.outside)
+        r = self.post("/api/undo", {}, ok=False); self.assertIn("symlink", r["error"])
+        self.assertEqual((self.snapshot(self.outside), len(server._undo), os.path.exists(os.path.join(self.notes, "2026-10-01-a.md"))), (before, 1, False))
+
+    def test_undo_of_a_move_refuses_a_dangling_link_where_the_source_was(self):
+        a = self.note("2026-10-01-a.md", "A"); self.post("/api/action", {"file": "2026-10-01-a.md", "action": "kill", "note": "x"})
+        os.symlink(os.path.join(self.outside, "nowhere"), a); before = self.snapshot()
+        self.assertRefused(before)
+        self.assertTrue(os.path.islink(a)); self.assertEqual(os.listdir(self.outside), [])
+
+    def test_undo_of_a_promotion_refuses_when_the_new_projects_folder_became_a_link(self):
+        self.note("2026-10-01-a.md", "A")
+        self.post("/api/action", {"file": "2026-10-01-a.md", "action": "promote", "dest": "active", "note": "Ships.", "due_days": 3})
+        self.swap_for_link(os.path.join(self.tmp, "active"), os.path.join(self.outside, "active")); before = self.snapshot(self.outside)
+        r = self.post("/api/undo", {}, ok=False); self.assertIn("symlink", r["error"])
+        self.assertEqual((self.snapshot(self.outside), len(server._undo)), (before, 1))
+
+    def test_a_refused_undo_works_again_once_the_folder_is_put_right(self):
+        p = self.shipped_demo(); ext = os.path.join(self.outside, "demo"); self.swap_for_link(p, ext)
+        self.post("/api/undo", {}, ok=False)
+        os.unlink(p); os.rename(ext, p)
+        self.post("/api/undo", {}); self.assertIn("- status: promoted", open(p + "/NOTES.md").read()); self.assertEqual(server._undo, [])
+
+    def test_undo_of_the_newest_change_checks_every_step_before_changing_any(self):
+        """Two steps in two folders; only the OLDER step's folder is a link. Nothing may change, not even the newer step."""
+        d1, d2 = self.project("one"), self.project("two")
+        for d in (d1, d2): open(d + "/f.txt", "w").write("v0")
+        with server.mutation("two files") as tx: tx.write(d1 + "/f.txt", "v1"); tx.write(d2 + "/f.txt", "v1")
+        self.swap_for_link(d1, os.path.join(self.outside, "one")); before = self.snapshot()
+        self.assertRefused(before)
+        self.assertEqual(open(d2 + "/f.txt").read(), "v1"); self.assertEqual(open(self.outside + "/one/f.txt").read(), "v1")
+
+    def test_rollback_does_not_write_through_a_link_and_leaves_an_unfinished_entry_that_finishes_later(self):
+        d1 = self.project("one"); open(d1 + "/f.txt", "w").write("v0"); ext = os.path.join(self.outside, "one")
+        with self.assertRaises(server.MutationFailed):
+            with server.mutation("edit then fail") as tx:
+                tx.write(d1 + "/f.txt", "v1")
+                self.swap_for_link(d1, ext)  # the folder is swapped for a link, then a later step fails
+                raise OSError(5, "simulated disk error")
+        self.assertEqual(open(ext + "/f.txt").read(), "v1")  # not rolled back through the link
+        self.assertEqual([os.listdir(ext), len(server._undo), "unfinished" in server._undo[0]["label"]], [["f.txt"], 1, True])
+        os.unlink(d1); os.rename(ext, d1)
+        self.post("/api/undo", {}); self.assertEqual((open(d1 + "/f.txt").read(), server._undo), ("v0", []))
+
+    def test_rollback_does_not_move_back_through_a_link(self):
+        a = self.note("2026-10-01-a.md", "A"); done = os.path.join(self.notes, "done"); ext = os.path.join(self.outside, "done")
+        with self.assertRaises(server.MutationFailed):
+            with server.mutation("move then fail") as tx:
+                tx.ensure_dir(done); tx.move(a, done + "/2026-10-01-a.md")
+                self.swap_for_link(done, ext)
+                raise OSError(5, "simulated")
+        self.assertEqual(os.listdir(ext), ["2026-10-01-a.md"]); self.assertFalse(os.path.exists(a))
+
+    def test_redo_after_a_half_failed_undo_does_not_write_through_a_link(self):
+        d1, d2 = self.project("one"), self.project("two")
+        for d in (d1, d2): open(d + "/f.txt", "w").write("v0")
+        with server.mutation("two files") as tx: tx.write(d1 + "/f.txt", "v1"); tx.write(d2 + "/f.txt", "v1")
+        decoy = os.path.join(self.outside, "two"); os.makedirs(decoy); open(decoy + "/f.txt", "w").write("decoy")
+        real = server._apply_inverse; calls = []
+        def inverse(op):
+            calls.append(op)
+            if len(calls) == 2:  # d2 was put back; now d2 is swapped for a link and the next step fails
+                os.rename(d2, d2 + ".real"); os.symlink(decoy, d2); raise OSError(5, "simulated")
+            return real(op)
+        with mock.patch.object(server, "_apply_inverse", inverse):
+            r = self.post("/api/undo", {}, ok=False)
+        self.assertIn("could not be put back", r["error"])
+        self.assertEqual(open(decoy + "/f.txt").read(), "decoy"); self.assertEqual(os.listdir(decoy), ["f.txt"])
+        self.assertEqual(open(d2 + ".real/f.txt").read(), "v0")
+
+
 if __name__ == "__main__":
     unittest.main()

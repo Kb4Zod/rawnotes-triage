@@ -119,11 +119,49 @@ class OpenEndpoint(Fixture):
         os.symlink(self.tmp, os.path.join(self.tmp, "active", "ln"))
         self.post("/api/open", {"name": "ln", "kind": "active"}, ok=False); self.assertEqual(self.opened, [])
 
-    def test_the_launcher_uses_no_shell_and_ends_option_parsing(self):
-        with mock.patch.object(subprocess, "Popen") as popen:
-            REAL_OPEN("/tmp/x y;rm -rf")
+    def test_the_launcher_command_is_one_absolute_operand_without_a_shell(self):
+        weird = "/tmp/x y;rm -rf $(id) -n"
+        self.assertEqual(server.open_argv(weird), ["xdg-open", weird])
+        for bad in ("-n", "--", "--help", "relative/dir", ""):
+            with self.assertRaises(ValueError, msg=bad): server.open_argv(bad)
+        proc = mock.MagicMock(); proc.wait.return_value = 0
+        with mock.patch.object(subprocess, "Popen", return_value=proc) as popen:
+            REAL_OPEN(weird)
         args, kw = popen.call_args
-        self.assertEqual(args[0], ["xdg-open", "--", "/tmp/x y;rm -rf"]); self.assertFalse(kw.get("shell"))
+        self.assertEqual(args[0], ["xdg-open", weird]); self.assertFalse(kw.get("shell"))
+
+    def test_an_opener_that_fails_at_once_is_reported_not_swallowed(self):
+        stub = os.path.join(self.tmp, "failing-opener"); fh = open(stub, "w"); fh.write("#!/bin/sh\necho 'no handler' >&2\nexit 3\n"); fh.close(); os.chmod(stub, 0o755)
+        with mock.patch.object(server, "open_argv", return_value=[stub, "/tmp"]):
+            with self.assertRaises(OSError) as cm: REAL_OPEN("/tmp")
+        self.assertIn("status 3", str(cm.exception)); self.assertIn("no handler", str(cm.exception))
+        with mock.patch.object(server, "open_path", side_effect=OSError("it exited with status 3")):
+            self.assertIn("couldn't launch xdg-open", self.post("/api/open", {"name": "demo", "kind": "active"}, ok=False)["error"])
+
+
+@unittest.skipUnless(os.path.exists("/usr/bin/xdg-open"), "the installed xdg-open is the contract")
+class XdgOpenContract(Fixture):
+    """Run the real /usr/bin/xdg-open on the exact command line the app builds. Safe: a clean environment with no display
+    and no desktop, and a stub `run-mailcap` first on PATH that records its arguments and succeeds, so xdg-open stops
+    there; nothing is ever opened. This is the check that caught `--` (rejected by the installed xdg-open as an option)."""
+    def run_opener(self, argv):
+        stubs = os.path.join(self.tmp, "stubs"); os.makedirs(stubs, exist_ok=True); calls = os.path.join(self.tmp, "calls")
+        stub = os.path.join(stubs, "run-mailcap")
+        with open(stub, "w") as fh: fh.write(f'#!/bin/sh\nprintf "%s\\n" "$@" >> "{calls}"\nexit 0\n')
+        os.chmod(stub, 0o755)
+        env = {"PATH": stubs + ":/usr/bin:/bin", "HOME": self.tmp}
+        r = subprocess.run(["/usr/bin/xdg-open"] + argv[1:], env=env, capture_output=True, text=True, timeout=20, stdin=subprocess.DEVNULL)
+        got = open(calls).read().splitlines() if os.path.exists(calls) else []
+        return r, got
+
+    def test_the_command_the_app_builds_is_accepted_and_reaches_the_handler_with_the_exact_path(self):
+        d = os.path.join(self.tmp, "active", "x y;rm -rf -n"); os.makedirs(d)
+        r, got = self.run_opener(server.open_argv(d))
+        self.assertEqual((r.returncode, r.stderr), (0, "")); self.assertEqual(got, ["--action=view", d])
+
+    def test_the_old_double_dash_form_is_what_the_installed_opener_refuses(self):
+        r, got = self.run_opener(["xdg-open", "--", self.tmp])
+        self.assertEqual(r.returncode, 1); self.assertIn("unexpected option '--'", r.stderr); self.assertEqual(got, [])
 
 
 class Restart(Fixture):

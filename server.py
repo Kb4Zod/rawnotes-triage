@@ -18,7 +18,7 @@ Decisions (all move real files, nothing is deleted; the words match the CLI and 
 Also: batch (one decision for many notes), merge (many notes -> one), restore (done/ -> Inbox),
 project status (mark shipped / push ship-by date), and undo of the last change made through this server.
 """
-import argparse, base64, contextlib, errno, json, os, re, shutil, subprocess, sys, threading, time, urllib.parse, datetime as dt
+import argparse, base64, contextlib, errno, json, os, re, shutil, subprocess, sys, tempfile, threading, time, urllib.parse, datetime as dt
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -27,7 +27,7 @@ import safefs
 from notemeta import (field, set_field, drop_field, title_of, append_outcome, question_of, question_summary, note_body,
                       eol_of, with_eol, to_lf, header_lines, title_index, HEAD_LINE)
 
-VERSION = "2.05"  # bump on every change; history in CHANGELOG.md
+VERSION = "2.06"  # bump on every change; history in CHANGELOG.md
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOG_PATH = os.path.join(HERE, "triage.log")
 FONT_RE = re.compile(r"^/static/fonts/[A-Za-z0-9-]+\.woff2$")
@@ -687,10 +687,20 @@ def _push_undo(entry):
 
 def _changed(path): return f"Can't undo: {os.path.basename(path)} changed since. Fix it by hand."
 
+def _recheck_contained(op):
+    """Every path a recorded step touches must still be a real path inside the notes/projects folders, now: a folder
+    renamed away and replaced by a symlink (or the file itself swapped for one) since the step ran makes undo,
+    rollback and redo refuse rather than write through the link. Raises ValueError, changing nothing."""
+    for p in ((op[1], op[2]) if op[0] == "move" else (op[1],)):
+        try: _stored(p)
+        except ValueError as e: raise ValueError(f"Can't undo: {e}. Nothing was changed; fix {os.path.basename(p)} by hand.") from e
+
 def _plan_inverse(ops, vfs=None):
     """Dry run of reversing `ops` newest first, against the files as they are now: raises ValueError (changing
-    nothing) if any file a step touched has been edited, moved or added to since."""
+    nothing) if any file a step touched has been edited, moved or added to since, or no longer lies safely inside the
+    notes and projects folders."""
     vfs = {} if vfs is None else vfs
+    for op in ops: _recheck_contained(op)
     def cur(p):
         if p in vfs: return vfs[p]
         if os.path.isfile(p):
@@ -713,6 +723,7 @@ def _plan_inverse(ops, vfs=None):
     return vfs
 
 def _apply_inverse(op):
+    _recheck_contained(op)
     if op[0] == "write":
         if op[2] is None: os.remove(op[1])
         else: safefs.atomic_write(op[1], op[2], op[4])
@@ -720,6 +731,7 @@ def _apply_inverse(op):
     elif op[0] == "mkdir": os.rmdir(op[1])
 
 def _apply_forward(op):
+    _recheck_contained(op)
     if op[0] == "write": safefs.atomic_write(op[1], op[3], op[4])
     elif op[0] == "move": os.rename(op[1], op[2])
     elif op[0] == "mkdir": os.mkdir(op[1])
@@ -765,7 +777,7 @@ def undo():
             stuck = []
             for op in reversed(taken):  # oldest-reversed last: redo in the original order
                 try: _apply_forward(op)
-                except OSError: stuck.append(op)
+                except (OSError, ValueError): stuck.append(op)
             if stuck:
                 entry["ops"] = [o for o in ops if not any(o is s for s in stuck)]
                 if not entry["ops"]: _undo.pop()
@@ -1068,9 +1080,23 @@ def open_target(req):
     path, _ = project_dir(req.get("name"), req.get("kind"))
     return safefs.ensure_inside([PROJECTS], path)
 
+def open_argv(path):
+    """The opener's command line. `path` is already validated and absolute, so it starts with `/` and can never be read as an
+    option. No `--`: the installed xdg-open rejects it as an unexpected option and opens nothing."""
+    if not os.path.isabs(path): raise ValueError("only an absolute path can be opened")
+    return ["xdg-open", path]
+
 def open_path(path):
-    """Hand a validated path to the desktop's opener. No shell, no options: `--` ends them, the path is absolute."""
-    subprocess.Popen(["xdg-open", "--", path], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    """Hand a validated path to the desktop's opener. No shell, one absolute operand. If the opener fails at once
+    (it can't parse its arguments, or finds no handler) that is reported instead of swallowed; one that keeps
+    running (it launched something) is left alone."""
+    with tempfile.TemporaryFile() as err:
+        proc = subprocess.Popen(open_argv(path), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=err, start_new_session=True)
+        try: code = proc.wait(timeout=1.5)
+        except subprocess.TimeoutExpired: return
+        if code:
+            err.seek(0); why = err.read(300).decode("utf-8", "replace").strip()
+            raise OSError(f"it exited with status {code}" + (f": {why}" if why else ""))
 
 def note_view(rel):
     """A note for the reader: the raw text, the whole question, and the body without what the page shows itself."""
