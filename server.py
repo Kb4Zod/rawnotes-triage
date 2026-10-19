@@ -127,7 +127,9 @@ def inflight():
                 try: text = open(p, encoding="utf-8", errors="replace").read(4000)
                 except OSError: continue
                 due = field(text, "due")
-                open_ended = not due and dest == "experiments" and bool(field(text, "promoted"))  # promoted, no ship-by
+                # promoted with no ship-by: one per experiment (its NOTES.md, or a flat file), not every note it holds
+                open_ended = (not due and dest == "experiments" and bool(field(text, "promoted"))
+                              and (f == "NOTES.md" or root == d))
                 if not due and not open_ended: continue
                 try: left = (dt.date.fromisoformat(due) - today()).days if due else None
                 except ValueError: left = None
@@ -644,9 +646,7 @@ def _act(req, tx):
 
     if action in ("promote", "reference"):
         dest = "reference" if action == "reference" else req.get("dest")
-        if action == "promote" and dest not in DESTS: raise ValueError("bad destination")
-        if action == "promote" and done_placeholder(note): raise ValueError("Say what done means first.")
-        due = ship_by(req) if action == "promote" and dest != "experiments" else None  # experiments are open-ended
+        due = check_promote(req) if action == "promote" else None
         slug = re.sub(r"[^a-z0-9-]", "", (req.get("slug") or slug_of(fname)).lower()) or slug_of(fname)
         dest_dir = os.path.join(PROJECTS, dest)
         os.makedirs(dest_dir, exist_ok=True)
@@ -660,6 +660,7 @@ def _act(req, tx):
         if action == "reference": copy = reference_copy(copy, fname, note)
         if action == "promote":
             if due: copy = set_field(copy, "due", due)
+            else: copy = re.sub(r"^- due:.*(?:\n|$)", "", copy, flags=re.M)  # open-ended: drop any old ship-by
             copy = copy.rstrip("\n") + (
                 f"\n\n## Plan\n\n- promoted from RawNotes on {t}, " + (f"due {due}\n" if due else "open-ended experiment (no ship-by date)\n") +
                 f"- definition of done: {note}\n"
@@ -676,6 +677,13 @@ def _act(req, tx):
         return {"ok": True, "msg": f"{verb} “{title}” → {rel}", "target": rel, "label": f"{action} “{title}”"}
 
     raise ValueError("unknown action")
+
+def check_promote(req):
+    """Validate a promotion before anything is written. Returns the ship-by date, or None for an experiment."""
+    dest = req.get("dest")
+    if dest not in DESTS: raise ValueError("bad destination")
+    if done_placeholder((req.get("note") or "").strip()): raise ValueError("Say what done means first.")
+    return None if dest == "experiments" else ship_by(req)  # experiments are open-ended
 
 def ship_by(req):
     """The ship-by date for a promotion: an exact date (`due`) if given, else today + `due_days`."""
@@ -717,6 +725,7 @@ def merge(req):
     srcs = [safe_note(f) for f in files]
     if any(os.path.dirname(p) != os.path.realpath(NOTES) for p in srcs): raise ValueError("only Inbox notes can be merged")
     srcs.sort(key=os.path.basename, reverse=True)
+    if then == "promote": check_promote(req)  # fail before the merge writes anything
     t = today().isoformat()
     with _write_lock:
         tx = Tx(f"merge {len(srcs)} notes")
@@ -765,7 +774,8 @@ def restore(req):
         return {"ok": True, "msg": f"Restored “{title}” to the Inbox", "file": os.path.basename(dst)}
 
 def project_status(req):
-    """On a promoted project file (one with a due: line): mark it shipped, push the ship-by date, or kill it.
+    """On a promoted project file (a due: line, or an open-ended experiment): mark it shipped, push the ship-by
+    date (not on open-ended experiments), or kill it.
     A project folder with no promoted file ({name, kind} instead of path) can be shipped or killed through its NOTES.md."""
     with _write_lock:
         if not req.get("path"): return folder_project_status(req)
@@ -779,6 +789,7 @@ def project_status(req):
         if action == "shipped":
             text = set_field(set_field(text, "status", "shipped"), "shipped", t); label = f"ship {name}"; msg = f"Shipped {name} 🎉"
         elif action == "extend":
+            if not field(text, "due"): raise ValueError("open-ended experiments have no ship-by date to push")
             try: days = int(req.get("days") or 7)
             except ValueError: raise ValueError("days must be a number")
             if not 1 <= days <= 90: raise ValueError("days must be 1 to 90")

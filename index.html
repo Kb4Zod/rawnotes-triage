@@ -303,7 +303,7 @@ button.tile{cursor:pointer;font:inherit;color:inherit}
   .decide .q h3{font-size:19px}.decide .q .kh{display:none}
   .opts{grid-template-columns:1fr 1fr}.opt{min-height:60px}.opt .k{display:none}
   .form{grid-template-columns:1fr;padding:14px}.preview{display:none}.two{grid-template-columns:1fr}
-  .input{font-size:16px;min-height:44px}.seg button,.chip{min-height:44px}.chip{gap:4px;padding:8px 2px;font-size:12.5px}.btn{min-height:44px}
+  .input{font-size:16px;min-height:44px}.seg button,.chip{min-height:44px}.chip{flex-direction:column;gap:0;padding:4px 2px;font-size:12px;line-height:1.2}.btn{min-height:44px}
   .formfoot .hint{display:none}
   .doc{padding:20px 18px}.doc h1.title{font-size:32px}
   .scroll{height:auto;overflow:visible;padding:0 14px 30px}
@@ -445,7 +445,8 @@ function renderRail(){
 function toggleTheme(){const d=document.documentElement.classList.toggle('dark');localStorage.setItem('theme',d?'dark':'light');renderRail();if(S.route==='pulse')render()}
 
 /* ---------- Inbox model ---------- */
-const stuck=n=>!['open','cooking','?'].includes(n.status);  // e.g. status: promoted but still in RawNotes/
+const DECIDED=['promoted','dead','killed','merged','shipped','done','reference'];
+const stuck=n=>DECIDED.includes((n.status||'').toLowerCase());  // e.g. status: promoted but still in RawNotes/
 function passes(n){const f=S.f;
   if(f.status==='stuck'&&!stuck(n))return false;
   if(f.status==='open'&&n.status!=='open')return false;
@@ -523,8 +524,9 @@ function wireSegs(root,onChange){root.querySelectorAll('[data-seg]').forEach(s=>
 function shipBy(days){const min=addDays(1),max=addDays(365);
   return `<div class="field" id="shipby"><span class="label">Ship by</span><div class="shipby">${seg('due',days.map(d=>[d,d+'d']),'7')}<input type="date" class="input" id="dueDate" min="${min}" max="${max}" aria-label="Exact ship-by date"></div></div>`}
 function wireShipBy(root,onChange){const dd=root.querySelector('#dueDate');if(!dd)return;
-  dd.oninput=()=>{dd.classList.toggle('on',!!dd.value);root.querySelectorAll('[data-seg="due"] button').forEach(b=>b.classList.toggle('on',!dd.value&&b.dataset.v==='7'));onChange&&onChange()};
-  root.querySelectorAll('[data-seg="due"] button').forEach(b=>b.addEventListener('click',()=>{dd.value='';dd.classList.remove('on');onChange&&onChange()}))}
+  const days=[...root.querySelectorAll('[data-seg="due"] button')];let last=segVal('due')||'7';
+  dd.oninput=()=>{dd.classList.toggle('on',!!dd.value);days.forEach(b=>b.classList.toggle('on',!dd.value&&b.dataset.v===last));onChange&&onChange()};
+  days.forEach(b=>b.addEventListener('click',()=>{last=b.dataset.v;dd.value='';dd.classList.remove('on');onChange&&onChange()}))}
 const shipDate=()=>{const dd=$('#dueDate');return dd&&dd.value?dd.value:addDays(+segVal('due')||7)};
 const shipBody=dest=>{if(dest==='experiments')return{};const dd=$('#dueDate');return dd&&dd.value?{due:dd.value}:{due_days:segVal('due')}};
 function syncShipBy(dest){const sb=$('#shipby');if(sb)sb.style.display=dest==='experiments'?'none':'';
@@ -612,9 +614,9 @@ function renderBatch(){const k=S.sel.slice(6),stk=inboxModel().stacks[k];const r
    <form class="form ${S.batchMode==='merge'?'promote':S.batchMode}" id="form">${batchForm(stk)}</form></div>
    <div class="card doc" style="padding:22px 28px"><h3 style="margin:0 0 6px;font-size:22px">Selected notes</h3><table class="btable" id="btable"></table></div>`;
   $$('[data-bm]').forEach(b=>b.onclick=()=>{S.batchMode=b.dataset.bm;renderBatch()});
-  const f=$('#form'),sync=()=>{if(S.batchMode==='merge'){$('#promoteBits').style.display=segVal('then')==='promote'?'':'none';syncShipBy(segVal('dest'));batchPreview()}};wireSegs(f,sync);wireShipBy(f,sync);
+  const f=$('#form'),sync=()=>{if(S.batchMode==='merge'){$('#promoteBits').style.display=segVal('then')==='promote'?'':'none';syncShipBy(segVal('dest'));batchPreview()}};wireSegs(f,sync);
   f.onsubmit=e=>{e.preventDefault();apply()};$('#cancel').onclick=()=>{S.sel=stk.members[0].file;S.expanded=k;renderInboxList();renderReader()};
-  f.querySelectorAll('input,textarea').forEach(i=>i.oninput=batchPreview);
+  f.querySelectorAll('input,textarea').forEach(i=>i.oninput=batchPreview);wireShipBy(f,sync);  // after: it owns #dueDate's oninput
   renderBatchSummary()}
 function batchForm(stk){const m=S.batchMode;
   const foot=(btn,cls)=>`<div class="formfoot"><button type="submit" class="btn ${cls}" id="go">${btn} ${kb('↵')}</button><button type="button" class="btn ghost" id="cancel">Cancel</button><span class="err" id="ferr"></span><span class="hint" id="bleft"></span></div>`;

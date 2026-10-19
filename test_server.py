@@ -654,6 +654,29 @@ class DecisionTestCase(unittest.TestCase):
                                  "dest": "experiments", "note": "Playtested.", "slug": "bomb"})
         self.assertNotIn("- due:", open(os.path.join(self.tmp, "experiments", "bomb", "NOTES.md")).read())
 
+    def test_merge_with_a_bad_ship_by_changes_nothing(self):
+        self.note("2026-10-01-bomb-a.md", "Bomb A"); self.note("2026-10-02-bomb-b.md", "Bomb B")
+        before = self.snapshot()
+        for bad in ({"dest": "active", "note": "x", "due": "2026-13-01"}, {"dest": "active", "note": ""}, {"dest": "nowhere", "note": "x"}):
+            self.post("/api/merge", {"files": ["2026-10-01-bomb-a.md", "2026-10-02-bomb-b.md"], "title": "Bomb", "then": "promote", **bad}, ok=False)
+            self.assertEqual(self.snapshot(), before)
+
+    def test_experiment_drops_an_old_due_line_and_cannot_be_extended(self):
+        path = self.note("2026-10-01-spike.md")
+        with open(path) as fh: text = fh.read()
+        with open(path, "w") as fh: fh.write(text.replace("- type: research", "- type: research\n- due: 2026-10-05"))
+        self.post("/api/action", {"file": "2026-10-01-spike.md", "action": "promote", "dest": "experiments", "note": "Known."})
+        self.assertNotIn("- due:", open(os.path.join(self.tmp, "experiments", "spike", "NOTES.md")).read())
+        [f] = self.get("/api/notes")["inflight"]
+        self.assertTrue(f["open_ended"])
+        self.assertIn("open-ended", self.post("/api/project/status", {"path": f["path"], "action": "extend"}, ok=False)["error"])
+
+    def test_one_card_per_experiment_folder(self):
+        d = os.path.join(self.tmp, "experiments", "spike"); os.makedirs(d)
+        for name in ("NOTES.md", "old-capture.md"):
+            with open(os.path.join(d, name), "w") as fh: fh.write("# Spike\n\n- promoted: 2026-10-01\n")
+        self.assertEqual([f["path"] for f in self.get("/api/notes")["inflight"]], ["experiments/spike/NOTES.md"])
+
     def test_page_is_the_one_loaded_at_startup(self):
         with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/") as r: page = r.read().decode()
         self.assertIn(f"const VERSION='{server.VERSION}'", page)

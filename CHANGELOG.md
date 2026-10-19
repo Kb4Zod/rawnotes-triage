@@ -35,6 +35,12 @@ Bug fixes after the 2.00 redesign.
 - **Pulse median wait:** true median (mean of the middle two for an even count), "Inbox is empty" instead of 0d,
   note count shown, and the load error if the server can't answer.
 - **Merge preview** shows the merged note's size and warns past 200 KB.
+- Review fixes (folded into 2.01 before merge): Merge → Promote checks destination, done means and ship-by before
+  writing anything (a bad date used to leave a half-done merge with no undo); the Merge form's date picker is no
+  longer overwritten by the form's input handler; promoting to Experiment drops any old `due:` line; the server
+  refuses +7 days on open-ended experiments; only an experiment's NOTES.md (or a flat file) makes a card, not
+  every note in its folder; Stuck only matches decided statuses (promoted, dead, merged, shipped…) in any case;
+  clearing the date goes back to the day count you picked; on a phone the filter counts sit under their labels.
 
 ## 2.00 — 2026-10-18
 Redesign: one look, one set of words, and the features that make triage faster. Proposal and mockups in
