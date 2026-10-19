@@ -18,19 +18,22 @@ Decisions (all move real files, nothing is deleted; the words match the CLI and 
 Also: batch (one decision for many notes), merge (many notes -> one), restore (done/ -> Inbox),
 project status (mark shipped / push ship-by date), and undo of the last change made through this server.
 """
-import argparse, base64, json, os, re, shutil, subprocess, threading, time, urllib.parse, datetime as dt
+import argparse, base64, contextlib, errno, json, os, re, shutil, subprocess, sys, threading, time, urllib.parse, datetime as dt
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
-VERSION = "2.04"  # bump on every change; history in CHANGELOG.md
+import safefs
+from notemeta import (field, set_field, drop_field, title_of, append_outcome, question_of, question_summary, note_body,
+                      eol_of, with_eol, to_lf, header_lines, title_index, HEAD_LINE)
+
+VERSION = "2.05"  # bump on every change; history in CHANGELOG.md
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOG_PATH = os.path.join(HERE, "triage.log")
 FONT_RE = re.compile(r"^/static/fonts/[A-Za-z0-9-]+\.woff2$")
 NOTES = os.path.expanduser("~/Projects/RawNotes")
 PROJECTS = None
 BIND_HOST = "127.0.0.1"  # set from --host; the Host/Origin guard depends on it
-_done_lock = threading.Lock()
 CLOSED = ("done", "shipped", "dead")  # a project file or folder with one of these statuses is finished
 STARTED = dt.datetime.now().isoformat(timespec="seconds")
 # the page is read once, so it always matches the API of the process serving it (restart to pick up edits)
@@ -47,47 +50,33 @@ DESTS = {  # promote targets: folder -> (layout)
 
 def today(): return dt.date.today()
 
-def field(text, key):
-    m = re.search(rf"^- {key}:\s*([^\s<]+)", text, re.M)
-    return m.group(1) if m else ""
+_lock = safefs.RWLock()  # every change holds the write side; page reads share the read side, so a listing never sees half a change
+_notes_cache = safefs.StatCache()  # a note's summary, until the file changes
+_meta_cache = safefs.StatCache()   # due/status/title of project files found by inflight()
+_proj_cache = safefs.StatCache()   # status and done-means of a project folder
 
-def set_field(text, key, value):
-    pat = re.compile(rf"^(- {key}:\s*)\S+(.*)$", re.M)
-    if pat.search(text):
-        return pat.sub(lambda m: f"{m.group(1)}{value}{m.group(2)}", text, count=1)
-    # insert after the first "- date:" line, or after the title
-    lines = text.split("\n")
-    for i, l in enumerate(lines):
-        if l.startswith("- date:"):
-            lines.insert(i + 1, f"- {key}: {value}"); return "\n".join(lines)
-    lines.insert(1, f"- {key}: {value}")
-    return "\n".join(lines)
+def read_note(path):
+    """(text, eol) of a note: undecodable bytes survive as surrogates, CRLF files come back with "\\n" and eol "\\r\\n"."""
+    with open(path, "rb") as fh: raw = fh.read().decode("utf-8", "surrogateescape")
+    return to_lf(raw), eol_of(raw)
 
-def title_of(text, fname):
-    m = re.search(r"^#\s+(.+)$", text, re.M)
-    return m.group(1).strip() if m else fname
+def _within(path, root): return path == root or path.startswith(root.rstrip(os.sep) + os.sep)
 
-def append_outcome(text, line):
-    if "## Outcome" in text:
-        return text.rstrip("\n") + f"\n{line}\n"
-    return text.rstrip("\n") + f"\n\n## Outcome\n\n{line}\n"
-
-def summarize(path, sub=""):
+def _summary_core(path, sub):
     fname = os.path.basename(path)
-    text = open(path, encoding="utf-8", errors="replace").read()
-    date = fname[:10]
-    try: age = (today() - dt.date.fromisoformat(date)).days
-    except ValueError: age = None
-    body = re.search(r"## What's the question.*?\n\n(.+?)(?:\n\n|\n## )", text, re.S)
+    with open(path, "rb") as fh: text = to_lf(fh.read().decode("utf-8", "replace"))
     return {
         "file": (sub + "/" if sub else "") + fname, "abs_path": path, "title": title_of(text, fname),
-        "date": date, "age": age, "status": field(text, "status") or "?",
-        "type": field(text, "type") or "?",
-        "stale": age is not None and age > STALE_DAYS and field(text, "status") in ("open", ""),
-        "question": (body.group(1).strip() if body else "")[:280],
-        "size": len(text),
+        "date": fname[:10], "status": field(text, "status") or "?", "type": field(text, "type") or "?",
+        "question": question_summary(text), "size": len(text),
         **(fate_of(text) if sub == "done" else {}),
     }
+
+def summarize(path, sub=""):
+    core = _notes_cache.get(("note", path), [path], lambda _: _summary_core(path, sub))
+    try: age = (today() - dt.date.fromisoformat(core["date"])).days
+    except ValueError: age = None
+    return {**core, "age": age, "stale": age is not None and age > STALE_DAYS and core["status"] in ("open", "?")}
 
 def fate_of(text):
     """How a note in done/ ended up: promoted / reference / killed / merged, and where it went."""
@@ -102,16 +91,34 @@ def fate_of(text):
     else: fate = status or "?"
     return {"fate": fate, "dest": dest}
 
-def list_notes():
-    live = sorted(f for f in os.listdir(NOTES) if NOTE_RE.match(f))
-    done_dir = os.path.join(NOTES, "done")
-    done = sorted(f for f in os.listdir(done_dir) if NOTE_RE.match(f)) if os.path.isdir(done_dir) else []
-    return {
-        "live": [summarize(os.path.join(NOTES, f)) for f in live],
-        "done": [summarize(os.path.join(done_dir, f), "done") for f in reversed(done)],
-        "inflight": inflight(),
-        "today": today().isoformat(), "notes_dir": NOTES,
-    }
+def _scan(d, sub):
+    """Summaries of the note files in `d`. A file that vanished or can't be read since the listing (edited or moved
+    by hand while we look) is skipped, not an error; a symlink pointing outside the notes folder is never read."""
+    try: names = sorted(f for f in os.listdir(d) if NOTE_RE.match(f))
+    except OSError: return []
+    root = os.path.realpath(NOTES); out = []
+    for f in names:
+        p = os.path.join(d, f)
+        try:
+            if os.path.islink(p) and not _within(os.path.realpath(p), root): continue
+            out.append(summarize(p, sub))
+        except OSError: continue
+    return out
+
+def scan_notes():
+    """Inbox and Archive summaries, read as one snapshot with respect to our own changes."""
+    with _lock.read():
+        return {"live": _scan(NOTES, ""), "done": _scan(os.path.join(NOTES, "done"), "done")[::-1]}
+
+def list_notes(with_inflight=True):
+    with _lock.read():
+        out = scan_notes()
+        return {**out, "inflight": inflight() if with_inflight else [], "today": today().isoformat(), "notes_dir": NOTES}
+
+def _meta_of(path, f):
+    """The part of a project file the board needs: kept until the file changes."""
+    with open(path, "rb") as fh: text = to_lf(fh.read(4000).decode("utf-8", "replace"))
+    return {"title": title_of(text, f), "due": field(text, "due"), "promoted": field(text, "promoted"), "status": field(text, "status") or "?"}
 
 def inflight():
     """Promoted notes with a due date (plus open-ended experiments), found in the sibling project folders."""
@@ -124,20 +131,20 @@ def inflight():
             for f in files:
                 if not f.endswith(".md"): continue
                 p = os.path.join(root, f)
-                try: text = open(p, encoding="utf-8", errors="replace").read(4000)
+                try: m = _meta_cache.get(("meta", p), [p], lambda _: _meta_of(p, f))
                 except OSError: continue
-                due = field(text, "due")
+                due = m["due"]
                 # promoted with no ship-by: one per experiment (its NOTES.md, or a flat file), not every note it holds
-                open_ended = (not due and dest == "experiments" and bool(field(text, "promoted"))
+                open_ended = (not due and dest == "experiments" and bool(m["promoted"])
                               and (f == "NOTES.md" or root == d))
                 if not due and not open_ended: continue
                 try: left = (dt.date.fromisoformat(due) - today()).days if due else None
                 except ValueError: left = None
                 rel = os.path.relpath(p, PROJECTS)
-                out.append({"path": rel, "title": title_of(text, f), "project": rel.split(os.sep)[1] if rel.count(os.sep) >= 2 else "",
-                            "dest": dest, "promoted": field(text, "promoted"), "due": due,
-                            "days_left": left, "open_ended": open_ended, "status": field(text, "status") or "?",
-                            "done": field(text, "status") in CLOSED})
+                out.append({"path": rel, "title": m["title"], "project": rel.split(os.sep)[1] if rel.count(os.sep) >= 2 else "",
+                            "dest": dest, "promoted": m["promoted"], "due": due,
+                            "days_left": left, "open_ended": open_ended, "status": m["status"],
+                            "done": m["status"] in CLOSED})
     out.sort(key=lambda x: (x["done"], x["days_left"] if x["days_left"] is not None else 999))
     return out
 
@@ -185,53 +192,47 @@ def definition_of_done(path):
     if not hit: return {"defined": False, "text": "", "source": None}
     return {"defined": hit["defined"], "text": hit["text"] if hit["defined"] else "", "source": hit["file"]}
 
-def set_done(name, text, expected, kind=None):
-    with _done_lock: return _set_done(name, text, expected, kind)
-
 def _read_lines(target):
     """(lines, eol): the file split on its own line ending, undecodable bytes kept as surrogates."""
     with open(target, encoding="utf-8", errors="surrogateescape", newline="") as fh: raw = fh.read()
     eol = "\r\n" if "\r\n" in raw else "\n"
     return raw.split(eol), eol
 
-def _set_done(name, text, expected, kind=None):
-    """Write a project's definition of done in place (or into NOTES.md's Plan if it has none).
+def set_done(name, text, expected, kind=None):
+    """Write a project's definition of done in place (or into NOTES.md's Plan if it has none), as one undoable change.
     `expected` is the text the user was looking at; if the file moved on since, refuse rather than overwrite."""
-    path, kind = project_dir(name, kind)
+    path, kind = project_dir(name, kind, write=True)
     text = re.sub(r"\s+", " ", text or "").strip()
     if done_placeholder(text): raise ValueError("Write what done looks like first.")
     if len(text) > DONE_MAX: raise ValueError(f"Keep it under {DONE_MAX} characters.")
-    hit = find_done(path)
-    now = hit["text"] if hit and hit["defined"] else ""
-    if re.sub(r"\s+", " ", expected or "").strip() != now:
-        raise ValueError("This definition changed on disk since you opened it. Refresh and try again.")
-    eol = "\n"
-    if hit:
-        target = os.path.join(path, hit["file"]); lines, eol = _read_lines(target)
-        if hit["kind"] == "line":
-            prefix = hit["prefix"] if hit["prefix"].rstrip().endswith(":") or hit["prefix"].rstrip().endswith(":**") else hit["prefix"].rstrip() + ": "
-            lines[hit["start"]:hit["end"]] = [prefix + text]
+    with mutation(f"done means for {name}") as tx:
+        hit = find_done(path)  # read under the write lock: a concurrent status edit can't be lost
+        now = hit["text"] if hit and hit["defined"] else ""
+        if re.sub(r"\s+", " ", expected or "").strip() != now:
+            raise ValueError("This definition changed on disk since you opened it. Refresh and try again.")
+        eol = "\n"
+        if hit:
+            target = os.path.join(path, hit["file"]); lines, eol = _read_lines(target)
+            if hit["kind"] == "line":
+                prefix = hit["prefix"] if hit["prefix"].rstrip().endswith(":") or hit["prefix"].rstrip().endswith(":**") else hit["prefix"].rstrip() + ": "
+                lines[hit["start"]:hit["end"]] = [prefix + text]
+            else:
+                tail = [""] if hit["end"] < len(lines) and lines[hit["end"]].strip() else []
+                lines[hit["start"] + 1:hit["end"]] = ["", text] + tail
         else:
-            tail = [""] if hit["end"] < len(lines) and lines[hit["end"]].strip() else []
-            lines[hit["start"] + 1:hit["end"]] = ["", text] + tail
-    else:
-        target = notes_file(path)
-        item = "- definition of done: " + text
-        if os.path.exists(target):
-            lines, eol = _read_lines(target)
-            plan = next((i for i, l in enumerate(lines) if re.match(r"^##\s+Plan\s*$", l)), None)
-            if plan is None:
-                while lines and not lines[-1].strip(): lines.pop()
-                lines += ["", "## Plan", "", item, ""]
-            else: lines.insert(plan + 2 if lines[plan + 1:plan + 2] == [""] else plan + 1, item)
-        else: lines = [f"# {name}", "", "## Plan", "", item, ""]
-    if os.path.realpath(target) != os.path.join(os.path.realpath(path), os.path.basename(os.path.realpath(target))):
-        raise ValueError("refusing to write outside the project folder")
-    tmp = target + ".triage-tmp"
-    with open(tmp, "w", encoding="utf-8", errors="surrogateescape", newline="") as fh: fh.write(eol.join(lines))
-    if os.path.exists(target): shutil.copymode(target, tmp)
-    os.replace(tmp, target)
-    log(f"done {kind}/{name} -> {os.path.basename(target)}: {text[:80]}")
+            target = notes_file(path)
+            item = "- definition of done: " + text
+            if os.path.exists(target):
+                lines, eol = _read_lines(target)
+                plan = next((i for i, l in enumerate(lines) if re.match(r"^##\s+Plan\s*$", l)), None)
+                if plan is None:
+                    while lines and not lines[-1].strip(): lines.pop()
+                    lines += ["", "## Plan", "", item, ""]
+                else: lines.insert(plan + 2 if lines[plan + 1:plan + 2] == [""] else plan + 1, item)
+            else: lines = [f"# {name}", "", "## Plan", "", item, ""]
+        tx.write(target, eol.join(lines))
+        tx.select = None
+    _log(f"done {kind}/{name} -> {os.path.basename(target)}: {text[:80]}")
     return {"ok": True, "file": os.path.basename(target), "msg": f"Saved to {os.path.basename(target)}"}
 
 PROJECT_KINDS = ("active", "experiments")  # folders whose subfolders are projects on the board
@@ -241,32 +242,51 @@ def notes_file(path):
     names = {f.lower(): f for f in os.listdir(path)}
     return os.path.join(path, names.get("notes.md", "NOTES.md"))
 
+def project_facts(path):
+    """(status in its NOTES.md, whether done means is defined) for a project folder, kept until those files change."""
+    try: names = os.listdir(path)
+    except OSError: return "", False
+    files = sorted(os.path.join(path, n) for n in names if n.lower() in DONE_FILES or n.lower() == "notes.md")
+    def build(_):
+        status = ""
+        try:
+            with open(notes_file(path), "rb") as fh: status = field(to_lf(fh.read(4000).decode("utf-8", "replace")), "status")
+        except OSError: pass
+        return status, definition_of_done(path)["defined"]
+    return _proj_cache.get(("proj", path), files, build)
+
 def folder_status(path):
     """The `- status:` line in the project's NOTES.md, if it has one."""
-    try:
-        with open(notes_file(path), encoding="utf-8", errors="replace") as fh: return field(fh.read(4000), "status")
-    except OSError: return ""
+    return project_facts(path)[0]
 
 def project_folders():
-    """Every project folder under ../active and ../experiments; `kind` says which (experiments are labelled on the board)."""
+    """Every project folder under ../active and ../experiments; `kind` says which (experiments are labelled on the board).
+    A symlinked folder is listed (read-only: `linked`) but Triage never writes into it."""
     out = []
     for kind in PROJECT_KINDS:
         base = os.path.join(PROJECTS, kind)
         if not os.path.isdir(base): continue
-        out += [{"name": name, "kind": kind, "path": f"{kind}/{name}", "abs_path": os.path.join(base, name),
-                 "repo": os.path.exists(os.path.join(base, name, ".git")),
-                 "status": folder_status(os.path.join(base, name)),
-                 "done_defined": definition_of_done(os.path.join(base, name))["defined"]}
-                for name in sorted(os.listdir(base), key=str.casefold)
-                if not name.startswith(".") and os.path.isdir(os.path.join(base, name))]
+        for name in sorted(os.listdir(base), key=str.casefold):
+            full = os.path.join(base, name)
+            if name.startswith(".") or not os.path.isdir(full): continue
+            status, defined = project_facts(full)
+            out.append({"name": name, "kind": kind, "path": f"{kind}/{name}", "abs_path": full,
+                        "repo": os.path.exists(os.path.join(full, ".git")), "status": status, "done_defined": defined,
+                        "linked": os.path.islink(full) or os.path.islink(base)})
     return out
 
-def project_dir(name, kind=None):
-    """(absolute folder, kind) of a project on the board; kind defaults to active. Anything else is refused."""
+def project_dir(name, kind=None, write=False):
+    """(absolute folder, kind) of a project on the board; kind defaults to active. Anything else is refused.
+    write=True is for callers that are about to change something: a symlinked project (or a symlinked
+    active/ or experiments/ folder above it) is refused, so no write can leave the projects folder."""
     kind = kind or "active"
-    if kind not in PROJECT_KINDS or not name or name.startswith(".") or "/" in name or os.sep in name: raise ValueError("unknown project")
+    if kind not in PROJECT_KINDS or not isinstance(name, str) or not name or name.startswith(".") or "/" in name or os.sep in name or "\0" in name:
+        raise ValueError("unknown project")
     path = os.path.join(PROJECTS, kind, name)
     if not os.path.isdir(path): raise ValueError("unknown project")
+    if write:
+        try: safefs.ensure_inside([PROJECTS], path)
+        except ValueError: raise ValueError(f"“{name}” is a symlink: Triage only changes real folders inside Projects.")
     return path, kind
 
 GITHUB_REMOTE = re.compile(r"(?:https://(?:www\.)?github\.com/|git@(?:ssh\.)?github\.com:|ssh://git@(?:ssh\.)?github\.com(?::\d+)?/)([\w.-]+/[\w.-]+?)(?:\.git)?/?")
@@ -283,19 +303,39 @@ def git_out(path, args, timeout=5):
         return proc.stdout.strip() if proc.returncode == 0 else None
     except (OSError, subprocess.TimeoutExpired): return None
 
-def github_state(path):
+GIT_TTL = 20  # seconds a project's git facts are reused; Refresh on the Projects page asks for fresh ones
+_git_cache = {}  # path -> (fingerprint, taken, state)
+_git_lock = threading.Lock()
+_git_pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="git")  # shared and bounded: a listing never spawns its own pool
+
+def _git_fingerprint(path):
+    """Cheap stat of the files git rewrites when a repo gains a commit, a remote or a remote-tracking ref."""
+    git = os.path.join(path, ".git"); out = []
+    for rel in ("", "HEAD", "config", "packed-refs", "refs/heads", "refs/remotes/origin", "logs/HEAD"):
+        try: st = os.stat(os.path.join(git, rel)); out.append((st.st_mtime_ns, st.st_size))
+        except OSError: out.append(None)
+    return tuple(out)
+
+def github_state(path, fresh=False):
     """Is this project on GitHub? git: has a repo; repo: 'owner/name' of a GitHub origin; pushed: that remote has
-    received something (a remote-tracking ref exists); unpushed: commits on this checkout that no origin ref contains."""
+    received something (a remote-tracking ref exists); unpushed: commits on this checkout that no origin ref contains.
+    Cached for GIT_TTL seconds (and until the repo's own files change): three git processes per project add up."""
     if not os.path.exists(os.path.join(path, ".git")): return {"git": False, "repo": "", "pushed": False, "unpushed": 0}
+    fp = _git_fingerprint(path)
+    with _git_lock: hit = _git_cache.get(path)
+    if hit and not fresh and hit[0] == fp and time.time() - hit[1] < GIT_TTL: return dict(hit[2])
     repo = github_repo_of(git_out(path, ["remote", "get-url", "origin"]))
     pushed = bool(repo and git_out(path, ["for-each-ref", "--count=1", "refs/remotes/origin"]))
     ahead = git_out(path, ["rev-list", "--count", "HEAD", "--not", "--remotes=origin"]) if pushed else None
-    return {"git": True, "repo": repo, "pushed": pushed, "unpushed": int(ahead) if ahead and ahead.isdigit() else 0}
+    state = {"git": True, "repo": repo, "pushed": pushed, "unpushed": int(ahead) if ahead and ahead.isdigit() else 0}
+    with _git_lock:
+        if len(_git_cache) > 500: _git_cache.clear()
+        _git_cache[path] = (fp, time.time(), state)
+    return dict(state)
 
-def projects_listing():
+def projects_listing(fresh=False):
     projects = project_folders()
-    with ThreadPoolExecutor(max_workers=8) as pool:  # one slow repo must not hold up the list
-        for p, state in zip(projects, pool.map(lambda p: github_state(p["abs_path"]), projects)): p["gh"] = state
+    for p, state in zip(projects, _git_pool.map(lambda p: github_state(p["abs_path"], fresh), projects)): p["gh"] = state
     return projects
 
 def project_detail(name, kind=None):
@@ -303,7 +343,7 @@ def project_detail(name, kind=None):
     result = {"name": name, "kind": kind, "path": f"{kind}/{name}", "abs_path": path, "summary": "No README or project notes yet.",
               "summary_source": None, "commits": [], "features": [], "prs": [],
               "pr_status": "No Git repository in this project.", "branch": "", "remote": "", "repo": "", "gh": {"git": False, "repo": "", "pushed": False, "unpushed": 0},
-              "done": definition_of_done(path)}
+              "linked": os.path.islink(path), "done": definition_of_done(path)}
     files = {f.lower(): f for f in sorted(os.listdir(path))}
     for candidate in ("readme.md", "readme.rst", "readme.txt", "readme", "notes.md"):
         if candidate not in files: continue
@@ -347,13 +387,16 @@ def project_detail(name, kind=None):
             except ValueError: pass
     return result
 
-# The graph is built from commits that reached GitHub (default branch of repos you own or collaborate on),
-# not from GitHub's profile calendar: that calendar hides private repos unless a profile setting is on.
-REPOS_QUERY = """{ viewer { id login repositories(first: 100, ownerAffiliations: [OWNER, COLLABORATOR], orderBy: {field: PUSHED_AT, direction: DESC}) {
-  nodes { id nameWithOwner isPrivate url pushedAt } } } }"""
+# The graph is built from commits on the default branch of repos you own or collaborate on (by commit date),
+# not from GitHub's profile calendar (which hides private repos unless a profile setting is on) and not from
+# push events: a commit counts on the day it was committed, however late it was pushed.
+REPOS_QUERY = """{ viewer { id login repositories(first: 100__AFTER__, ownerAffiliations: [OWNER, COLLABORATOR], orderBy: {field: PUSHED_AT, direction: DESC}) {
+  pageInfo { hasNextPage endCursor } nodes { id nameWithOwner isPrivate url pushedAt } } } }"""
+REPO_PAGES = 10  # x100 repos; beyond that the graph says so instead of silently stopping
+HISTORY_PAGES = 20  # x100 commits per repo for the year; beyond that the repo is named as truncated
 HISTORY_FIELDS = "id defaultBranchRef { target { ... on Commit { history(first: 100, since: %s, author: {id: %s}%s) { pageInfo { hasNextPage endCursor } nodes { committedDate } } } } }"
-_activity = {"at": 0.0, "data": None}
-_activity_lock = threading.Lock()
+_activity = {"at": 0.0, "data": None, "busy": None, "last": None}
+_activity_lock = threading.Lock()  # guards the dict only: never held while waiting for GitHub
 
 def _gh(args, timeout=25):
     """Run the gh CLI (your existing sign-in) and return stdout. Read-only use: callers only issue GETs and queries."""
@@ -373,10 +416,11 @@ def gh_graphql(query):
     try: return json.loads(_gh(["api", "graphql", "-f", "query=" + query]))["data"]
     except (ValueError, KeyError): raise RuntimeError("unexpected answer from GitHub")
 
-def commit_days(repo_ids, uid, since, max_pages=20):
-    """{repo id: [local dates of your commits since `since`]} for each repo's default branch."""
+def commit_days(repo_ids, uid, since, max_pages=None, truncated=None):
+    """{repo id: [local dates of your commits since `since`]} for each repo's default branch.
+    Repos still having more history after `max_pages` pages are added to `truncated` (a set), not silently cut."""
     out = {i: [] for i in repo_ids}; pending = {i: "" for i in repo_ids}
-    for _ in range(max_pages):
+    for _ in range(max_pages or HISTORY_PAGES):
         if not pending: break
         nodes = "".join(f"r{n}: node(id: {json.dumps(i)}) {{ ... on Repository {{ {HISTORY_FIELDS % (json.dumps(since), json.dumps(uid), ', after: ' + json.dumps(c) if c else '')} }} }} "
                         for n, (i, c) in enumerate(pending.items()))
@@ -387,6 +431,7 @@ def commit_days(repo_ids, uid, since, max_pages=20):
             for c in hist.get("nodes", []):
                 out[i].append(dt.datetime.fromisoformat(c["committedDate"].replace("Z", "+00:00")).astimezone().date())
             if hist.get("pageInfo", {}).get("hasNextPage"): pending[i] = hist["pageInfo"]["endCursor"]
+    if truncated is not None: truncated.update(pending)
     return out
 
 def current_streak(days):
@@ -399,8 +444,9 @@ def current_streak(days):
         n += 1
     return n
 
-def build_activity(login, repos, by_repo, today_):
-    """Calendar weeks (Sunday first, 53 of them like GitHub) plus last-30-day repo counts from commit dates."""
+def build_activity(login, repos, by_repo, today_, truncated=None):
+    """Calendar weeks (Sunday first, 53 of them like GitHub) plus last-30-day repo counts from commit dates.
+    `truncated`: {"repos": bool, "history": [repo names]} when GitHub had more than we asked for."""
     start = today_ - dt.timedelta(days=(today_.weekday() + 1) % 7 + 52 * 7)
     per_day = {}; recent = {}; cutoff = today_ - dt.timedelta(days=ACTIVITY_REPO_DAYS)
     for r in repos:
@@ -415,30 +461,59 @@ def build_activity(login, repos, by_repo, today_):
     flat = [d for w in weeks for d in w]
     chips = sorted(({"name": r["nameWithOwner"], "url": r["url"], "private": r["isPrivate"], "count": recent[r["id"]]}
                     for r in repos if r["id"] in recent), key=lambda r: -r["count"])
+    truncated = truncated or {"repos": False, "history": []}
+    notice = []
+    if truncated["repos"]: notice.append(f"Only the {REPO_PAGES * 100} most recently pushed repositories were checked.")
+    if truncated["history"]: notice.append("Commit history was cut short for " + ", ".join(truncated["history"][:5])
+                                           + (f" and {len(truncated['history']) - 5} more" if len(truncated["history"]) > 5 else "") + ".")
     return {"login": login, "total": sum(per_day.values()), "weeks": weeks,
             "active_days": sum(1 for d in flat if d["count"]), "streak": current_streak(flat),
-            "repos": chips, "repo_days": ACTIVITY_REPO_DAYS,
+            "repos": chips, "repo_days": ACTIVITY_REPO_DAYS, "basis": "commits on the default branch, by commit date",
+            "truncated": truncated, "notice": " ".join(notice),
             "fetched": dt.datetime.now().isoformat(timespec="seconds")}
 
 def fetch_activity():
-    v = gh_graphql(REPOS_QUERY)["viewer"]; today_ = today()
-    year_ago = (today_ - dt.timedelta(days=366)).isoformat()
-    repos = [r for r in v["repositories"]["nodes"] if r["pushedAt"][:10] >= year_ago]  # never pushed this year = no commits to count
+    today_ = today(); year_ago = (today_ - dt.timedelta(days=366)).isoformat()
+    repos, cursor, viewer, more = [], "", None, False
+    for _ in range(REPO_PAGES):
+        v = gh_graphql(REPOS_QUERY.replace("__AFTER__", f", after: {json.dumps(cursor)}" if cursor else ""))["viewer"]
+        viewer = viewer or v; page = v["repositories"]; info = page.get("pageInfo") or {}
+        repos += [r for r in page["nodes"] if r["pushedAt"][:10] >= year_ago]  # never pushed this year = no commits to count
+        # newest-pushed first: once a repo is older than a year, every later page is too
+        more = bool(info.get("hasNextPage")) and all(r["pushedAt"][:10] >= year_ago for r in page["nodes"][-1:])
+        cursor = info.get("endCursor") or ""
+        if not more or not cursor: break
     since = dt.datetime.combine(today_ - dt.timedelta(days=(today_.weekday() + 1) % 7 + 52 * 7), dt.time.min).astimezone().astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    return build_activity(v["login"], repos, commit_days([r["id"] for r in repos], v["id"], since) if repos else {}, today_)
+    cut = set()
+    by_repo = commit_days([r["id"] for r in repos], viewer["id"], since, truncated=cut) if repos else {}
+    names = {r["id"]: r["nameWithOwner"] for r in repos}
+    return build_activity(viewer["login"], repos, by_repo, today_,
+                          {"repos": bool(more), "history": sorted(names[i] for i in cut)})
 
 def github_activity(refresh=False):
-    """Your pushed-commit graph, cached. Failures come back as {'error': ...}
-    (with the last good data, marked stale, when there is some) so the page can still render."""
+    """Your commit graph, cached. Failures come back as {'error': ...} (with the last good data, marked stale,
+    when there is some) so the page can still render. One caller at a time talks to GitHub, and none of them
+    holds a lock while it waits: the others wait for that answer instead of asking again."""
     with _activity_lock:
         fresh = _activity["data"] and time.time() - _activity["at"] < ACTIVITY_TTL
         if fresh and not refresh: return _activity["data"]
-        try:
-            _activity["data"] = fetch_activity(); _activity["at"] = time.time()
-            return _activity["data"]
-        except RuntimeError as e:
-            if _activity["data"]: return {**_activity["data"], "stale": True, "error": str(e)}
-            return {"error": str(e)}
+        busy = _activity.get("busy")
+        if busy is None: _activity["busy"] = mine = threading.Event()
+    if busy is not None:  # someone else is already asking GitHub
+        busy.wait(60)
+        with _activity_lock: return _activity.get("last") or {"error": "GitHub took too long to answer"}
+    try:
+        data = fetch_activity()
+        with _activity_lock: _activity.update(data=data, at=time.time(), last=data)
+        return data
+    except RuntimeError as e:
+        with _activity_lock:
+            out = {**_activity["data"], "stale": True, "error": str(e)} if _activity["data"] else {"error": str(e)}
+            _activity["last"] = out
+        return out
+    finally:
+        with _activity_lock: _activity["busy"] = None
+        mine.set()
 
 # ---- read-only repo viewer: lets a private repo be reviewed inside the page, through gh, with no browser login ----
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -520,22 +595,33 @@ def repo_path(name, path):
 
 def reference_copy(text, fname, why=""):
     """Turn the '- key: value' header into YAML frontmatter, so Obsidian shows it as Properties."""
-    lines = text.split("\n"); meta = {}; i = 1
-    while i < len(lines) and (not lines[i].strip() or re.match(r"^- (date|status|type|promoted|due):", lines[i])):
-        m = re.match(r"^- (\w+):\s*([^\s<]+)", lines[i])
-        if m: meta[m.group(1)] = m.group(2)
-        i += 1
+    lines = text.split("\n"); head = header_lines(lines); meta = {}
+    for i in head:
+        m = HEAD_LINE.match(lines[i])
+        if m.group(1) in ("date", "status", "type", "promoted", "due") and m.group(3).strip() and not m.group(3).startswith("<"):
+            meta[m.group(1)] = m.group(3).split()[0]
+    t = title_index(lines)
+    drop = {i for i in head if HEAD_LINE.match(lines[i]).group(1) in ("date", "status", "type", "promoted", "due")} | ({t} if t is not None else set())
+    rest = [l for i, l in enumerate(lines) if i not in drop]
+    while rest and not rest[0].strip(): rest.pop(0)
     fm = ["---", f"created: {meta.get('date', '')}", f"promoted: {meta.get('promoted', '')}",
           "status: promoted", f"type: {meta.get('type', 'research')}", f"source: RawNotes/done/{fname}"]
     if why: fm.append("why: " + json.dumps(why))
     fm += ["tags:", "  - reference", "---", ""]
-    return "\n".join(fm + [lines[0], ""] + lines[i:])
+    return "\n".join(fm + [lines[t] if t is not None else "# " + title_of(text, fname), ""] + rest)
 
-def safe_note(rel):
-    """Resolve a note path from the API and refuse anything outside NOTES."""
-    p = os.path.realpath(os.path.join(NOTES, rel))
-    if not p.startswith(os.path.realpath(NOTES) + os.sep) or not p.endswith(".md"):
-        raise ValueError("bad path")
+def safe_note(rel, write=False):
+    """Resolve a note path from the API and refuse anything outside NOTES.
+    Reading follows a symlink only to somewhere inside NOTES. write=True (a note about to be changed or moved)
+    refuses any symlink on the way, so a change can never land outside the notes folder."""
+    if not isinstance(rel, str) or not rel or "\0" in rel: raise ValueError("bad path")
+    root = os.path.normpath(NOTES); p = os.path.normpath(os.path.join(root, rel))
+    if write:
+        if not p.endswith(".md") or not p.startswith(root + os.sep): raise ValueError("bad path")
+        safefs.ensure_inside([NOTES], p)
+    else:
+        p = os.path.realpath(p)
+        if not p.startswith(os.path.realpath(NOTES) + os.sep) or not p.endswith(".md"): raise ValueError("bad path")
     if not os.path.isfile(p): raise ValueError("no such note")
     return p
 
@@ -543,146 +629,246 @@ def slug_of(fname): return re.sub(r"^\d{4}-\d{2}-\d{2}-", "", fname)[:-3]
 
 def unique(path):
     base, ext = os.path.splitext(path); n = 2
-    while os.path.exists(path):
+    while os.path.lexists(path):
         path = f"{base}-{n}{ext}"; n += 1
     return path
 
-# ---- every change goes through a Tx, so the last few can be undone ----
+# ---- every change goes through mutation(): applied step by step, rolled back if a step fails, undoable after ----
 UNDO_MAX = 20
 _undo = []  # newest last: {"label", "ops", "select"}
-_write_lock = threading.RLock()  # one change at a time
 MISSING = object()
+
+class MutationFailed(RuntimeError):
+    """A change failed part-way. The message says what state the files were left in."""
 
 def _read(path):
     with open(path, encoding="utf-8", errors="surrogateescape", newline="") as fh: return fh.read()
 
+def _stored(path): return safefs.ensure_inside([NOTES, PROJECTS], path)
+
 class Tx:
-    """Records each file change so undo() can reverse it (only if nothing touched those files since)."""
+    """One change to the files, applied step by step. Each step that succeeds is recorded, so the whole change can be
+    rolled back if a later step fails, or undone later. Every path must be a real (non-symlink) path inside the notes
+    folder or the projects root; a write replaces the file atomically and keeps its permissions."""
     def __init__(self, label=""): self.label, self.ops, self.select = label, [], None
-    def write(self, path, text):
-        before = _read(path) if os.path.exists(path) else None
-        with open(path, "w", encoding="utf-8", errors="surrogateescape", newline="") as fh: fh.write(text)
-        self.ops.append(("write", path, before, text))
+    def write(self, path, text, eol="\n"):
+        path = _stored(path)
+        try:
+            with open(path, "rb") as fh: before = fh.read()
+            mode = os.stat(path).st_mode & 0o7777
+        except FileNotFoundError: before = mode = None
+        data = with_eol(text, eol).encode("utf-8", "surrogateescape")
+        safefs.atomic_write(path, data, mode)
+        self.ops.append(("write", path, before, data, mode))
     def move(self, src, dst):
-        shutil.move(src, dst); self.ops.append(("move", src, dst))
+        src, dst = _stored(src), _stored(dst)
+        if os.path.lexists(dst): raise FileExistsError(f"{os.path.basename(dst)} already exists")
+        try: os.rename(src, dst)
+        except OSError as e:
+            if e.errno != errno.EXDEV: raise
+            shutil.move(src, dst)
+        self.ops.append(("move", src, dst))
     def mkdir(self, path):
-        os.makedirs(path); self.ops.append(("mkdir", path))
+        path = _stored(path); os.mkdir(path); self.ops.append(("mkdir", path))
+    def ensure_dir(self, path):
+        """Create `path` and any missing parents, each one recorded (so undo removes the empty ones it made)."""
+        path = _stored(path); missing = []
+        while not os.path.isdir(path): missing.append(path); path = os.path.dirname(path)
+        for d in reversed(missing): self.mkdir(d)
+    def rollback(self):
+        """Reverse every step, newest first. Returns the steps that could not be reversed (usually none)."""
+        left = _revert(self.ops); self.ops = left; return left
     def commit(self):
-        if self.ops:
-            _undo.append({"label": self.label, "ops": self.ops, "select": self.select})
-            del _undo[:-UNDO_MAX]
+        if self.ops: _push_undo({"label": self.label, "ops": self.ops, "select": self.select})
+
+def _push_undo(entry):
+    _undo.append(entry); del _undo[:-UNDO_MAX]
+
+def _changed(path): return f"Can't undo: {os.path.basename(path)} changed since. Fix it by hand."
+
+def _plan_inverse(ops, vfs=None):
+    """Dry run of reversing `ops` newest first, against the files as they are now: raises ValueError (changing
+    nothing) if any file a step touched has been edited, moved or added to since."""
+    vfs = {} if vfs is None else vfs
+    def cur(p):
+        if p in vfs: return vfs[p]
+        if os.path.isfile(p):
+            with open(p, "rb") as fh: return fh.read()
+        return MISSING
+    for op in reversed(ops):
+        if op[0] == "write":
+            _, path, before, after, _mode = op
+            if cur(path) != after: raise ValueError(_changed(path))
+            vfs[path] = MISSING if before is None else before
+        elif op[0] == "move":
+            _, src, dst = op
+            if cur(dst) is MISSING or cur(src) is not MISSING: raise ValueError(_changed(dst))
+            vfs[src] = cur(dst); vfs[dst] = MISSING
+        elif op[0] == "mkdir":
+            path = op[1]
+            if not os.path.isdir(path): raise ValueError(_changed(path + "/"))
+            if [f for f in os.listdir(path) if vfs.get(os.path.join(path, f)) is not MISSING]: raise ValueError(_changed(path + "/"))
+            vfs[path] = MISSING
+    return vfs
+
+def _apply_inverse(op):
+    if op[0] == "write":
+        if op[2] is None: os.remove(op[1])
+        else: safefs.atomic_write(op[1], op[2], op[4])
+    elif op[0] == "move": os.rename(op[2], op[1])
+    elif op[0] == "mkdir": os.rmdir(op[1])
+
+def _apply_forward(op):
+    if op[0] == "write": safefs.atomic_write(op[1], op[3], op[4])
+    elif op[0] == "move": os.rename(op[1], op[2])
+    elif op[0] == "mkdir": os.mkdir(op[1])
+
+def _revert(ops):
+    """Reverse `ops` newest first, one at a time, each only if its own result is still as we left it.
+    Returns what could not be reversed, in the original order."""
+    left = []
+    for op in reversed(ops):
+        try: _plan_inverse([op]); _apply_inverse(op)
+        except (OSError, ValueError): left.append(op)
+    return left[::-1]
+
+@contextlib.contextmanager
+def mutation(label=""):
+    """The only way files are changed: one change at a time, all or nothing. If anything fails the steps already
+    taken are reversed; if some cannot be, they stay on the undo list so Undo can finish the job. On success the
+    undo entry is recorded at once, before the caller logs anything."""
+    with _lock.write():
+        tx = Tx(label)
+        try: yield tx
+        except BaseException as e:
+            if not tx.ops: raise
+            left = tx.rollback()
+            if not left: raise
+            _push_undo({"label": f"unfinished: {tx.label or label}", "ops": left, "select": None})
+            raise MutationFailed(f"{e}. {len(left)} change(s) could not be rolled back; press Undo to finish putting them back.") from e
+        tx.commit()
 
 def undo():
     """Reverse the newest change. Checked on a dry run first: refuses (and changes nothing) if any file it
-    touched has been edited, moved or added to since."""
-    with _write_lock:
+    touched has been edited, moved or added to since. If a step fails part-way, what it already reversed is put
+    back, so the change stays whole and undoable."""
+    with _lock.write():
         if not _undo: raise ValueError("Nothing to undo.")
-        tx = _undo[-1]; vfs = {}
-        def cur(p):
-            if p in vfs: return vfs[p]
-            return _read(p) if os.path.isfile(p) else MISSING
-        changed = "Can't undo: {} changed since. Fix it by hand."
-        for op in reversed(tx["ops"]):
-            if op[0] == "write":
-                if cur(op[1]) != op[3]: raise ValueError(changed.format(os.path.basename(op[1])))
-                vfs[op[1]] = MISSING if op[2] is None else op[2]
-            elif op[0] == "move":
-                if cur(op[2]) is MISSING or cur(op[1]) is not MISSING: raise ValueError(changed.format(os.path.basename(op[2])))
-                vfs[op[1]] = cur(op[2]); vfs[op[2]] = MISSING
-            elif op[0] == "mkdir":
-                left = [f for f in os.listdir(op[1]) if vfs.get(os.path.join(op[1], f)) is not MISSING] if os.path.isdir(op[1]) else []
-                if left: raise ValueError(changed.format(os.path.basename(op[1]) + "/"))
-        for op in reversed(tx["ops"]):  # every check passed: do it for real
-            if op[0] == "write":
-                if op[2] is None: os.remove(op[1])
-                else:
-                    with open(op[1], "w", encoding="utf-8", errors="surrogateescape", newline="") as fh: fh.write(op[2])
-            elif op[0] == "move": shutil.move(op[2], op[1])
-            elif op[0] == "mkdir": os.rmdir(op[1])
-        _undo.pop(); log(f"undo {tx['label']}")
-        return {"ok": True, "msg": f"Undone: {tx['label']}", "select": tx["select"], "left": len(_undo)}
+        entry = _undo[-1]; ops = entry["ops"]
+        _plan_inverse(ops)
+        taken = []  # reversed so far, newest first
+        try:
+            for op in reversed(ops): _apply_inverse(op); taken.append(op)
+        except BaseException as e:
+            stuck = []
+            for op in reversed(taken):  # oldest-reversed last: redo in the original order
+                try: _apply_forward(op)
+                except OSError: stuck.append(op)
+            if stuck:
+                entry["ops"] = [o for o in ops if not any(o is s for s in stuck)]
+                if not entry["ops"]: _undo.pop()
+                raise MutationFailed(f"Undo stopped half-way ({e}) and {len(stuck)} step(s) could not be put back; check {os.path.basename(stuck[0][1])}.") from e
+            raise MutationFailed(f"Undo failed ({e}); nothing was changed.") from e
+        _undo.pop(); _log(f"undo {entry['label']}")
+        return {"ok": True, "msg": f"Undone: {entry['label']}", "select": entry["select"], "left": len(_undo)}
 
 def to_done(src, tx):
-    done_dir = os.path.join(NOTES, "done"); os.makedirs(done_dir, exist_ok=True)
+    done_dir = os.path.join(NOTES, "done"); tx.ensure_dir(done_dir)
     dst = unique(os.path.join(done_dir, os.path.basename(src)))
     tx.move(src, dst); return dst
 
 def log(msg):
-    with open(LOG_PATH, "a") as fh:
+    with open(LOG_PATH, "a", encoding="utf-8", errors="replace") as fh:
         fh.write(f"{dt.datetime.now().isoformat(timespec='seconds')} {msg}\n")
+
+_log_warned = []
+def _log(msg):
+    """Best-effort log line. A full disk or unwritable log must never undo or hide a change that already happened."""
+    try: log(msg)
+    except Exception as e:
+        if not _log_warned: _log_warned.append(1); print(f"rawtriage-web: can't write the log ({e}); changes still work", file=sys.stderr)
 
 ALIASES = {"archive": "kill", "durable": "reference"}  # 1.x names still accepted
 
+def _text(req, key):
+    v = req.get(key)
+    if v is None: return ""
+    if not isinstance(v, (str, int, float)): raise ValueError(f"{key} must be text")
+    return str(v).strip()
+
+def _plan(req):
+    """Everything about one decision that can be checked before any file changes: (source path, action, ship-by)."""
+    src = safe_note(req.get("file"), write=True)
+    if os.path.dirname(src) != os.path.normpath(NOTES): raise ValueError("only Inbox notes can be decided")
+    action = ALIASES.get(req.get("action"), req.get("action"))
+    if action not in ("keep", "kill", "promote", "reference"): raise ValueError("unknown action")
+    if action == "keep" and req.get("status", "cooking") not in ("open", "cooking"): raise ValueError("bad status")
+    _text(req, "note"); _text(req, "slug")
+    return src, action, (check_promote(req) if action == "promote" else None)
+
 def act(req, tx=None):
     """One decision on one note. With no tx, it is its own undo step."""
-    with _write_lock:
-        own = tx is None; tx = tx or Tx()
-        res = _act(req, tx)
-        if own: tx.label = res["label"]; tx.select = req["file"]; tx.commit()
-        return res
+    if tx is not None: return _act(req, tx)
+    with mutation() as own:
+        res = _act(req, own); own.label = res["label"]; own.select = req["file"]
+    return res
 
 def _act(req, tx):
-    src = safe_note(req["file"]); fname = os.path.basename(src)
-    if os.path.dirname(src) != os.path.realpath(NOTES): raise ValueError("only Inbox notes can be decided")
-    action = ALIASES.get(req.get("action"), req.get("action")); note = (req.get("note") or "").strip()
-    text = open(src, encoding="utf-8").read(); title = title_of(text, fname)
+    src, action, due = _plan(req); fname = os.path.basename(src); note = _text(req, "note")
+    text, eol = read_note(src); title = title_of(text, fname)
     t = today().isoformat()
 
     if action == "keep":
         status = req.get("status", "cooking")
-        if status not in ("open", "cooking"): raise ValueError("bad status")
         text = set_field(text, "status", status)
-        if note: text = text.rstrip("\n") + f"\n\n- next step ({t}): {note}\n" if "## Notes" not in text else \
-            re.sub(r"(## Notes\n)", lambda m: f"{m.group(1)}\n- next step ({t}): {note}\n", text, count=1)
-        tx.write(src, text)
-        log(f"keep {fname} status={status}"); return {"ok": True, "msg": f"Kept “{title}” ({status})", "label": f"keep “{title}”"}
+        if note:
+            if re.search(r"^## Notes[ \t]*$", text, re.M):
+                text = re.sub(r"(^## Notes[ \t]*\n)", lambda m: f"{m.group(1)}\n- next step ({t}): {note}\n", text, count=1, flags=re.M)
+            else: text = text.rstrip("\n") + f"\n\n- next step ({t}): {note}\n"
+        tx.write(src, text, eol)
+        _log(f"keep {fname} status={status}"); return {"ok": True, "msg": f"Kept “{title}” ({status})", "label": f"keep “{title}”"}
 
     if action == "kill":
         text = set_field(text, "status", "dead")
         text = append_outcome(text, f"**Killed {t}:** {note or 'no longer useful.'}")
-        tx.write(src, text)
-        dst = to_done(src, tx); log(f"kill {fname} -> {dst}")
+        tx.write(src, text, eol)
+        dst = to_done(src, tx); _log(f"kill {fname} -> {dst}")
         return {"ok": True, "msg": f"Killed “{title}” → Archive", "label": f"kill “{title}”"}
 
-    if action in ("promote", "reference"):
-        dest = "reference" if action == "reference" else req.get("dest")
-        due = check_promote(req) if action == "promote" else None
-        slug = re.sub(r"[^a-z0-9-]", "", (req.get("slug") or slug_of(fname)).lower()) or slug_of(fname)
-        dest_dir = os.path.join(PROJECTS, dest)
-        os.makedirs(dest_dir, exist_ok=True)
-        if action == "promote" and DESTS[dest] == "folder":
-            proj = unique(os.path.join(dest_dir, slug)); tx.mkdir(proj)
-            target = os.path.join(proj, "NOTES.md")
-        else:
-            target = unique(os.path.join(dest_dir, slug + ".md"))
-        copy = set_field(text, "status", "promoted")
-        copy = set_field(copy, "promoted", t)
-        if action == "reference": copy = reference_copy(copy, fname, note)
-        if action == "promote":
-            if due: copy = set_field(copy, "due", due)
-            else: copy = re.sub(r"^- due:.*(?:\n|$)", "", copy, flags=re.M)  # open-ended: drop any old ship-by
-            copy = copy.rstrip("\n") + (
-                f"\n\n## Plan\n\n- promoted from RawNotes on {t}, " + (f"due {due}\n" if due else "open-ended experiment (no ship-by date)\n") +
-                f"- definition of done: {note}\n"
-                "- first step:\n" + ("- ship / stop check-in: on the due date, either ship it or kill it\n" if due else
-                                     "- check-in: when done means is met, mark it shipped; if it stalls, kill it\n"))
-        tx.write(target, copy)
-        rel = os.path.relpath(target, PROJECTS)
-        # original capture: mark promoted, record destination, move to done/
-        text = set_field(text, "status", "promoted")
-        text = append_outcome(text, f"**Promoted {t}** -> `../{rel}`" + (f" ({note})" if note and action == 'reference' else ""))
-        tx.write(src, text)
-        dst = to_done(src, tx); log(f"{'durable' if action == 'reference' else action} {fname} -> {rel}; capture -> {dst}")
-        verb = "Promoted" if action == "promote" else "Filed"
-        return {"ok": True, "msg": f"{verb} “{title}” → {rel}", "target": rel, "label": f"{action} “{title}”"}
-
-    raise ValueError("unknown action")
+    dest = "reference" if action == "reference" else req.get("dest")
+    slug = re.sub(r"[^a-z0-9-]", "", (_text(req, "slug") or slug_of(fname)).lower()) or slug_of(fname)
+    dest_dir = os.path.join(PROJECTS, dest)
+    tx.ensure_dir(dest_dir)
+    if action == "promote" and DESTS[dest] == "folder":
+        proj = unique(os.path.join(dest_dir, slug)); tx.mkdir(proj)
+        target = os.path.join(proj, "NOTES.md")
+    else:
+        target = unique(os.path.join(dest_dir, slug + ".md"))
+    copy = set_field(text, "status", "promoted")
+    copy = set_field(copy, "promoted", t)
+    if action == "reference": copy = reference_copy(copy, fname, note)
+    if action == "promote":
+        copy = set_field(copy, "due", due) if due else drop_field(copy, "due")  # open-ended: drop any old ship-by
+        copy = copy.rstrip("\n") + (
+            f"\n\n## Plan\n\n- promoted from RawNotes on {t}, " + (f"due {due}\n" if due else "open-ended experiment (no ship-by date)\n") +
+            f"- definition of done: {note}\n"
+            "- first step:\n" + ("- ship / stop check-in: on the due date, either ship it or kill it\n" if due else
+                                 "- check-in: when done means is met, mark it shipped; if it stalls, kill it\n"))
+    tx.write(target, copy, eol)
+    rel = os.path.relpath(target, PROJECTS)
+    # original capture: mark promoted, record destination, move to done/
+    text = set_field(text, "status", "promoted")
+    text = append_outcome(text, f"**Promoted {t}** -> `../{rel}`" + (f" ({note})" if note and action == 'reference' else ""))
+    tx.write(src, text, eol)
+    dst = to_done(src, tx); _log(f"{'durable' if action == 'reference' else action} {fname} -> {rel}; capture -> {dst}")
+    verb = "Promoted" if action == "promote" else "Filed"
+    return {"ok": True, "msg": f"{verb} “{title}” → {rel}", "target": rel, "label": f"{action} “{title}”"}
 
 def check_promote(req):
     """Validate a promotion before anything is written. Returns the ship-by date, or None for an experiment."""
     dest = req.get("dest")
     if dest not in DESTS: raise ValueError("bad destination")
-    if done_placeholder((req.get("note") or "").strip()): raise ValueError("Say what done means first.")
+    if done_placeholder(_text(req, "note")): raise ValueError("Say what done means first.")
     return None if dest == "experiments" else ship_by(req)  # experiments are open-ended
 
 def ship_by(req):
@@ -693,134 +879,156 @@ def ship_by(req):
         if not 1 <= (due - today()).days <= 365: raise ValueError("ship-by date must be within the next year")
         return due.isoformat()
     try: days = int(req.get("due_days") or DUE_DAYS)
-    except ValueError: raise ValueError("ship-by must be a number of days")
+    except (TypeError, ValueError): raise ValueError("ship-by must be a number of days")
     if not 1 <= days <= 90: raise ValueError("ship-by must be 1 to 90 days")
     return (today() + dt.timedelta(days=days)).isoformat()
 
+def _file_list(req, minimum, maximum=200):
+    """The `files` of a batch or merge request, checked before anything is touched: a list of distinct names."""
+    files = req.get("files")
+    if not isinstance(files, list) or not all(isinstance(f, str) and f for f in files): raise ValueError("files must be a list of note names")
+    if len(files) < minimum: raise ValueError("pick at least two notes to merge" if minimum > 1 else "pick at least one note")
+    if len(files) > maximum: raise ValueError(f"too many notes (limit {maximum})")
+    return files
+
+def _distinct_sources(files, resolve):
+    """Resolve and check every source up front; the same note listed twice (under any spelling) is refused."""
+    srcs = []
+    for f in files:
+        p = resolve(f)
+        if p in srcs: raise ValueError(f"“{os.path.basename(p)}” is listed twice")
+        srcs.append(p)
+    return srcs
+
+def _inbox_source(f):
+    src = safe_note(f, write=True)
+    if os.path.dirname(src) != os.path.normpath(NOTES): raise ValueError("only Inbox notes can be merged")
+    return src
+
 def batch(req):
-    """The same decision for several notes, as one undo step."""
-    files = req.get("files") or []
-    if not files or len(files) > 200: raise ValueError("pick at least one note")
+    """The same decision for several notes, as one undo step: every note is checked first, and if a step fails
+    part-way the ones already done are put back."""
+    files = _file_list(req, 1)
     if ALIASES.get(req.get("action"), req.get("action")) not in ("keep", "kill", "reference"): raise ValueError("batch can keep, kill or file as reference")
-    with _write_lock:
-        tx = Tx(); done = 0
-        try:
-            for f in files: _act({**req, "file": f, "slug": ""}, tx); done += 1
-        except Exception:
-            tx.commit()  # whatever already happened stays undoable
-            raise
+    with mutation() as tx:
+        _distinct_sources(files, lambda f: _plan({**req, "file": f, "slug": ""})[0])
+        for f in files: _act({**req, "file": f, "slug": ""}, tx)
         verb = {"keep": "Kept", "kill": "Killed", "reference": "Filed"}[ALIASES.get(req["action"], req["action"])]
-        tx.label = f"{verb.lower()} {done} notes"; tx.select = files[0]; tx.commit()
-        return {"ok": True, "msg": f"{verb} {done} notes"}
+        tx.label = f"{verb.lower()} {len(files)} notes"; tx.select = files[0]
+    return {"ok": True, "msg": f"{verb} {len(files)} notes"}
 
 def merge(req):
     """Combine several Inbox notes into one new note (newest first), move the sources to done/ pointing at it,
-    then optionally promote or file the merged note. One undo step."""
-    files = req.get("files") or []
-    title = re.sub(r"\s+", " ", req.get("title") or "").strip()
-    if len(files) < 2: raise ValueError("pick at least two notes to merge")
+    then optionally promote or file the merged note. One undo step; nothing is written unless every source checks out."""
+    files = _file_list(req, 2)
+    title = re.sub(r"\s+", " ", _text(req, "title")).strip()
     if not title: raise ValueError("give the merged note a title")
     then = req.get("then", "inbox")
     if then not in ("inbox", "promote", "reference"): raise ValueError("bad follow-up")
-    srcs = [safe_note(f) for f in files]
-    if any(os.path.dirname(p) != os.path.realpath(NOTES) for p in srcs): raise ValueError("only Inbox notes can be merged")
-    srcs.sort(key=os.path.basename, reverse=True)
     if then == "promote": check_promote(req)  # fail before the merge writes anything
     t = today().isoformat()
-    with _write_lock:
-        tx = Tx(f"merge {len(srcs)} notes")
+    with mutation(f"merge {len(files)} notes") as tx:
+        srcs = _distinct_sources(files, _inbox_source)
+        srcs.sort(key=os.path.basename, reverse=True)
+        notes = {p: read_note(p) for p in srcs}
         slug = re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", title.lower())).strip("-")[:60] or "merged"
         target = unique(os.path.join(NOTES, f"{t}-{slug}.md")); tname = os.path.basename(target)
-        types = [field(open(p, encoding="utf-8").read(), "type") for p in srcs]
+        types = [field(notes[p][0], "type") for p in srcs]
         parts = [f"# {title}", "", f"- date: {t}", "- status: cooking",
                  f"- type: {max(set(types), key=types.count) or 'research'}", "",
                  "## What's the question / problem?", "",
-                 (req.get("question") or "").strip() or f"Merged from {len(srcs)} notes on {t}; newest first below.", "", "## Notes", ""]
+                 _text(req, "question") or f"Merged from {len(srcs)} notes on {t}; newest first below.", "", "## Notes", ""]
         sources = []
         for p in srcs:
-            text = open(p, encoding="utf-8").read(); name = os.path.basename(p)
-            body = re.sub(r"^#\s+.*\n", "", text, count=1)
-            body = re.sub(r"^(\s*- (date|status|type|promoted|due):.*\n|\s*\n)+", "", body)
+            text = notes[p][0]; name = os.path.basename(p)
+            body = note_body_for_merge(text)
             body = re.sub(r"^(#{1,5})(\s)", r"#\1\2", body, flags=re.M)  # its headings sit one level under its section
             parts += [f"## {title_of(text, name)} ({name[:10]})", "", body.strip(), ""]
             sources.append(name)
         parts += ["## Sources", ""] + [f"- `done/{n}`" for n in sources] + [""]
         tx.write(target, "\n".join(parts))
         for p in srcs:
-            text = open(p, encoding="utf-8").read()
+            text, eol = notes[p]
             text = set_field(text, "status", "merged")
             text = append_outcome(text, f"**Merged {t}** -> `RawNotes/{tname}`")
-            tx.write(p, text); to_done(p, tx); log(f"merge {os.path.basename(p)} -> {tname}")
+            tx.write(p, text, eol); to_done(p, tx); _log(f"merge {os.path.basename(p)} -> {tname}")
         msg = f"Merged {len(srcs)} notes into “{title}”"; tx.select = tname
         if then != "inbox":
             res = _act({**req, "file": tname, "action": then, "slug": req.get("slug") or ""}, tx)
             msg += "; " + res["msg"][0].lower() + res["msg"][1:]
             tx.select = None
-        tx.commit()
-        return {"ok": True, "msg": msg, "file": tname if then == "inbox" else None}
+    return {"ok": True, "msg": msg, "file": tname if then == "inbox" else None}
+
+def note_body_for_merge(text):
+    """A source's content for the merged note: everything but its title and date/status/type/promoted/due lines
+    (the question stays, as a section of its own)."""
+    lines = text.split("\n"); head = header_lines(lines); t = title_index(lines)
+    drop = {i for i in head if HEAD_LINE.match(lines[i]).group(1) in ("date", "status", "type", "promoted", "due")} | ({t} if t is not None else set())
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(l for i, l in enumerate(lines) if i not in drop)).strip()
 
 def restore(req):
     """Bring a note back from done/ into the Inbox (status cooking)."""
-    with _write_lock:
-        src = safe_note(req.get("file", ""))
-        if os.path.dirname(src) != os.path.realpath(os.path.join(NOTES, "done")): raise ValueError("only Archive notes can be restored")
+    with mutation() as tx:
+        src = safe_note(req.get("file", ""), write=True)
+        if os.path.dirname(src) != os.path.join(os.path.normpath(NOTES), "done"): raise ValueError("only Archive notes can be restored")
         dst = os.path.join(NOTES, os.path.basename(src))
-        if os.path.exists(dst): raise ValueError("a note with that name is already in the Inbox")
-        tx = Tx(); text = open(src, encoding="utf-8").read(); title = title_of(text, os.path.basename(src))
+        if os.path.lexists(dst): raise ValueError("a note with that name is already in the Inbox")
+        text, eol = read_note(src); title = title_of(text, os.path.basename(src))
         text = append_outcome(set_field(text, "status", "cooking"), f"**Restored {today().isoformat()}** to the Inbox")
-        tx.write(src, text); tx.move(src, dst)
-        tx.label = f"restore “{title}”"; tx.select = "done/" + os.path.basename(src); tx.commit()
-        log(f"restore {os.path.basename(src)}")
-        return {"ok": True, "msg": f"Restored “{title}” to the Inbox", "file": os.path.basename(dst)}
+        tx.write(src, text, eol); tx.move(src, dst)
+        tx.label = f"restore “{title}”"; tx.select = "done/" + os.path.basename(src)
+    _log(f"restore {os.path.basename(src)}")
+    return {"ok": True, "msg": f"Restored “{title}” to the Inbox", "file": os.path.basename(dst)}
+
+def _status_edit(text, req, name):
+    """The new text, label and message for a project status action (shipped / extend / kill)."""
+    t = today().isoformat(); action = req.get("action")
+    if action == "shipped":
+        return set_field(set_field(text, "status", "shipped"), "shipped", t), f"ship {name}", f"Shipped {name} 🎉"
+    if action == "extend":
+        if not field(text, "due"): raise ValueError("open-ended experiments have no ship-by date to push")
+        try: days = int(req.get("days") or 7)
+        except (TypeError, ValueError): raise ValueError("days must be a number")
+        if not 1 <= days <= 90: raise ValueError("days must be 1 to 90")
+        try: base = max(dt.date.fromisoformat(field(text, "due")), today())
+        except ValueError: base = today()
+        due = (base + dt.timedelta(days=days)).isoformat()
+        return set_field(text, "due", due), f"push {name} to {due}", f"{name}: ship by {due}"
+    if action == "kill":
+        text = append_outcome(set_field(text, "status", "dead"), f"**Killed {t}:** {_text(req, 'note') or 'stopped.'}")
+        return text, f"kill {name}", f"Killed {name}"
+    raise ValueError("unknown project action")
 
 def project_status(req):
     """On a promoted project file (a due: line, or an open-ended experiment): mark it shipped, push the ship-by
     date (not on open-ended experiments), or kill it.
     A project folder with no promoted file ({name, kind} instead of path) can be shipped or killed through its NOTES.md."""
-    with _write_lock:
-        if not req.get("path"): return folder_project_status(req)
-        rel = req.get("path", "")
-        if rel not in {x["path"] for x in inflight()}: raise ValueError("unknown project file")
+    if not req.get("path"): return folder_project_status(req)
+    rel = req.get("path", "")
+    with mutation() as tx:
+        if not isinstance(rel, str) or rel not in {x["path"] for x in inflight()}: raise ValueError("unknown project file")
         path = os.path.join(PROJECTS, rel)
-        if os.path.islink(path): raise ValueError("refusing to write through a symlink")
-        text = open(path, encoding="utf-8").read(); t = today().isoformat(); action = req.get("action")
+        text, eol = read_note(path)
         name = rel.split("/")[1] if rel.count("/") >= 2 else os.path.basename(rel)[:-3]
-        tx = Tx()
-        if action == "shipped":
-            text = set_field(set_field(text, "status", "shipped"), "shipped", t); label = f"ship {name}"; msg = f"Shipped {name} 🎉"
-        elif action == "extend":
-            if not field(text, "due"): raise ValueError("open-ended experiments have no ship-by date to push")
-            try: days = int(req.get("days") or 7)
-            except ValueError: raise ValueError("days must be a number")
-            if not 1 <= days <= 90: raise ValueError("days must be 1 to 90")
-            try: base = max(dt.date.fromisoformat(field(text, "due")), today())
-            except ValueError: base = today()
-            due = (base + dt.timedelta(days=days)).isoformat()
-            text = set_field(text, "due", due); label = f"push {name} to {due}"; msg = f"{name}: ship by {due}"
-        elif action == "kill":
-            text = append_outcome(set_field(text, "status", "dead"), f"**Killed {t}:** {(req.get('note') or '').strip() or 'stopped.'}")
-            label = f"kill {name}"; msg = f"Killed {name}"
-        else: raise ValueError("unknown project action")
-        tx.write(path, text); tx.label = label; tx.commit(); log(f"project {action} {rel}")
-        return {"ok": True, "msg": msg}
+        text, tx.label, msg = _status_edit(text, req, name)
+        tx.write(path, text, eol)
+    _log(f"project {req.get('action')} {rel}")
+    return {"ok": True, "msg": msg}
 
 def folder_project_status(req):
-    path, kind = project_dir(req.get("name", ""), req.get("kind")); name = os.path.basename(path)
-    target = notes_file(path); action = req.get("action"); t = today().isoformat()
-    if os.path.islink(target): raise ValueError("refusing to write through a symlink")
-    text = _read(target) if os.path.exists(target) else f"# {name}\n"
-    if action == "shipped":
-        text = set_field(set_field(text, "status", "shipped"), "shipped", t); msg = f"Shipped {name} 🎉"
-    elif action == "kill":
-        text = append_outcome(set_field(text, "status", "dead"), f"**Killed {t}:** {(req.get('note') or '').strip() or 'stopped.'}"); msg = f"Killed {name}"
-    else: raise ValueError("unknown project action")
-    tx = Tx(f"{'ship' if action == 'shipped' else 'kill'} {name}"); tx.write(target, text); tx.commit()
-    log(f"project {action} {kind}/{name}")
+    path, kind = project_dir(req.get("name", ""), req.get("kind"), write=True); name = os.path.basename(path)
+    if req.get("action") == "extend": raise ValueError("unknown project action")  # no due: line to push in a bare folder
+    with mutation() as tx:
+        target = notes_file(path)
+        text, eol = read_note(target) if os.path.exists(target) else (f"# {name}\n", "\n")
+        text, tx.label, msg = _status_edit(text, req, name)
+        tx.write(target, text, eol)
+    _log(f"project {req.get('action')} {kind}/{name}")
     return {"ok": True, "msg": msg}
 
 def stats(weeks=8):
     """Inbox flow for the Pulse page: notes captured vs. decided per week, and how long the Inbox waits."""
-    notes = list_notes(); t = today()
+    notes = scan_notes(); t = today()
     start = t - dt.timedelta(days=t.weekday())  # Monday of this week
     bins = [{"week": (start - dt.timedelta(weeks=weeks - 1 - i)).isoformat(), "captured": 0, "decided": 0} for i in range(weeks)]
     def slot(d):
@@ -843,14 +1051,50 @@ def stats(weeks=8):
     mid = len(ages) // 2
     median = (ages[mid] if len(ages) % 2 else (ages[mid - 1] + ages[mid]) / 2) if ages else None
     return {"weeks": bins, "median_wait": median, "oldest": ages[-1] if ages else None, "live": len(notes["live"]),
-            "undo": [u["label"] for u in reversed(_undo)]}
+            "undo": [u["label"] for u in reversed(list(_undo))]}
+
+
+
+def open_target(req):
+    """The one thing /api/open may launch: a project folder on the board ({name, kind}) or a promoted file the board
+    lists ({path}), as a real path inside the projects folder. Anything else (a URL, an absolute path, ..) is refused."""
+    if req.get("path") is not None:
+        rel = req.get("path")
+        if not isinstance(rel, str) or rel not in {x["path"] for x in inflight()}: raise ValueError("that is not a project the board knows")
+        return safefs.ensure_inside([PROJECTS], os.path.join(PROJECTS, rel))
+    path, _ = project_dir(req.get("name"), req.get("kind"))
+    return safefs.ensure_inside([PROJECTS], path)
+
+def open_path(path):
+    """Hand a validated path to the desktop's opener. No shell, no options: `--` ends them, the path is absolute."""
+    subprocess.Popen(["xdg-open", "--", path], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+
+def note_view(rel):
+    """A note for the reader: the raw text, the whole question, and the body without what the page shows itself."""
+    with _lock.read():
+        p = safe_note(rel)
+        with open(p, "rb") as fh: text = to_lf(fh.read().decode("utf-8", "replace"))
+    return {"text": text, "question": question_of(text), "body": note_body(text)}
+
+MAX_BODY = 1 << 20
+
+class Server(ThreadingHTTPServer):
+    request_queue_size = 128  # the default backlog of 5 drops connections when a page fires many requests at once
+    daemon_threads = True
 
 class H(BaseHTTPRequestHandler):
     def _send(self, code, body, ctype="application/json"):
         data = body if isinstance(body, bytes) else json.dumps(body).encode()
         self.send_response(code); self.send_header("Content-Type", ctype if ctype.startswith("font/") else ctype + "; charset=utf-8")
         if ctype.startswith("font/"): self.send_header("Cache-Control", "max-age=604800")
+        else: self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data)
+    def _fail(self, e):
+        """Bad requests are the caller's (400); a file that vanished is 404; anything else is ours (500)."""
+        code = (500 if isinstance(e, MutationFailed) else 400 if isinstance(e, (ValueError, KeyError, TypeError, AttributeError, RuntimeError))
+                else 404 if isinstance(e, FileNotFoundError) else 500)
+        self._send(code, {"error": str(e.args[0]) if isinstance(e, KeyError) and e.args else str(e) or type(e).__name__})
     def log_message(self, *a): pass
     def _refuse(self, post):
         """Browser-attack guard (no login here, so the page you are on must not be able to drive it).
@@ -870,8 +1114,8 @@ class H(BaseHTTPRequestHandler):
         if bad: return self._send(403, {"error": bad})
         try:
             if u.path == "/": return self._send(200, INDEX_HTML, "text/html")
-            if u.path == "/api/version": return self._send(200, {"version": VERSION, "started": STARTED, "pid": os.getpid()})
-            if u.path == "/api/projects": return self._send(200, {"projects": projects_listing()})
+            if u.path == "/api/version": return self._send(200, {"version": VERSION, "started": STARTED, "pid": os.getpid(), "app": "rawnotes-triage"})
+            if u.path == "/api/projects": return self._send(200, {"projects": projects_listing(q.get("refresh") == ["1"])})
             if u.path == "/api/project": return self._send(200, project_detail(q.get("name", [""])[0], q.get("kind", [""])[0]))
             if u.path == "/api/activity": return self._send(200, github_activity(q.get("refresh") == ["1"]))
             if u.path == "/api/repo": return self._send(200, repo_overview(q.get("name", [""])[0]))
@@ -881,16 +1125,18 @@ class H(BaseHTTPRequestHandler):
             if FONT_RE.match(u.path):
                 p = os.path.join(HERE, u.path.lstrip("/"))
                 if not os.path.isfile(p): return self._send(404, {"error": "not found"})
-                return self._send(200, open(p, "rb").read(), "font/woff2")
-            if u.path == "/api/note":
-                p = safe_note(q["f"][0]); return self._send(200, {"text": open(p, encoding="utf-8", errors="replace").read()})
+                with open(p, "rb") as fh: return self._send(200, fh.read(), "font/woff2")
+            if u.path == "/api/note": return self._send(200, note_view(q["f"][0]))
             self._send(404, {"error": "not found"})
-        except Exception as e: self._send(400, {"error": str(e)})
+        except Exception as e: self._fail(e)
     def do_POST(self):
         bad = self._refuse(True)
         if bad: return self._send(403, {"error": bad})
         try:
-            n = int(self.headers.get("Content-Length", 0)); req = json.loads(self.rfile.read(n) or b"{}")
+            n = int(self.headers.get("Content-Length", 0))
+            if not 0 <= n <= MAX_BODY: return self._send(413, {"error": "request too large"})
+            req = json.loads(self.rfile.read(n) or b"{}")
+            if not isinstance(req, dict): raise ValueError("the request must be a JSON object")
             path = urlparse(self.path).path
             if path == "/api/action": return self._send(200, act(req))
             if path == "/api/batch": return self._send(200, batch(req))
@@ -898,30 +1144,64 @@ class H(BaseHTTPRequestHandler):
             if path == "/api/restore": return self._send(200, restore(req))
             if path == "/api/project/status": return self._send(200, project_status(req))
             if path == "/api/undo": return self._send(200, undo())
-            if urlparse(self.path).path == "/api/done": return self._send(200, set_done(req.get("name", ""), req.get("text", ""), req.get("expected", ""), req.get("kind")))
-            if urlparse(self.path).path == "/api/open":
-                import subprocess; subprocess.Popen(["xdg-open", req["path"]]); return self._send(200, {"ok": True})
+            if path == "/api/done": return self._send(200, set_done(req.get("name", ""), req.get("text", ""), req.get("expected", ""), req.get("kind")))
+            if path == "/api/open":
+                if self.client_address[0] not in ("127.0.0.1", "::1", "::ffff:127.0.0.1"): raise ValueError("Open only works from the machine running the server.")
+                target = open_target(req)
+                try: open_path(target)
+                except OSError as e: raise OSError(f"couldn't launch xdg-open: {e}")
+                return self._send(200, {"ok": True})
             self._send(404, {"error": "not found"})
-        except Exception as e: self._send(400, {"error": str(e)})
+        except Exception as e: self._fail(e)
+
+TRIAGE_TITLE = "<title>RawNotes · Triage"
 
 def running_server(port):
     """Ask whatever is on the port what it is. None = nothing there.
-    Servers older than 1.05 have no /api/version, so they report version None."""
+    {"version", "started", "pid", "foreign"}: foreign=True means something answered that is not rawnotes-triage
+    (never stop that one). Servers older than 1.05 have no /api/version but do serve this page, so they report version None."""
     import urllib.request, urllib.error
+    base = f"http://127.0.0.1:{port}"
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/version", timeout=2) as r:
-            return json.loads(r.read())
-    except urllib.error.HTTPError: return {"version": None, "started": None, "pid": None}
+        with urllib.request.urlopen(base + "/api/version", timeout=2) as r:
+            info = json.loads(r.read())
+            if not isinstance(info, dict) or "version" not in info: return {"version": None, "started": None, "pid": None, "foreign": True}
+            return {"version": info["version"], "started": info.get("started"), "pid": info.get("pid"), "foreign": False}
+    except urllib.error.HTTPError:  # answers, but has no /api/version: an old triage page, or some other service
+        try:
+            with urllib.request.urlopen(base + "/", timeout=2) as r: old = TRIAGE_TITLE in r.read(4096).decode("utf-8", "replace")
+        except (OSError, ValueError): old = False
+        return {"version": None, "started": None, "pid": None, "foreign": not old}
     except (OSError, ValueError): return None
 
 def port_pid(port):
-    out = subprocess.run(["ss", "-ltnpH", f"sport = :{port}"], capture_output=True, text=True).stdout
+    try: out = subprocess.run(["ss", "-ltnpH", f"sport = :{port}"], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.TimeoutExpired): return None
     m = re.search(r"pid=(\d+)", out); return int(m.group(1)) if m else None
 
+def is_triage_process(pid):
+    """Is `pid` a rawnotes-triage server? Looks at its command line (a server.py whose first lines name this app);
+    unreadable or anything else counts as no."""
+    try:
+        with open(f"/proc/{int(pid)}/cmdline", "rb") as fh: args = [a.decode("utf-8", "replace") for a in fh.read().split(b"\0") if a]
+        cwd = os.readlink(f"/proc/{int(pid)}/cwd")
+    except (OSError, ValueError): return False
+    for a in args[1:4]:
+        if os.path.basename(a) != "server.py": continue
+        try:
+            with open(os.path.join(cwd, a), "rb") as fh: return b"rawnotes-triage" in fh.read(400)
+        except OSError: return False
+    return False
+
 def stop_server(info, port):
-    import signal, time
-    pid = info.get("pid") or port_pid(port)
+    """Stop the triage server on `port`, after checking it is one: the page it serves says so, and the process that
+    owns the port is a server.py of this app. Anything else is left alone."""
+    import signal
+    if info.get("foreign"): raise SystemExit(f"rawtriage-web: port {port} is used by something that isn't rawnotes-triage; not touching it.")
+    owner = port_pid(port); pid = info.get("pid") or owner
     if not pid: raise SystemExit(f"rawtriage-web: can't find the process on port {port}; stop it by hand.")
+    if owner and pid != owner: raise SystemExit(f"rawtriage-web: the server on port {port} says pid {pid} but pid {owner} owns the port; stop it by hand.")
+    if not is_triage_process(pid): raise SystemExit(f"rawtriage-web: pid {pid} on port {port} doesn't look like rawnotes-triage; not stopping it.")
     os.kill(pid, signal.SIGTERM)
     for _ in range(50):
         if running_server(port) is None: return pid
@@ -942,6 +1222,8 @@ if __name__ == "__main__":
     LOG_PATH = os.path.abspath(os.path.expanduser(a.log))
     url = f"http://127.0.0.1:{a.port}/"
     info = running_server(a.port)
+    if info and info["foreign"]:
+        raise SystemExit(f"rawtriage-web: port {a.port} is in use by something else (not rawnotes-triage); try --port N")
     if info and a.restart:
         pid = stop_server(info, a.port)
         print(f"rawtriage-web: stopped version {info['version'] or 'older than 1.05'} (pid {pid})")
@@ -958,7 +1240,7 @@ if __name__ == "__main__":
         if not a.no_browser:
             import webbrowser; webbrowser.open(url)
         raise SystemExit(0)
-    try: httpd = ThreadingHTTPServer((a.host, a.port), H)
+    try: httpd = Server((a.host, a.port), H)
     except OSError as e: raise SystemExit(f"rawtriage-web: port {a.port} is in use by something else ({e}); try --port N")
     print(f"rawnotes-triage v{VERSION}: {NOTES}\n{url}  (Ctrl-C to stop)")
     if a.host != "127.0.0.1": print(f"listening on {a.host}:{a.port} for other devices (no login; trusted networks only)")
