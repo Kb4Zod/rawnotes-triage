@@ -4,6 +4,32 @@ The version shows in the page heading ("RawNotes Triage version X.XX") and
 in the startup line. Bump `VERSION` in `server.py` and add an entry here
 with every change. Versions 1.00-1.03 were numbered after the fact from git history.
 
+## 2.00 — 2026-10-18
+Redesign: one look, one set of words, and the features that make triage faster. Proposal and mockups in
+`.scratch/ui-redesign/PROPOSAL.md` (kept out of git; it has screenshots of private notes).
+- **Words** match the CLI and CLAUDE.md: Inbox / Projects / Archive / Pulse; Promote / Reference / Keep / Kill;
+  Open → Cooking → Promoted / Reference / Killed; "done means" and "ship by". Keys: P R C X, Z undo.
+- **Look:** Rulecraft's Elven Glass palette and type, self-hosted fonts (`static/fonts`, served at
+  `/static/fonts/*.woff2`), tuned dark mode with a toggle, left rail with counts and a push sparkline.
+- **Inbox:** search, status and type filters, grouped by age, age bar per row, the question pulled out as a
+  callout, frontmatter shown as chips. Decision cards say what each one does; the form shows exactly which files
+  will be written. **Done means is now required to Promote** (server refuses without it). Decide → next note.
+- **Undo** (`POST /api/undo`): every change through the page can be undone, newest first, while the server runs.
+  It dry-runs first and refuses if any file changed since.
+- **Stacks:** 3+ notes sharing a two-word name prefix group together. **Merge** (`POST /api/merge`) combines them
+  into one note (sources to `done/`, status `merged`) and can promote or file it in the same step;
+  **batch** (`POST /api/batch`) keeps, kills or files several notes as one undo step.
+- **Projects** page replaces the Active Projects tab and In flight strip: board by ship-by date, countdown rings,
+  side panel with Mark shipped / +7 days / Kill (`POST /api/project/status`), the done-means editor, repo browser.
+- **Archive:** filter by fate (promoted / reference / killed / merged; `fate` and `dest` added to done notes in
+  `/api/notes`), **Restore to Inbox** (`POST /api/restore`).
+- **Pulse:** the activity graph moves here from the header, plus Inbox flow (captured vs. decided per week,
+  `GET /api/stats`), median Inbox wait, and commits by repo.
+- **Ctrl K** palette across notes, projects, archive and commands; `?` shows every key.
+- Phone layout: tab bar, decision bottom sheet with 44px targets.
+- Markdown tables render. `--log PATH` option (handy for trying the app on a copy of your notes).
+- `archive` / `durable` API action names still accepted.
+
 ## 1.14 — 2026-10-18
 - Fix: projects whose remote is written `ssh://git@ssh.github.com:443/...` (GitHub's SSH-over-443
   address) were not recognised as GitHub repos, so they had no "Review repository" button, no
