@@ -84,6 +84,7 @@ svg.i{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.9;stro
 .chip b{font-weight:900;color:var(--mute)}
 .chip.on{background:var(--green);color:var(--on-accent)}.chip.on b{color:inherit;opacity:.8}
 .chip.warn b{color:var(--rust)}.chip.warn.on{background:var(--rust)}.chip.warn.on b{color:inherit}
+.chips.stack .chip{flex:1 1 auto;min-width:auto;flex-direction:column;gap:0;padding:5px 4px;line-height:1.25}
 .shipby{display:flex;gap:8px;align-items:stretch}.shipby .seg{flex:1}.shipby input[type=date]{width:auto;flex:none;padding:6px 8px}
 .shipby input[type=date].on{border-color:var(--green);box-shadow:0 0 0 3px var(--green-soft)}
 .flag{margin:0 0 14px;padding:10px 14px;border-radius:10px;border:1px solid var(--rust);color:var(--ink2);font-size:13px;background:var(--solid)}
@@ -660,7 +661,7 @@ function renderArchive(){
   const chip=(v,l)=>`<button class="chip ${af.fate===v?'on':''}" data-fate="${v}" aria-pressed="${af.fate===v}">${l} <b>${v==='all'?done.length:cnt(v)}</b></button>`;
   $('#main').innerHTML=`<div class="split"><div class="listpane"><div class="pane-h"><h1>Archive</h1><div class="sub">Everything decided · newest first · nothing is ever deleted</div>
     <label class="search">${I.search}<input id="q" placeholder="Search the archive…" value="${esc(af.q)}" autocomplete="off">${kb('/')}</label>
-    <div class="chips">${chip('all','All')}${chip('promoted','Promoted')}${chip('reference','Reference')}${chip('killed','Killed')}${chip('merged','Merged')}</div></div>
+    <div class="chips stack" role="group" aria-label="Outcome">${chip('all','All')}${chip('promoted','Promoted')}${chip('reference','Reference')}${chip('killed','Killed')}${chip('merged','Merged')}</div></div>
     <div class="list" id="list">${items.length?items.map(n=>`<div class="item ${n.file===S.asel?'sel':''}" data-f="${esc(n.file)}" role="button" tabindex="0"><span class="bar"></span><div><div class="t">${esc(n.title)}</div><div class="m">${st(n.fate)}<span>${esc(n.date)}</span></div></div><span></span></div>`).join(''):'<div class="empty">Nothing here.</div>'}</div></div>
     <div class="reader" id="reader"></div></div>`;
   $('#q').oninput=e=>{S.af.q=e.target.value;const p=e.target.selectionStart;renderArchive();const i=$('#q');i.focus();i.setSelectionRange(p,p)};

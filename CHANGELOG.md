@@ -4,12 +4,17 @@ The version shows in the page heading ("RawNotes Triage version X.XX") and
 in the startup line. Bump `VERSION` in `server.py` and add an entry here
 with every change. Versions 1.00-1.03 were numbered after the fact from git history.
 
-## 2.03 — 2026-10-18
+## 2.04 — 2026-10-18
 - **Projects board, reorganized.** One column per group, left to right: Overdue, Due this week, Later, No ship date,
   Experiments, then Closed. Empty columns are hidden, and the board scrolls sideways when it doesn't fit.
 - **The project panel opens beside the card.** Selecting a card opens its panel as a full column right next to that
   card's column; selecting it again (or `Esc`) closes it. Nothing is selected when the page opens. On a phone, a tap
   still opens the full-screen detail view.
+
+## 2.03 — 2026-10-18
+- **Archive filter is readable again.** The five outcome segments (All / Promoted / Reference / Killed / Merged)
+  overlapped in the 400px list pane; each segment now stacks its count under the label and wider labels get more
+  room. The group is labelled "Outcome" for screen readers. Inbox filters unchanged.
 
 ## 2.02 — 2026-10-18
 - **Projects board shows experiments.** Every folder in `../experiments` is now a project card, not just ones with a
