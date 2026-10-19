@@ -580,6 +580,71 @@ class DecisionTestCase(unittest.TestCase):
         self.assertEqual((s["weeks"][-1]["captured"], s["weeks"][-1]["decided"]), (2, 1))
         self.assertEqual(len(s["weeks"]), 8)
 
+    def test_stats_median_wait_and_empty_inbox(self):
+        self.assertEqual((self.get("/api/stats")["median_wait"], self.get("/api/stats")["oldest"]), (None, None))
+        for days, n in ((1, "a"), (3, "b"), (10, "c"), (20, "d")):
+            self.note(f"{(server.today() - server.dt.timedelta(days=days)).isoformat()}-{n}.md")
+        s = self.get("/api/stats")
+        self.assertEqual((s["median_wait"], s["oldest"], s["live"]), (6.5, 20, 4))  # even count: mean of the middle two
+
+    def test_promote_experiment_is_open_ended_but_needs_done_means(self):
+        self.note("2026-10-01-spike.md")
+        err = self.post("/api/action", {"file": "2026-10-01-spike.md", "action": "promote", "dest": "experiments", "note": ""}, ok=False)
+        self.assertIn("done means", err["error"])
+        self.post("/api/action", {"file": "2026-10-01-spike.md", "action": "promote", "dest": "experiments", "note": "We know if it works."})
+        notes = open(os.path.join(self.tmp, "experiments", "spike", "NOTES.md")).read()
+        self.assertNotIn("- due:", notes)
+        self.assertIn(f"- promoted: {server.today().isoformat()}", notes)
+        self.assertIn("- definition of done: We know if it works.", notes)
+        self.assertIn("open-ended experiment", notes)
+        [f] = self.get("/api/notes")["inflight"]
+        self.assertEqual((f["dest"], f["due"], f["days_left"], f["open_ended"], f["done"]), ("experiments", "", None, True, False))
+        self.post("/api/project/status", {"path": f["path"], "action": "shipped"})
+        self.assertTrue(self.get("/api/notes")["inflight"][0]["done"])
+
+    def test_promote_active_to_an_exact_ship_by_date(self):
+        self.note("2026-10-01-a.md"); self.note("2026-10-02-b.md")
+        when = (server.today() + server.dt.timedelta(days=45)).isoformat()
+        self.post("/api/action", {"file": "2026-10-01-a.md", "action": "promote", "dest": "active", "note": "x", "due": when, "due_days": 3})
+        self.assertIn(f"- due: {when}", open(os.path.join(self.tmp, "active", "a", "NOTES.md")).read())
+        for bad in (server.today().isoformat(), "2026-13-01", (server.today() + server.dt.timedelta(days=400)).isoformat()):
+            self.assertIn("ship-by", self.post("/api/action", {"file": "2026-10-02-b.md", "action": "promote", "dest": "active",
+                                                               "note": "x", "due": bad}, ok=False)["error"])
+
+    def test_merge_then_promote_to_experiment_has_no_ship_by(self):
+        self.note("2026-10-01-bomb-a.md", "Bomb A"); self.note("2026-10-02-bomb-b.md", "Bomb B")
+        self.post("/api/merge", {"files": ["2026-10-01-bomb-a.md", "2026-10-02-bomb-b.md"], "title": "Bomb", "then": "promote",
+                                 "dest": "experiments", "note": "Playtested.", "slug": "bomb"})
+        self.assertNotIn("- due:", open(os.path.join(self.tmp, "experiments", "bomb", "NOTES.md")).read())
+
+    def test_merge_with_a_bad_ship_by_changes_nothing(self):
+        self.note("2026-10-01-bomb-a.md", "Bomb A"); self.note("2026-10-02-bomb-b.md", "Bomb B")
+        before = self.snapshot()
+        for bad in ({"dest": "active", "note": "x", "due": "2026-13-01"}, {"dest": "active", "note": ""}, {"dest": "nowhere", "note": "x"}):
+            self.post("/api/merge", {"files": ["2026-10-01-bomb-a.md", "2026-10-02-bomb-b.md"], "title": "Bomb", "then": "promote", **bad}, ok=False)
+            self.assertEqual(self.snapshot(), before)
+
+    def test_experiment_drops_an_old_due_line_and_cannot_be_extended(self):
+        path = self.note("2026-10-01-spike.md")
+        with open(path) as fh: text = fh.read()
+        with open(path, "w") as fh: fh.write(text.replace("- type: research", "- type: research\n- due: 2026-10-05"))
+        self.post("/api/action", {"file": "2026-10-01-spike.md", "action": "promote", "dest": "experiments", "note": "Known."})
+        self.assertNotIn("- due:", open(os.path.join(self.tmp, "experiments", "spike", "NOTES.md")).read())
+        [f] = self.get("/api/notes")["inflight"]
+        self.assertTrue(f["open_ended"])
+        self.assertIn("open-ended", self.post("/api/project/status", {"path": f["path"], "action": "extend"}, ok=False)["error"])
+
+    def test_one_card_per_experiment_folder(self):
+        d = os.path.join(self.tmp, "experiments", "spike"); os.makedirs(d)
+        for name in ("NOTES.md", "old-capture.md"):
+            with open(os.path.join(d, name), "w") as fh: fh.write("# Spike\n\n- promoted: 2026-10-01\n")
+        self.assertEqual([f["path"] for f in self.get("/api/notes")["inflight"]], ["experiments/spike/NOTES.md"])
+
+    def test_page_is_the_one_loaded_at_startup(self):
+        with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/") as r: page = r.read().decode()
+        self.assertIn(f"const VERSION='{server.VERSION}'", page)
+        self.assertEqual(page.encode(), server.INDEX_HTML)
+
     def test_fonts_are_served_and_nothing_else_under_static(self):
         with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/static/fonts/Lato-400.woff2") as r:
             self.assertEqual(r.headers["Content-Type"], "font/woff2")

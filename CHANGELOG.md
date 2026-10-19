@@ -4,6 +4,31 @@ The version shows in the page heading ("RawNotes Triage version X.XX") and
 in the startup line. Bump `VERSION` in `server.py` and add an entry here
 with every change. Versions 1.00-1.03 were numbered after the fact from git history.
 
+## 2.01 — 2026-10-18
+Bug fixes after the 2.00 redesign.
+- **Fix: page and server out of step.** The server read `index.html` from disk on every request, so a 1.14 server
+  still running after the 2.00 merge served the 2.00 page; Merge and the Pulse median wait then failed against
+  missing endpoints. The page is now read once at startup, and a tab that outlives a restart shows a banner
+  ("This page is vX but the server is vY") with a Reload button.
+- **Promote by destination:** Active (and Learning/Template) still need a ship-by date: the 3/7/14/30-day buttons
+  or an exact date from the new date picker (`due` in the API, within a year). **Experiments are open-ended:**
+  no `due:` line, still need done means. Same in Merge → Promote it.
+- **Projects board:** new **Experiments** column for promoted experiments (no countdown ring, "since" date;
+  Mark shipped and Kill, no +7 days). "No ship-by date" sits under it.
+- **Inbox filters** are one solid segmented bar (All / Open / Cooking / Stale / Stuck) plus a type bar with
+  **Any type**. Archive's fate filter uses the same bar.
+- **Stuck notes:** Inbox notes whose status already says decided (e.g. `status: promoted`) but were never moved get a
+  "not moved" tag, a **Stuck** filter, and an explanation in the reader. Nothing is moved automatically.
+- **Pulse median wait:** true median (mean of the middle two for an even count), "Inbox is empty" instead of 0d,
+  note count shown, and the load error if the server can't answer.
+- **Merge preview** shows the merged note's size and warns past 200 KB.
+- Review fixes (folded into 2.01 before merge): Merge → Promote checks destination, done means and ship-by before
+  writing anything (a bad date used to leave a half-done merge with no undo); the Merge form's date picker is no
+  longer overwritten by the form's input handler; promoting to Experiment drops any old `due:` line; the server
+  refuses +7 days on open-ended experiments; only an experiment's NOTES.md (or a flat file) makes a card, not
+  every note in its folder; Stuck only matches decided statuses (promoted, dead, merged, shipped…) in any case;
+  clearing the date goes back to the day count you picked; on a phone the filter counts sit under their labels.
+
 ## 2.00 — 2026-10-18
 Redesign: one look, one set of words, and the features that make triage faster. Proposal and mockups in
 `.scratch/ui-redesign/PROPOSAL.md` (kept out of git; it has screenshots of private notes).

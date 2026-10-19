@@ -77,10 +77,18 @@ svg.i{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.9;stro
 .search{display:flex;align-items:center;gap:8px;margin-top:14px;padding:0 12px;border:1px solid var(--line2);border-radius:10px;background:var(--solid);color:var(--mute)}
 .search input{flex:1;border:0;background:transparent;padding:9px 0;outline:none;color:var(--ink);min-width:0}
 .search:focus-within{border-color:var(--green);box-shadow:0 0 0 3px var(--green-soft)}
-.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}
-.chip{display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:999px;border:1px solid var(--line2);background:var(--solid);font-size:12.5px;font-weight:700;color:var(--ink2);cursor:pointer;white-space:nowrap}
+.chips{display:flex;margin-top:12px;border:1px solid var(--line2);border-radius:10px;overflow:hidden;background:var(--sunk)}
+.chips.sm{margin-top:6px}.chips.sm .chip{padding:5px 6px;font-size:12px}
+.chip{flex:1 1 0;min-width:0;display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:8px 6px;border:0;border-right:1px solid var(--line);background:none;font-size:13px;font-weight:700;color:var(--ink2);cursor:pointer;white-space:nowrap}
+.chip:last-child{border-right:0}.chip:hover{background:var(--solid)}
 .chip b{font-weight:900;color:var(--mute)}
-.chip.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}.chip.on b{color:inherit;opacity:.7}
+.chip.on{background:var(--green);color:var(--on-accent)}.chip.on b{color:inherit;opacity:.8}
+.chip.warn b{color:var(--rust)}.chip.warn.on{background:var(--rust)}.chip.warn.on b{color:inherit}
+.shipby{display:flex;gap:8px;align-items:stretch}.shipby .seg{flex:1}.shipby input[type=date]{width:auto;flex:none;padding:6px 8px}
+.shipby input[type=date].on{border-color:var(--green);box-shadow:0 0 0 3px var(--green-soft)}
+.flag{margin:0 0 14px;padding:10px 14px;border-radius:10px;border:1px solid var(--rust);color:var(--ink2);font-size:13px;background:var(--solid)}
+#vbanner{position:sticky;top:0;z-index:50;padding:9px 16px;background:var(--gold);color:#1c1a12;font-weight:700;font-size:13px;text-align:center}
+#vbanner button{margin-left:10px;font:inherit;text-decoration:underline;background:none;border:0;color:inherit;cursor:pointer}
 .dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex:none}
 .st{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;padding:2px 9px 2px 8px;border-radius:999px;white-space:nowrap;line-height:1.5}
 .st.open,.st.cooking,.st.soon{color:var(--gold-ink);background:var(--gold-soft)}
@@ -295,7 +303,7 @@ button.tile{cursor:pointer;font:inherit;color:inherit}
   .decide .q h3{font-size:19px}.decide .q .kh{display:none}
   .opts{grid-template-columns:1fr 1fr}.opt{min-height:60px}.opt .k{display:none}
   .form{grid-template-columns:1fr;padding:14px}.preview{display:none}.two{grid-template-columns:1fr}
-  .input{font-size:16px;min-height:44px}.seg button{min-height:44px}.btn{min-height:44px}
+  .input{font-size:16px;min-height:44px}.seg button,.chip{min-height:44px}.chip{flex-direction:column;gap:0;padding:4px 2px;font-size:12px;line-height:1.2}.btn{min-height:44px}
   .formfoot .hint{display:none}
   .doc{padding:20px 18px}.doc h1.title{font-size:32px}
   .scroll{height:auto;overflow:visible;padding:0 14px 30px}
@@ -437,7 +445,10 @@ function renderRail(){
 function toggleTheme(){const d=document.documentElement.classList.toggle('dark');localStorage.setItem('theme',d?'dark':'light');renderRail();if(S.route==='pulse')render()}
 
 /* ---------- Inbox model ---------- */
+const DECIDED=['promoted','dead','killed','merged','shipped','done','reference'];
+const stuck=n=>DECIDED.includes((n.status||'').toLowerCase());  // e.g. status: promoted but still in RawNotes/
 function passes(n){const f=S.f;
+  if(f.status==='stuck'&&!stuck(n))return false;
   if(f.status==='open'&&n.status!=='open')return false;
   if(f.status==='cooking'&&n.status!=='cooking')return false;
   if(f.status==='stale'&&!n.stale)return false;
@@ -466,23 +477,24 @@ function renderInbox(){
   const ord=navOrder(m);
   if(!S.sel||!ord.includes(S.sel))S.sel=ord[0]||null;
   if(S.sel&&S.sel.startsWith('stack:'))S.expanded=S.sel.slice(6);
-  const cnt=s=>live.filter(n=>s==='stale'?n.stale:n.status===s).length;
-  const chip=(v,label,n)=>`<button class="chip ${S.f.status===v?'on':''}" data-st="${v}">${label} <b>${n}</b></button>`;
-  const tchip=v=>`<button class="chip ${S.f.type===v?'on':''}" data-ty="${v}">${v[0].toUpperCase()+v.slice(1)}</button>`;
+  const cnt=s=>live.filter(n=>s==='stale'?n.stale:s==='stuck'?stuck(n):n.status===s).length,nstuck=cnt('stuck');
+  if(S.f.status==='stuck'&&!nstuck)S.f.status='all';
+  const chip=(v,label,n,cls='')=>`<button class="chip ${cls} ${S.f.status===v?'on':''}" data-st="${v}" aria-pressed="${S.f.status===v}">${label} <b>${n}</b></button>`;
+  const tchip=v=>`<button class="chip ${(S.f.type||'')===v?'on':''}" data-ty="${v}" aria-pressed="${(S.f.type||'')===v}">${v?v[0].toUpperCase()+v.slice(1):'Any type'}</button>`;
   $('#main').innerHTML=`<div class="split"><div class="listpane"><div class="pane-h"><h1>Inbox</h1>
     <div class="sub">${live.length} note${live.length===1?'':'s'} waiting on a decision · oldest first</div>
     <label class="search">${I.search}<input id="q" placeholder="Search notes…" value="${esc(S.f.q)}" autocomplete="off">${kb('/')}</label>
-    <div class="chips">${chip('all','All',live.length)}${chip('open','Open',cnt('open'))}${chip('cooking','Cooking',cnt('cooking'))}${chip('stale','Stale',cnt('stale'))}</div>
-    <div class="chips" style="margin-top:6px">${tchip('question')}${tchip('research')}${tchip('issue')}</div></div>
+    <div class="chips" role="group" aria-label="Status">${chip('all','All',live.length)}${chip('open','Open',cnt('open'))}${chip('cooking','Cooking',cnt('cooking'))}${chip('stale','Stale',cnt('stale'))}${nstuck?chip('stuck','Stuck',nstuck,'warn'):''}</div>
+    <div class="chips sm" role="group" aria-label="Type">${tchip('')}${tchip('question')}${tchip('research')}${tchip('issue')}</div></div>
     <div class="list" id="list"></div></div><div class="reader" id="reader"></div></div>`;
   $('#q').oninput=e=>{S.f.q=e.target.value;renderInboxList(true)};
   $$('[data-st]').forEach(b=>b.onclick=()=>{S.f.status=b.dataset.st;renderInbox()});
-  $$('[data-ty]').forEach(b=>b.onclick=()=>{S.f.type=S.f.type===b.dataset.ty?null:b.dataset.ty;renderInbox()});
+  $$('[data-ty]').forEach(b=>b.onclick=()=>{S.f.type=b.dataset.ty||null;renderInbox()});
   renderInboxList();renderReader()}
 function renderInboxList(fromSearch){
   const m=inboxModel(),el=$('#list');if(!el)return;
   const row=n=>{const a=n.age??0,c=ageCls(a);return `<div class="item ${n.file===S.sel?'sel':''}" data-f="${esc(n.file)}" role="button" tabindex="0">
-    <span class="bar ${c?'h'+c:''}"></span><div><div class="t">${esc(n.title)}</div><div class="m">${st(n.status)}<span>${esc(n.type)}</span>${n.stale?'<span class="err">stale</span>':''}</div></div><span class="age ${c?'a'+c:''}" title="waiting ${a} days">${a}d</span></div>`};
+    <span class="bar ${c?'h'+c:''}"></span><div><div class="t">${esc(n.title)}</div><div class="m">${st(n.status)}<span>${esc(n.type)}</span>${n.stale?'<span class="err">stale</span>':''}${stuck(n)?'<span class="err" title="Its status says it was decided, but it is still in the Inbox">not moved</span>':''}</div></div><span class="age ${c?'a'+c:''}" title="waiting ${a} days">${a}d</span></div>`};
   const member=n=>`<div class="item member ${n.file===S.sel?'sel':''}" data-f="${esc(n.file)}" role="button" tabindex="0"><span class="bar"></span>
     <button class="cb ${S.batch.has(n.file)?'on':''}" data-cb="${esc(n.file)}" aria-label="Select"></button><div><div class="t" style="font-weight:${S.batch.has(n.file)?700:400}">${esc(n.title)}</div></div><span class="age">${n.age}d</span></div>`;
   const ent=e=>{if(e.kind==='note')return row(e.n);const open=S.expanded===e.key,id='stack:'+e.key;
@@ -508,12 +520,23 @@ function seg(name,items,on){return `<div class="seg" data-seg="${name}">${items.
 const segVal=name=>{const b=document.querySelector(`[data-seg="${name}"] .on`);return b?b.dataset.v:null};
 function wireSegs(root,onChange){root.querySelectorAll('[data-seg]').forEach(s=>s.querySelectorAll('button').forEach(b=>b.onclick=()=>{s.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b));onChange&&onChange()}))}
 
+// Ship by: day buttons or an exact date, whichever was touched last. Experiments have no ship-by.
+function shipBy(days){const min=addDays(1),max=addDays(365);
+  return `<div class="field" id="shipby"><span class="label">Ship by</span><div class="shipby">${seg('due',days.map(d=>[d,d+'d']),'7')}<input type="date" class="input" id="dueDate" min="${min}" max="${max}" aria-label="Exact ship-by date"></div></div>`}
+function wireShipBy(root,onChange){const dd=root.querySelector('#dueDate');if(!dd)return;
+  const days=[...root.querySelectorAll('[data-seg="due"] button')];let last=segVal('due')||'7';
+  dd.oninput=()=>{dd.classList.toggle('on',!!dd.value);days.forEach(b=>b.classList.toggle('on',!dd.value&&b.dataset.v===last));onChange&&onChange()};
+  days.forEach(b=>b.addEventListener('click',()=>{last=b.dataset.v;dd.value='';dd.classList.remove('on');onChange&&onChange()}))}
+const shipDate=()=>{const dd=$('#dueDate');return dd&&dd.value?dd.value:addDays(+segVal('due')||7)};
+const shipBody=dest=>{if(dest==='experiments')return{};const dd=$('#dueDate');return dd&&dd.value?{due:dd.value}:{due_days:segVal('due')}};
+function syncShipBy(dest){const sb=$('#shipby');if(sb)sb.style.display=dest==='experiments'?'none':'';
+  const n=$('#note');if(n)n.placeholder=dest==='experiments'?'What will you know or have when this experiment is done?':'What does shipped look like? One or two sentences.'}
 function formHtml(mode,n){const s=slugOf(n.file);
   const foot=(btn,cls,hint)=>`<div class="formfoot"><button type="submit" class="btn ${cls}" id="go">${btn} ${kb('↵')}</button><button type="button" class="btn ghost" id="cancel">Cancel ${kb('Esc')}</button><span class="err" id="ferr"></span><span class="hint">${hint}</span></div>`;
   if(mode==='promote')return `<form class="form promote" id="form"><div>
     <div class="field"><span class="label">Promote to</span>${seg('dest',[['active','Active','ship it'],['experiments','Experiment','spike'],['learning','Learning','study'],['templates','Template','scaffold']],'active')}</div>
     <div class="two"><div class="field"><label class="label" for="slug">Project name</label><input class="input mono" id="slug" value="${esc(s)}" autocomplete="off"></div>
-    <div class="field"><span class="label">Ship by</span>${seg('due',[['3','3d'],['7','7d'],['14','14d'],['30','30d']],'7')}</div></div>
+    ${shipBy(['3','7','14','30'])}</div>
     <div class="field"><label class="label" for="note">Done means <em>required</em></label><textarea class="input" id="note" rows="3" placeholder="What does shipped look like? One or two sentences."></textarea></div></div>
     <div class="preview" id="pv"></div>${foot(I.up+'Promote &amp; next','primary','Undo afterwards with Z · every move is logged')}</form>`;
   if(mode==='reference')return `<form class="form reference" id="form"><div>
@@ -528,9 +551,10 @@ function formHtml(mode,n){const s=slugOf(n.file);
     <div class="field"><label class="label" for="note">Why not</label><input class="input" id="note" placeholder="one line: why this died (optional)"></div></div>
     <div class="preview"><div class="label">What will happen</div><ol><li>Sets <b>status: dead</b> and writes your reason under ## Outcome</li><li>Moves the note to <span class="mono">RawNotes/done/</span>; it shows up in the <b>Archive</b></li></ol></div>${foot(I.x+'Kill &amp; next','danger','Restore it from the Archive any time')}</form>`}
 function updatePreview(){const pv=$('#pv');if(!pv||!S.mode)return;const slug=($('#slug')?.value||'').toLowerCase().replace(/[^a-z0-9-]/g,'')||'…';
-  if(S.mode==='promote'){const d=segVal('dest'),days=+segVal('due'),folder=d==='active'||d==='experiments';
+  if(S.mode==='promote'){const d=segVal('dest'),folder=d==='active'||d==='experiments',exp=d==='experiments',due=shipDate();syncShipBy(d);
+    const days=Math.round((new Date(due+'T00:00')-new Date(addDays(0)+'T00:00'))/864e5);
     pv.innerHTML=`<div class="label">What will happen</div><ol><li>Creates <span class="mono">~/Projects/${d}/${slug}${folder?'/NOTES.md':'.md'}</span></li>
-      <li>Stamps <b>promoted</b> today · <b>ship by ${fmtDate(addDays(days))}</b></li><li>Writes your <b>done means</b> into its ## Plan</li><li>Moves the capture to <span class="mono">RawNotes/done/</span></li><li>Shows up in <b>Projects</b> with a ${days}-day clock</li></ol>`}
+      <li>Stamps <b>promoted</b> today · ${exp?'<b>no ship-by date</b> (open-ended)':`<b>ship by ${fmtDate(due)}</b>`}</li><li>Writes your <b>done means</b> into its ## Plan</li><li>Moves the capture to <span class="mono">RawNotes/done/</span></li><li>Shows up in <b>Projects</b> ${exp?'under Experiments, no clock':`with a ${days}-day clock`}</li></ol>`}
   if(S.mode==='reference')pv.innerHTML=`<div class="label">What will happen</div><ol><li>Copies to <span class="mono">~/Projects/reference/${slug}.md</span> with Obsidian properties</li><li>Moves the capture to <span class="mono">RawNotes/done/</span></li><li>Add it to <span class="mono">reference/README.md</span> if it belongs in the index</li></ol>`}
 
 function renderReader(){const r=$('#reader');if(!r)return;r.scrollTop=0;
@@ -539,12 +563,13 @@ function renderReader(){const r=$('#reader');if(!r)return;r.scrollTop=0;
   const n=S.notes.live.find(x=>x.file===S.sel);if(!n){r.innerHTML='';return}
   r.innerHTML=`<button class="back" onclick="backToList()">‹ Inbox</button>
    <div class="card decide ${S.mode?'open':''}" id="decide"><div class="q"><h3>What happens to this note?</h3><span class="muted">waiting ${n.age} day${n.age===1?'':'s'}</span><span class="muted kh" style="margin-left:auto">${kb('J')} ${kb('K')} next / prev</span></div>
+   ${stuck(n)?`<div class="flag"><b>Stuck:</b> this note says <span class="mono">status: ${esc(n.status)}</span> but never left the Inbox. Check that its destination exists, then move it to <span class="mono">done/</span> yourself, or Keep it to put it back in play.</div>`:''}
    ${optCards(S.mode)}${S.mode?formHtml(S.mode,n):''}</div><div id="doc" class="card doc"><div class="muted">Loading…</div></div>`;
   wireDecide(n);loadDoc(n)}
 function wireDecide(n){
   $$('#decide .opt').forEach(b=>b.onclick=()=>setMode(S.mode===b.dataset.m?null:b.dataset.m));
   const f=$('#form');if(!f)return;
-  wireSegs(f,updatePreview);$('#slug')&&($('#slug').oninput=updatePreview);updatePreview();
+  wireSegs(f,updatePreview);wireShipBy(f,updatePreview);$('#slug')&&($('#slug').oninput=updatePreview);updatePreview();
   f.onsubmit=e=>{e.preventDefault();apply()};$('#cancel').onclick=()=>setMode(null);
   const first=f.querySelector('textarea,input#note')||f.querySelector('input');if(first&&!narrow())first.focus()}
 function setMode(m){if(!S.sel||S.sel.startsWith('stack:'))return;S.mode=m;const n=S.notes.live.find(x=>x.file===S.sel);
@@ -570,7 +595,7 @@ async function apply(){
   if(S.sel&&S.sel.startsWith('stack:'))return applyBatch();
   if(!S.mode||!S.sel)return;const go=$('#go'),err=$('#ferr');
   const val=id=>{const e=document.getElementById(id);return e?e.value.trim():undefined};
-  const body={file:S.sel,action:S.mode,note:val('note'),slug:val('slug'),dest:segVal('dest'),due_days:segVal('due'),status:segVal('status')};
+  const body={file:S.sel,action:S.mode,note:val('note'),slug:val('slug'),dest:segVal('dest'),status:segVal('status'),...(S.mode==='promote'?shipBody(segVal('dest')):{})};
   if(S.mode==='promote'&&!body.note){err.textContent='Say what done means first.';$('#note').focus();return}
   go.disabled=true;err.textContent='';
   try{const ord=navOrder(inboxModel()),i=ord.indexOf(S.sel);
@@ -589,16 +614,16 @@ function renderBatch(){const k=S.sel.slice(6),stk=inboxModel().stacks[k];const r
    <form class="form ${S.batchMode==='merge'?'promote':S.batchMode}" id="form">${batchForm(stk)}</form></div>
    <div class="card doc" style="padding:22px 28px"><h3 style="margin:0 0 6px;font-size:22px">Selected notes</h3><table class="btable" id="btable"></table></div>`;
   $$('[data-bm]').forEach(b=>b.onclick=()=>{S.batchMode=b.dataset.bm;renderBatch()});
-  const f=$('#form');wireSegs(f,()=>{if(S.batchMode==='merge'){$('#promoteBits').style.display=segVal('then')==='promote'?'':'none';batchPreview()}});
+  const f=$('#form'),sync=()=>{if(S.batchMode==='merge'){$('#promoteBits').style.display=segVal('then')==='promote'?'':'none';syncShipBy(segVal('dest'));batchPreview()}};wireSegs(f,sync);
   f.onsubmit=e=>{e.preventDefault();apply()};$('#cancel').onclick=()=>{S.sel=stk.members[0].file;S.expanded=k;renderInboxList();renderReader()};
-  f.querySelectorAll('input,textarea').forEach(i=>i.oninput=batchPreview);
+  f.querySelectorAll('input,textarea').forEach(i=>i.oninput=batchPreview);wireShipBy(f,sync);  // after: it owns #dueDate's oninput
   renderBatchSummary()}
 function batchForm(stk){const m=S.batchMode;
   const foot=(btn,cls)=>`<div class="formfoot"><button type="submit" class="btn ${cls}" id="go">${btn} ${kb('↵')}</button><button type="button" class="btn ghost" id="cancel">Cancel</button><span class="err" id="ferr"></span><span class="hint" id="bleft"></span></div>`;
   if(m==='merge')return `<div><div class="field"><label class="label" for="mtitle">Merged note title</label><input class="input" id="mtitle" value="${esc(stk.name)}"></div>
     <div class="field"><span class="label">Then</span>${seg('then',[['inbox','Leave in Inbox'],['promote','Promote it','new project'],['reference','File as reference']],'inbox')}</div>
     <div id="promoteBits" style="display:none"><div class="two"><div class="field"><span class="label">Promote to</span>${seg('dest',[['active','Active'],['experiments','Experiment']],'active')}</div>
-      <div class="field"><span class="label">Ship by</span>${seg('due',[['3','3d'],['7','7d'],['14','14d']],'7')}</div></div>
+      ${shipBy(['3','7','14'])}</div>
       <div class="field"><label class="label" for="slug">Project name</label><input class="input mono" id="slug" value="${esc(stackKey(stk.members[0]))}"></div>
       <div class="field"><label class="label" for="note">Done means <em>required</em></label><textarea class="input" id="note" rows="2"></textarea></div></div></div>
     <div class="preview" id="pv"></div>${foot(I.merge+'Merge','primary')}`;
@@ -607,7 +632,8 @@ function batchForm(stk){const m=S.batchMode;
   return `<div><div class="field"><label class="label" for="note">Why not</label><input class="input" id="note" placeholder="one line, written into each note"></div></div><div class="preview" id="pv"></div>${foot(I.x+'Kill all','danger')}`}
 function batchPreview(){const pv=$('#pv');if(!pv)return;const n=S.batch.size,m=S.batchMode,t=new Date().toLocaleDateString('sv');
   if(m==='merge'){const title=($('#mtitle')?.value||'merged').trim(),slug=title.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,60),then=segVal('then');
-    pv.innerHTML=`<div class="label">What will happen</div><ol><li>Writes <span class="mono">RawNotes/${t}-${esc(slug)}.md</span> with ${n} sections, newest first</li><li>Moves the ${n} sources to <span class="mono">done/</span>, each pointing at the merge</li>${then==='promote'?`<li>Promotes the merged note → <b>Projects</b>, ship by ${fmtDate(addDays(+segVal('due')))}</li>`:then==='reference'?'<li>Files the merged note in <span class="mono">reference/</span></li>':'<li>The merged note waits in the Inbox</li>'}</ol>`}
+    const kb_=S.notes.live.filter(x=>S.batch.has(x.file)).reduce((a,x)=>a+x.size,0)/1024,size=kb_>=1024?(kb_/1024).toFixed(1)+' MB':Math.round(kb_)+' KB';
+    pv.innerHTML=`<div class="label">What will happen</div><ol><li>Writes <span class="mono">RawNotes/${t}-${esc(slug)}.md</span> with ${n} sections, newest first · <b ${kb_>200?'class="err" title="A big note: consider merging smaller groups (untick some)"':''}>about ${size}</b></li><li>Moves the ${n} sources to <span class="mono">done/</span>, each pointing at the merge</li>${then==='promote'?`<li>Promotes the merged note → <b>Projects</b>, ${segVal('dest')==='experiments'?'as an open-ended experiment':'ship by '+fmtDate(shipDate())}</li>`:then==='reference'?'<li>Files the merged note in <span class="mono">reference/</span></li>':'<li>The merged note waits in the Inbox</li>'}</ol>`}
   else pv.innerHTML=`<div class="label">What will happen</div><ol><li>${m==='kill'?`Kills ${n} notes and moves them to the Archive`:m==='keep'?`Sets ${n} notes to ${segVal('status')}`:`Copies ${n} notes into <span class="mono">reference/</span>, captures to done/`}</li><li>One undo step for all of them</li></ol>`}
 function renderBatchSummary(){const k=S.sel.slice(6),stk=inboxModel().stacks[k];if(!stk||!$('#btable'))return;
   const n=S.batch.size;$('#bcount').textContent=`${n} of ${stk.members.length} ${stk.name} notes selected`;
@@ -619,7 +645,7 @@ async function applyBatch(){const files=[...S.batch],m=S.batchMode,go=$('#go'),e
   if(m==='merge'&&files.length<2){err.textContent='Merging needs at least two notes.';return}
   if(m==='merge'&&segVal('then')==='promote'&&!val('note')){err.textContent='Say what done means first.';$('#note').focus();return}
   go.disabled=true;err.textContent='';
-  try{const r=m==='merge'?await api('/api/merge',{files,title:val('mtitle'),then:segVal('then'),dest:segVal('dest'),due_days:segVal('due'),slug:val('slug'),note:val('note')})
+  try{const r=m==='merge'?await api('/api/merge',{files,title:val('mtitle'),then:segVal('then'),dest:segVal('dest'),...shipBody(segVal('dest')),slug:val('slug'),note:val('note')})
       :await api('/api/batch',{files,action:m,note:val('note'),status:segVal('status')});
     S.undoCount++;await loadNotes();S.expanded=null;S.batch=new Set();S.sel=r.file||null;toast(r.msg,{undo:true});render()}
   catch(e){go.disabled=false;err.textContent=e.message}}
@@ -630,7 +656,7 @@ function renderArchive(){
   const items=done.filter(n=>(af.fate==='all'||n.fate===af.fate)&&(!q||(n.title+' '+n.file).toLowerCase().includes(q)));
   if(!S.asel||!items.some(n=>n.file===S.asel))S.asel=items[0]?.file||null;
   const cnt=f=>done.filter(n=>n.fate===f).length;
-  const chip=(v,l)=>`<button class="chip ${af.fate===v?'on':''}" data-fate="${v}">${l} <b>${v==='all'?done.length:cnt(v)}</b></button>`;
+  const chip=(v,l)=>`<button class="chip ${af.fate===v?'on':''}" data-fate="${v}" aria-pressed="${af.fate===v}">${l} <b>${v==='all'?done.length:cnt(v)}</b></button>`;
   $('#main').innerHTML=`<div class="split"><div class="listpane"><div class="pane-h"><h1>Archive</h1><div class="sub">Everything decided · newest first · nothing is ever deleted</div>
     <label class="search">${I.search}<input id="q" placeholder="Search the archive…" value="${esc(af.q)}" autocomplete="off">${kb('/')}</label>
     <div class="chips">${chip('all','All')}${chip('promoted','Promoted')}${chip('reference','Reference')}${chip('killed','Killed')}${chip('merged','Merged')}</div></div>
@@ -668,15 +694,16 @@ function renderProjects(){
     loadProjects().then(()=>{if(S.route==='projects')render()}).catch(e=>{$('#main').innerHTML=`<div class="scroll"><p class="err">${esc(e.message)}</p></div>`});return}
   const cards=projectCards(),open=cards.filter(c=>!c.f||!c.f.done);
   const late=open.filter(c=>c.f&&c.f.days_left!==null&&c.f.days_left<0),week=open.filter(c=>c.f&&c.f.days_left>=0&&c.f.days_left<=7),
-    later=open.filter(c=>c.f&&(c.f.days_left>7||c.f.days_left===null)),none=open.filter(c=>!c.f),closed=cards.filter(c=>c.f&&c.f.done);
-  if(!S.psel||!cards.some(c=>c.id===S.psel))S.psel=(late[0]||week[0]||later[0]||none[0]||{}).id||null;
+    later=open.filter(c=>c.f&&!c.f.open_ended&&(c.f.days_left>7||c.f.days_left===null)),exps=open.filter(c=>c.f&&c.f.open_ended),
+    none=open.filter(c=>!c.f),closed=cards.filter(c=>c.f&&c.f.done);
+  if(!S.psel||!cards.some(c=>c.id===S.psel))S.psel=(late[0]||week[0]||later[0]||exps[0]||none[0]||{}).id||null;
   const nodod=(S.projects||[]).filter(p=>!p.done_defined).length,gh=(S.projects||[]).filter(p=>p.gh&&p.gh.pushed).length;
   const card=c=>{const dm=c.p?(c.p.done_defined?null:'＋ Define “done means”'):null;
     return `<button type="button" class="card pc ${c.id===S.psel?'sel':''} ${c.f&&c.f.done?'closed':''}" data-pid="${esc(c.id)}"><div class="top"><h4>${esc(c.title)}</h4>${c.f&&!c.f.done?ring(c.f):''}</div>
       <div class="dm ${dm?'miss':''}">${dm||esc(c.f&&c.f.title!==c.title?c.f.title:(c.p?c.p.path:c.f.path))}</div>
-      <div class="row">${c.f&&c.f.done?st(c.f.status==='dead'?'killed':'shipped',stLabel[c.f.status]||c.f.status):''}${c.p?ghChip(c.p.gh):st('plain',c.f.dest)}${c.f&&c.f.due&&!c.f.done?`<span class="st plain">ship by ${c.f.due.slice(5)}</span>`:''}</div></button>`};
+      <div class="row">${c.f&&c.f.done?st(c.f.status==='dead'?'killed':'shipped',stLabel[c.f.status]||c.f.status):''}${c.p?ghChip(c.p.gh):st('plain',c.f.dest)}${c.f&&c.f.due&&!c.f.done?`<span class="st plain">ship by ${c.f.due.slice(5)}</span>`:''}${c.f&&c.f.open_ended&&!c.f.done?`<span class="st plain">since ${esc((c.f.promoted||'').slice(5))}</span>`:''}</div></button>`};
   const col=(cls,label,cs,more='')=>`<div class="col"><h3>${st(cls,label)} ${cs.length}</h3>${cs.map(card).join('')||'<div class="muted" style="padding:0 4px 14px;font-size:13px">Nothing here.</div>'}${more}</div>`;
-  $('#main').innerHTML=`<div class="scroll" id="pscroll"><div class="pane-h" style="padding-left:0;display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap"><div><h1>Projects</h1><div class="sub">Everything you promoted, sorted by its ship-by date</div></div>
+  $('#main').innerHTML=`<div class="scroll" id="pscroll"><div class="pane-h" style="padding-left:0;display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap"><div><h1>Projects</h1><div class="sub">Everything you promoted: active work by its ship-by date, experiments open-ended</div></div>
     <button class="btn sm" id="pref" style="margin-left:auto">Refresh</button></div>
    <div class="tiles"><div class="card tile"><div class="num" style="color:${late.length?'var(--rust)':'inherit'}">${late.length}</div><div class="lab">${st('late','Overdue')}</div></div>
     <div class="card tile"><div class="num">${week.length}</div><div class="lab">${st('soon','Ship this week')}</div></div>
@@ -684,7 +711,7 @@ function renderProjects(){
     <div class="card tile"><div class="num">${gh}<span style="font-size:20px;color:var(--mute)">/${(S.projects||[]).length}</span></div><div class="lab">${st('ok','On GitHub')}</div></div></div>
    <div class="board">${col('late','Overdue',late,later.length?`<h3 style="margin-top:18px">${st('ok','Later')} ${later.length}</h3>${later.map(card).join('')}`:'')}
     ${col('soon','Ship this week',week,closed.length?`<h3 style="margin-top:18px">${st('plain','Closed')} ${closed.length}</h3>${closed.map(card).join('')}`:'')}
-    ${col('plain','No ship-by date',none)}
+    ${col('ok','Experiments',exps,`<h3 style="margin-top:18px">${st('plain','No ship-by date')} ${none.length}</h3>${none.map(card).join('')||'<div class="muted" style="padding:0 4px 14px;font-size:13px">Nothing here.</div>'}`)}
     <div class="card drawer ${S.psel?'':'none'}" id="drawer"></div></div></div>`;
   $('#pref').onclick=async()=>{S.projects=null;S.pdetail=null;await loadNotes();render()};
   $$('[data-pid]').forEach(b=>b.onclick=()=>selectProject(b.dataset.pid,true));
@@ -693,10 +720,11 @@ function selectProject(id,nav){S.psel=id;$$('[data-pid]').forEach(b=>b.classList
   if(nav&&narrow()){document.body.classList.add('detail');scrollTo(0,0)}}
 async function renderDrawer(){const d=$('#drawer');if(!d)return;const c=projectCards().find(x=>x.id===S.psel);if(!c){d.innerHTML='';return}
   const f=c.f,p=c.p;
-  const clock=f?`<div class="sec label">Clock</div><div style="font-size:13px">${f.promoted?`Promoted <b>${esc(f.promoted)}</b> · `:''}ship by <b>${esc(f.due)}</b>${f.done?` · <b>${esc(stLabel[f.status]||f.status)}</b>`:''}
+  const clock=f&&f.open_ended?`<div class="sec label">Clock</div><div style="font-size:13px">${f.promoted?`Promoted <b>${esc(f.promoted)}</b> · `:''}open-ended experiment, no ship-by date${f.done?` · <b>${esc(stLabel[f.status]||f.status)}</b>`:''}</div>`
+    :f?`<div class="sec label">Clock</div><div style="font-size:13px">${f.promoted?`Promoted <b>${esc(f.promoted)}</b> · `:''}ship by <b>${esc(f.due)}</b>${f.done?` · <b>${esc(stLabel[f.status]||f.status)}</b>`:''}
      ${!f.done&&f.days_left!==null?`<div class="clockbar"><i style="width:${f.days_left<0?100:Math.max(4,100-f.days_left/Math.max(7,f.days_left)*100)}%;background:${f.days_left<0?'var(--rust)':f.days_left<=2?'var(--gold)':'var(--green)'}"></i></div>`:''}</div>`
     :`<div class="sec label">Clock</div><div class="muted" style="font-size:13px">Not on the clock. Add a <span class="mono">- due: YYYY-MM-DD</span> line to its NOTES.md to give it a ship-by date.</div>`;
-  const acts=f&&!f.done?`<div class="acts"><button class="btn primary" data-pa="shipped">${I.check}Mark shipped</button><button class="btn" data-pa="extend">${I.clock}+7 days</button>
+  const acts=f&&!f.done?`<div class="acts"><button class="btn primary" data-pa="shipped">${I.check}Mark shipped</button>${f.open_ended?'':`<button class="btn" data-pa="extend">${I.clock}+7 days</button>`}
      ${p&&p.gh&&p.gh.repo?`<button class="btn" id="browse">${I.gh}Browse repo</button>`:`<button class="btn" id="openf">${I.folder}Open folder</button>`}<button class="btn" data-pa="kill" style="color:var(--rust)">${I.x}Kill</button></div>`
     :`<div class="acts">${p&&p.gh&&p.gh.repo?`<button class="btn" id="browse">${I.gh}Browse repo</button>`:''}<button class="btn" id="openf">${I.folder}Open folder</button></div>`;
   const head=`<button class="back" onclick="backToList()">‹ Projects</button><div style="display:flex;gap:6px;flex-wrap:wrap">${f&&!f.done&&f.days_left!==null?st(f.days_left<0?'late':f.days_left<=2?'soon':'ok',f.days_left<0?`${-f.days_left} days late`:`${f.days_left} days left`):''}${p?ghChip(p.gh):''}</div>
@@ -787,7 +815,7 @@ function renderPulse(){
   <div class="tiles"><div class="card tile"><div class="num">${a&&a.total!==undefined?a.total:'–'}</div><div class="lab">commits pushed this year</div></div>
    <div class="card tile"><div class="num">${a&&a.active_days!==undefined?a.active_days:'–'}</div><div class="lab">active days</div></div>
    <div class="card tile"><div class="num">${a&&a.streak!==undefined?a.streak:'–'}<span style="font-size:20px;color:var(--mute)">d</span></div><div class="lab">current streak</div></div>
-   <div class="card tile"><div class="num" style="color:${s.median_wait>7?'var(--rust)':'inherit'}">${s.median_wait??'–'}<span style="font-size:20px;color:var(--mute)">d</span></div><div class="lab">median wait in the Inbox (goal ≤ 7) · oldest ${s.oldest??'–'}d</div></div></div>
+   <div class="card tile"><div class="num" style="color:${s.median_wait>7?'var(--rust)':'inherit'}">${s.median_wait==null?'–':s.median_wait}${s.median_wait==null?'':'<span style="font-size:20px;color:var(--mute)">d</span>'}</div><div class="lab">${s.error?`couldn't load: ${esc(s.error)}`:s.median_wait==null?'median wait in the Inbox (goal ≤ 7) · Inbox is empty':`median wait in the Inbox (goal ≤ 7) · oldest ${s.oldest}d · ${s.live} notes`}</div></div></div>
   <div class="card panel" style="margin-bottom:16px"><h3>Pushed to GitHub</h3><div class="cap">Your commits on default branches, last 52 weeks · private repos included · local-only repos never show</div>${heat}</div>
   <div class="pgrid"><div class="card panel"><h3>Inbox flow</h3><div class="cap">Notes captured vs. notes decided, per week (decisions from triage.log)</div>
     <div class="legend"><span><i style="background:var(--s1)"></i>Captured</span><span><i style="background:var(--s2)"></i>Decided</span></div>${chart}
@@ -867,8 +895,14 @@ function route(){const r=(location.hash.match(/^#\/(\w+)/)||[])[1];const nr=['in
 addEventListener('hashchange',route);
 $('#mPal').onclick=openPalette;$('#mPal').innerHTML=I.search;
 // coming back to the tab (or the phone app) picks up notes changed elsewhere, unless you're mid-decision
+// a tab left open across a restart (or an old server still running) talks to a different API: say so
+async function checkVersion(){try{const v=await api('/api/version');let b=$('#vbanner');
+  if(v.version===VERSION){b&&b.remove();return}
+  if(!b){b=document.createElement('div');b.id='vbanner';b.setAttribute('role','alert');document.body.prepend(b)}
+  b.innerHTML=`This page is v${esc(VERSION)} but the server is v${esc(v.version)} (started ${esc(v.started.replace('T',' '))}). <button onclick="location.reload()">Reload the page</button>`}catch(e){}}
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')checkVersion()});
 document.addEventListener('visibilitychange',async()=>{if(document.visibilityState!=='visible'||S.mode||$('#overlay').innerHTML)return;
   try{await refresh();if(!(S.route==='inbox'&&S.sel&&S.sel.startsWith('stack:')))render()}catch(e){}});
 (async()=>{try{await loadNotes()}catch(e){$('#main').innerHTML=`<div class="empty">Can't reach the triage server: ${esc(e.message)}</div>`;return}
-  route();loadActivity();setInterval(()=>loadActivity(),600000)})();
+  route();loadActivity();checkVersion();setInterval(()=>loadActivity(),600000)})();
 </script></body></html>
