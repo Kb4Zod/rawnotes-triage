@@ -140,6 +140,78 @@ class Keyboard(BrowserCase):
         self.assertTrue(os.path.exists(os.path.join(self.notes, "done", "2026-08-01-lone.md")))
 
 
+class Flows(BrowserCase):
+    """The everyday flows still work end to end through the page, including Undo."""
+    def done_toast(self): self.page.wait("document.querySelector('#toast.show')"); self.settle(0.2)
+
+    def read(self, *p): return open(os.path.join(self.notes, *p), encoding="utf-8").read()
+
+    def test_keep_with_a_next_step_then_undo(self):
+        self.page.click("#list .item[data-f='2026-10-15-recent.md']"); self.page.key("c"); self.page.wait("document.querySelector('#form.keep')")
+        self.page.click("[data-seg=status] [data-v=cooking]"); self.focus("#note"); self.page.type("call the vendor"); self.page.click("#go"); self.done_toast()
+        text = self.read("2026-10-15-recent.md"); self.assertIn("- status: cooking", text); self.assertIn("next step", text); self.assertIn("call the vendor", text)
+        self.page.click("#tUndo"); self.settle(0.5); self.assertIn("- status: open", self.read("2026-10-15-recent.md"))
+
+    def test_kill_then_undo_with_the_z_key(self):
+        self.page.click("#list .item[data-f='2026-10-15-recent.md']"); self.page.key("x"); self.page.wait("document.querySelector('#form.kill')")
+        self.page.type("dupe"); self.page.key("Enter"); self.done_toast()
+        self.assertIn("dupe", self.read("done", "2026-10-15-recent.md")); self.assertFalse(os.path.exists(os.path.join(self.notes, "2026-10-15-recent.md")))
+        self.page.eval("document.activeElement&&document.activeElement.blur()"); self.page.key("z"); self.settle(0.6)
+        self.assertTrue(os.path.exists(os.path.join(self.notes, "2026-10-15-recent.md")))
+
+    def test_restore_from_the_archive(self):
+        self.open("archive"); self.page.wait("document.querySelector('#restore')"); self.page.click("#restore"); self.done_toast()
+        self.assertTrue(os.path.exists(os.path.join(self.notes, "2026-09-01-archived.md")))
+        self.assertIn("- status: cooking", self.read("2026-09-01-archived.md"))
+
+    def test_promote_creates_the_project_and_it_appears_on_the_board(self):
+        self.page.click("#list .item[data-f='2026-10-15-recent.md']"); self.page.key("p"); self.page.wait("document.querySelector('#form.promote')")
+        self.focus("#note"); self.page.type("Works on my phone"); self.page.click("#go"); self.done_toast()
+        notes = open(os.path.join(self.tmp, "active", "recent", "NOTES.md")).read()
+        self.assertIn("- definition of done: Works on my phone", notes); self.assertIn("- due:", notes)
+
+    def test_reference_files_the_note(self):
+        self.page.click("#list .item[data-f='2026-10-15-recent.md']"); self.page.key("r"); self.page.wait("document.querySelector('#form.reference')")
+        self.page.click("#go"); self.done_toast()
+        self.assertIn("tags:", open(os.path.join(self.tmp, "reference", "recent.md")).read())
+
+    def test_merge_from_a_stack_through_the_button(self):
+        self.focus(".item.stack"); self.page.key("Enter"); self.page.wait("document.querySelector('.item.member')")
+        self.page.click("#go"); self.done_toast()
+        self.assertEqual(len(os.listdir(os.path.join(self.notes, "done"))), 5)  # four sources + the one already there
+        merged = [f for f in os.listdir(self.notes) if f.endswith("arcane-bomb.md")]
+        self.assertEqual(len(merged), 1); self.assertIn("## Arcane bomb D", self.read(merged[0]))
+
+    def test_unticking_a_member_leaves_it_in_the_inbox(self):
+        self.focus(".item.stack"); self.page.key("Enter"); self.page.wait("document.querySelector('.item.member')")
+        self.page.eval("document.querySelector('.item.member input').click()"); self.settle(0.2)
+        self.page.click("#go"); self.done_toast()
+        self.assertTrue(os.path.exists(os.path.join(self.notes, "2026-10-01-arcane-bomb-a.md")))
+
+    def test_mark_shipped_from_projects_then_undo(self):
+        self.open("projects"); self.page.click("[data-pid='active/demo/NOTES.md']"); self.page.wait("document.querySelector('[data-pa=shipped]')")
+        self.page.click("[data-pa=shipped]"); self.done_toast()
+        self.assertIn("- status: shipped", open(os.path.join(self.tmp, "active", "demo", "NOTES.md")).read())
+        self.page.click("#tUndo"); self.settle(0.6)
+        self.assertIn("- status: promoted", open(os.path.join(self.tmp, "active", "demo", "NOTES.md")).read())
+
+    def test_list_search_and_palette_search_find_notes(self):
+        self.focus("#q"); self.page.type("lone"); self.settle(0.3)
+        self.assertEqual(self.page.eval("[...document.querySelectorAll('#list .t')].map(e=>e.textContent)"), ["Lone old note"])
+        self.page.eval("document.querySelector('#q').value='';document.querySelector('#q').dispatchEvent(new Event('input'))")
+        self.page.key("k", ctrl=True); self.page.wait("document.querySelector('#pq')"); self.page.type("archived"); self.settle(0.3)
+        self.assertIn("Archived note", self.text("#pres"))
+
+    def test_open_folder_button_sends_a_project_not_a_path(self):
+        self.open("projects"); self.page.click("[data-pid='active/demo/NOTES.md']"); self.page.wait("document.querySelector('#openf') && document.querySelector('#dodEdit')")  # layout has settled
+        opened = []
+        import unittest.mock as um
+        with um.patch.object(server, "open_path", side_effect=opened.append):
+            self.page.click("#openf"); self.settle(0.5)
+        self.assertEqual(len(self.calls("POST", "/api/open")), 1)
+        self.assertEqual(opened, [os.path.join(self.tmp, "active", "demo")])
+
+
 class StaleReplies(BrowserCase):
     def test_a_late_note_reply_cannot_overwrite_the_note_now_shown(self):
         self.page.eval("window.__holds.push({match:'/api/note?f=2026-10-15-recent.md'})")

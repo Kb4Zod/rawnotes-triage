@@ -4,6 +4,58 @@ The version shows in the page heading ("RawNotes Triage version X.XX") and
 in the startup line. Bump `VERSION` in `server.py` and add an entry here
 with every change. Versions 1.00-1.03 were numbered after the fact from git history.
 
+## 2.05 — 2026-10-19
+Reliability, accessibility and load fixes from the v2.04 code review and browser audit (no new features, no new
+dependencies; `safefs.py` and `notemeta.py` are small stdlib helpers next to `server.py`).
+- **Changes are all-or-nothing and always undoable.** Every change (decide, batch, merge, restore, project status,
+  done means) now checks all its notes first (a note listed twice, a missing or already-archived one, a bad status),
+  replaces files atomically (permissions, CRLF and odd bytes survive), rolls back automatically if a later step
+  fails, and records its undo entry *before* anything is logged. A full disk or unwritable `triage.log` no longer
+  fails (or strands) a change that already happened. If a rollback can't finish, an "unfinished" entry stays on the
+  undo list so Z completes it; a half-failed undo puts back what it had already undone. Saving **done means** is now
+  undoable and shares the same lock, so a status change and a definition edit can't overwrite each other.
+- **Note headers are read and edited only where they are.** `set_field` used `\s*` across lines and searched the whole
+  document: `- status:` (blank) followed by `- type: research` became `- status:\ncooking type: research`. The header is
+  now the first run of `- key: value` lines under the title, before the first `##`; blank values are filled in place,
+  a missing header is added under the title, and `- status:`/`- due:` lines in a body, quote or merged section are
+  left alone.
+- **The reader shows the whole question** (every paragraph, list, code block); the list row keeps the 280-character
+  summary. `/api/note` returns `question` and `body` alongside `text`.
+- **Enter on a stack only opens it.** One Enter used to open the stack *and* merge it (the row's handler and the page
+  handler both acted). Rows now mark the key handled; a batch is submitted by its button, or by Enter after you chose
+  the action on purpose. **Space** opens rows like Enter.
+- **Late replies can't overwrite the wrong screen.** Reader, Archive, project drawer, Projects, Pulse and repo
+  requests are cancelled when superseded and ignored (success *and* failure) if their element is gone.
+- **Unsaved typing survives** a refresh on returning to the tab, a re-render, and a trip to another note or page
+  (done means editor, decision forms); closing the tab with an unsaved edit asks first.
+- **Projects/Pulse never show stale data after a change:** promotion, batch, merge, restore, project actions, done
+  means and undo all drop the cached lists (a promoted note's card now has its done-means editor straight away).
+- **Symlinks can't redirect a write.** Writes need real paths inside `RawNotes/` or the projects folders with no
+  symlink on the way (the old check only looked at the final file). Symlinked project folders are still listed,
+  read-only, with a note.
+- **`--restart` verifies what it stops:** the port must serve the triage page *and* its owner must be a triage
+  `server.py` (command line checked); an HTTP error from some other service is no longer taken for an old triage.
+- **`/api/open` only launches a project folder or promoted file the board lists** (`{name, kind}` or `{path}`), only for a
+  client on the server's own machine, with `xdg-open --` and no shell. URLs and arbitrary paths are refused.
+- **Reads no longer fail beside writes.** Listings take a shared lock that changes hold exclusively (and skip a file
+  that vanished or can't be read), so 16 clients doing 160 listings + 40 kills got 116/200 HTTP 400s before and 0 now.
+  Per-note summaries are cached by file stat (not trusted within 2 s of an edit); git inspection is cached for 20 s
+  on one shared bounded pool; Pulse stats no longer build the whole Projects board; GitHub is asked without holding a
+  lock (one caller fetches, others wait for its answer). The listen backlog is 128 (it was 5).
+  1000 notes, 24 clients: p95 2001 ms → ~590 ms; 8 clients: 557 → ~165 ms.
+- **GitHub activity is honest:** repos are paged (up to 1000) and per-repo history up to 2000 commits; when GitHub
+  has more the page says so. The graph counts commits by commit date on the default branch, so it is labelled
+  "commits", not "pushes".
+- **Accessibility (axe-core 4.10.3 clean):** contrast fixed in both themes (muted text, selected-segment hints,
+  dimmed action cards, the dark Undo button); `Ctrl K` and `?` are real modal dialogs (inert background, focus trap,
+  focus returns, listbox/option semantics); stack members are a native checkbox plus a button (no nested
+  interactive controls, unique names); `main`/`nav` landmarks, one `h1` per page, no skipped heading levels, named
+  search boxes, keyboard-reachable scrolling regions; the mobile toast floats above the tab bar or sheet with a 44 px
+  Undo; 44 px touch targets; no page-wide overflow at 1280, 390 or 320 px. The promote form's preview no longer clips at
+  desktop widths.
+- Tests: 62 → 184 (engine fault injection, headers, safety, caches/concurrency, GitHub, a real-browser suite with
+  optional axe sweeps); `loadcheck.py` for the load scenario.
+
 ## 2.04 — 2026-10-18
 - **Projects board, reorganized.** One column per group, left to right: Overdue, Due this week, Later, No ship date,
   Experiments, then Closed. Empty columns are hidden, and the board scrolls sideways when it doesn't fit.

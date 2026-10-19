@@ -1,6 +1,6 @@
 # Spec: v2.04 audit fixes (reliability, accessibility, load)
 
-Status: ready-for-agent (approved scope; implementation under way on `fix/audit-reliability-accessibility`)
+Status: implemented on `fix/audit-reliability-accessibility` (awaiting review)
 
 ## Problem Statement
 

@@ -2,8 +2,11 @@
 
 **Blocked by:** 01-09
 
-**Status:** ready-for-agent
+**Status:** done (branch fix/audit-reliability-accessibility)
 
 **Covers findings:** 16
 
-See ../spec.md. Acceptance criteria are the checklist in the PR body; each is covered by a named test.
+See ../spec.md.
+
+- [x] VERSION 2.05, CHANGELOG entry, README (undo, stacks, headers, symlinks, restart, open, GitHub, accessibility, tests)
+- [x] stdlib `unittest` only: 184 tests; `loadcheck.py`; `cdp.py` is test tooling, not an app dependency
