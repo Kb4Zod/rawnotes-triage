@@ -23,7 +23,7 @@ from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
-VERSION = "2.00"  # bump on every change; history in CHANGELOG.md
+VERSION = "2.01"  # bump on every change; history in CHANGELOG.md
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOG_PATH = os.path.join(HERE, "triage.log")
 FONT_RE = re.compile(r"^/static/fonts/[A-Za-z0-9-]+\.woff2$")
@@ -32,6 +32,8 @@ PROJECTS = None
 BIND_HOST = "127.0.0.1"  # set from --host; the Host/Origin guard depends on it
 _done_lock = threading.Lock()
 STARTED = dt.datetime.now().isoformat(timespec="seconds")
+# the page is read once, so it always matches the API of the process serving it (restart to pick up edits)
+with open(os.path.join(HERE, "index.html"), "rb") as _fh: INDEX_HTML = _fh.read().replace(b"__VERSION__", VERSION.encode())
 DUE_DAYS = 7
 ACTIVITY_TTL = 600  # seconds; GitHub contribution data barely changes minute to minute
 ACTIVITY_REPO_DAYS = 30
@@ -111,7 +113,7 @@ def list_notes():
     }
 
 def inflight():
-    """Promoted notes with a due date, found in the sibling project folders."""
+    """Promoted notes with a due date (plus open-ended experiments), found in the sibling project folders."""
     out = []
     for dest in ("active", "experiments", "learning", "templates", "maintained"):
         d = os.path.join(PROJECTS, dest)
@@ -124,13 +126,14 @@ def inflight():
                 try: text = open(p, encoding="utf-8", errors="replace").read(4000)
                 except OSError: continue
                 due = field(text, "due")
-                if not due: continue
-                try: left = (dt.date.fromisoformat(due) - today()).days
+                open_ended = not due and dest == "experiments" and bool(field(text, "promoted"))  # promoted, no ship-by
+                if not due and not open_ended: continue
+                try: left = (dt.date.fromisoformat(due) - today()).days if due else None
                 except ValueError: left = None
                 rel = os.path.relpath(p, PROJECTS)
                 out.append({"path": rel, "title": title_of(text, f), "project": rel.split(os.sep)[1] if rel.count(os.sep) >= 2 else "",
                             "dest": dest, "promoted": field(text, "promoted"), "due": due,
-                            "days_left": left, "status": field(text, "status") or "?",
+                            "days_left": left, "open_ended": open_ended, "status": field(text, "status") or "?",
                             "done": field(text, "status") in ("done", "shipped", "dead")})
     out.sort(key=lambda x: (x["done"], x["days_left"] if x["days_left"] is not None else 999))
     return out
@@ -617,9 +620,7 @@ def _act(req, tx):
         dest = "reference" if action == "reference" else req.get("dest")
         if action == "promote" and dest not in DESTS: raise ValueError("bad destination")
         if action == "promote" and done_placeholder(note): raise ValueError("Say what done means first.")
-        try: due_days = int(req.get("due_days") or DUE_DAYS)
-        except ValueError: raise ValueError("ship-by must be a number of days")
-        if action == "promote" and not 1 <= due_days <= 90: raise ValueError("ship-by must be 1 to 90 days")
+        due = ship_by(req) if action == "promote" and dest != "experiments" else None  # experiments are open-ended
         slug = re.sub(r"[^a-z0-9-]", "", (req.get("slug") or slug_of(fname)).lower()) or slug_of(fname)
         dest_dir = os.path.join(PROJECTS, dest)
         os.makedirs(dest_dir, exist_ok=True)
@@ -632,12 +633,12 @@ def _act(req, tx):
         copy = set_field(copy, "promoted", t)
         if action == "reference": copy = reference_copy(copy, fname, note)
         if action == "promote":
-            due = (today() + dt.timedelta(days=due_days)).isoformat()
-            copy = set_field(copy, "due", due)
+            if due: copy = set_field(copy, "due", due)
             copy = copy.rstrip("\n") + (
-                f"\n\n## Plan\n\n- promoted from RawNotes on {t}, due {due}\n"
+                f"\n\n## Plan\n\n- promoted from RawNotes on {t}, " + (f"due {due}\n" if due else "open-ended experiment (no ship-by date)\n") +
                 f"- definition of done: {note}\n"
-                "- first step:\n- ship / stop check-in: on the due date, either ship it or kill it\n")
+                "- first step:\n" + ("- ship / stop check-in: on the due date, either ship it or kill it\n" if due else
+                                     "- check-in: when done means is met, mark it shipped; if it stalls, kill it\n"))
         tx.write(target, copy)
         rel = os.path.relpath(target, PROJECTS)
         # original capture: mark promoted, record destination, move to done/
@@ -649,6 +650,18 @@ def _act(req, tx):
         return {"ok": True, "msg": f"{verb} “{title}” → {rel}", "target": rel, "label": f"{action} “{title}”"}
 
     raise ValueError("unknown action")
+
+def ship_by(req):
+    """The ship-by date for a promotion: an exact date (`due`) if given, else today + `due_days`."""
+    if req.get("due"):
+        try: due = dt.date.fromisoformat(str(req["due"]))
+        except ValueError: raise ValueError("ship-by date must be YYYY-MM-DD")
+        if not 1 <= (due - today()).days <= 365: raise ValueError("ship-by date must be within the next year")
+        return due.isoformat()
+    try: days = int(req.get("due_days") or DUE_DAYS)
+    except ValueError: raise ValueError("ship-by must be a number of days")
+    if not 1 <= days <= 90: raise ValueError("ship-by must be 1 to 90 days")
+    return (today() + dt.timedelta(days=days)).isoformat()
 
 def batch(req):
     """The same decision for several notes, as one undo step."""
@@ -774,8 +787,9 @@ def stats(weeks=8):
         except ValueError: continue
         if b: b["decided"] += 1
     ages = sorted(n["age"] for n in notes["live"] if n["age"] is not None)
-    median = ages[len(ages) // 2] if ages else 0
-    return {"weeks": bins, "median_wait": median, "oldest": ages[-1] if ages else 0, "live": len(notes["live"]),
+    mid = len(ages) // 2
+    median = (ages[mid] if len(ages) % 2 else (ages[mid - 1] + ages[mid]) / 2) if ages else None
+    return {"weeks": bins, "median_wait": median, "oldest": ages[-1] if ages else None, "live": len(notes["live"]),
             "undo": [u["label"] for u in reversed(_undo)]}
 
 class H(BaseHTTPRequestHandler):
@@ -802,7 +816,7 @@ class H(BaseHTTPRequestHandler):
         bad = self._refuse(False)
         if bad: return self._send(403, {"error": bad})
         try:
-            if u.path == "/": return self._send(200, open(os.path.join(HERE, "index.html"), "rb").read().replace(b"__VERSION__", VERSION.encode()), "text/html")
+            if u.path == "/": return self._send(200, INDEX_HTML, "text/html")
             if u.path == "/api/version": return self._send(200, {"version": VERSION, "started": STARTED, "pid": os.getpid()})
             if u.path == "/api/projects": return self._send(200, {"projects": projects_listing()})
             if u.path == "/api/project": return self._send(200, project_detail(q.get("name", [""])[0]))

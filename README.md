@@ -22,7 +22,7 @@ rawtriage-web --restart   # stop the server already running (e.g. old version), 
 ```
 
 No dependencies beyond python3. `server.py` is the API + file mover,
-`index.html` is the UI, `triage.log` records every action.
+`index.html` is the UI (read once at startup: after editing it, `rawtriage-web --restart`), `triage.log` records every action.
 
 **Version:** shown in the page heading. When you change the app, bump
 `VERSION` in `server.py` and add an entry to `CHANGELOG.md`.
@@ -38,7 +38,7 @@ and a **ship by** date.
 
 | Button (key) | What happens |
 |--------------|--------------|
-| Promote (P)   | Copy to `../active/<slug>/NOTES.md` or `../experiments/<slug>/NOTES.md` (learning/templates get a flat `<slug>.md`). Stamps `promoted:` and `due:` (ship by) and a `## Plan` block with your **done means** (required). Capture is marked promoted and moved to `done/`. |
+| Promote (P)   | Copy to `../active/<slug>/NOTES.md` or `../experiments/<slug>/NOTES.md` (learning/templates get a flat `<slug>.md`). Stamps `promoted:` and a `## Plan` block with your **done means** (required for every destination). Active/Learning/Template also get `due:` (ship by: 3/7/14/30 days or an exact date); **experiments are open-ended**, no `due:`. Capture is marked promoted and moved to `done/`. |
 | Reference (R) | Copy to `../reference/<slug>.md` with YAML frontmatter so Obsidian can read it. Capture to `done/`. Add it to `../reference/README.md`. |
 | Keep (C)      | Set `open` or `cooking`, optionally add a next-step line. Stays in the Inbox. |
 | Kill (X)      | `status: dead`, your one-line reason under `## Outcome`, moved to `done/`. |
@@ -54,6 +54,9 @@ into one stack. Open it, tick the notes, then **Merge into one** (a new note wit
 newest first, sources moved to `done/` pointing at it; optionally promote or file the merged note straight
 away), or Keep / Kill / Reference them all as one step.
 
+**Stuck notes:** an Inbox note whose status already says decided (e.g. `status: promoted`) but never moved gets a
+"not moved" tag and shows under the **Stuck** filter. Check its destination, then move it to `done/` yourself.
+
 **Archive:** filter by Promoted / Reference / Killed / Merged; **Restore to Inbox** brings a note back as cooking.
 
 Keys: `j`/`k` move, `p` `r` `c` `x` decide, `Enter` apply, `Esc` cancel, `z` undo, `y` copy path, `/` search,
@@ -62,7 +65,7 @@ Keys: `j`/`k` move, `p` `r` `c` `x` decide, `Enter` apply, `Esc` cancel, `z` und
 ## Projects page
 
 One board for everything promoted, replacing the old Active Projects tab and In flight strip. Columns:
-**Overdue**, **Ship this week**, **Later**, **No ship-by date** (folders in `active/` without a `due:` line),
+**Overdue**, **Ship this week**, **Later**, **Experiments** (promoted experiments, open-ended), **No ship-by date** (folders in `active/` without a `due:` line),
 plus **Closed** (status `shipped`, `done` or `dead`). It scans the sibling folders for markdown files with a
 `due:` line. Each card shows a countdown ring (red = late, amber = 2 days or less) and its GitHub state:
 **On GitHub**, **GH ↑N** (N commits not pushed), **Not pushed**, **Local git** or **No git**.
