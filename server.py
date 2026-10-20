@@ -37,6 +37,7 @@ VERSION = "2.08"  # bump on every change; history in CHANGELOG.md
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOG_PATH = os.path.join(HERE, "triage.log")
 FONT_RE = re.compile(r"^/static/fonts/[A-Za-z0-9-]+\.woff2$")
+APP_PATH = "/triage"  # --app opens the page here: the path gives the window its own class, for a Hyprland rule
 ICONS = {"/static/icons/icon-256.png": "icon-256.png", "/apple-touch-icon.png": "apple-touch-icon.png"}  # page favicon, phone home screen, app launcher
 NOTES = os.path.expanduser("~/Projects/RawNotes")
 PROJECTS = None
@@ -1159,7 +1160,7 @@ class H(BaseHTTPRequestHandler):
         bad = self._refuse(False)
         if bad: return self._send(403, {"error": bad})
         try:
-            if u.path == "/": return self._send(200, INDEX_HTML, "text/html")
+            if u.path in ("/", APP_PATH): return self._send(200, INDEX_HTML, "text/html")
             if u.path == "/api/version": return self._send(200, {"version": VERSION, "started": STARTED, "pid": os.getpid(), "app": "rawnotes-triage"})
             if u.path == "/api/projects": return self._send(200, {"projects": projects_listing(q.get("refresh") == ["1"])})
             if u.path == "/api/project": return self._send(200, project_detail(q.get("name", [""])[0], q.get("kind", [""])[0]))
@@ -1277,7 +1278,9 @@ def restart_service(port):
 def open_page(url, app):
     """Open the page: in its own window with --app (Omarchy's web-app launcher), else a browser tab.
     Without omarchy-launch-webapp (another desktop), or if it fails at once (no supported browser), --app
-    falls back to the tab. Waits up to 2 s to see that; call it from a thread when that would hold things up."""
+    falls back to the tab. Waits up to 2 s to see that; call it from a thread when that would hold things up.
+    The app window opens at APP_PATH, so its class is chrome-127.0.0.1__triage-Default (the port isn't in it)."""
+    if app: url = url.rstrip("/") + APP_PATH
     if app and shutil.which("omarchy-launch-webapp"):
         try:
             p = subprocess.Popen(["omarchy-launch-webapp", url], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

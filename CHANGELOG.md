@@ -20,6 +20,10 @@ with every change. Versions 1.00-1.03 were numbered after the fact from git hist
   - `--app` falls back to a browser tab if `omarchy-launch-webapp` fails (e.g. no supported browser).
   - Under the service, Open starts the editor or file manager in a scope of its own (`systemd-run --user --scope`),
     so restarting or stopping the service no longer kills it, unsaved edits and all.
+- **Always opens full screen.** `--app` opens the page at `/triage` (same page as `/`), which gives the window its
+  own class. `install-webapp.sh` adds a marked Hyprland rule for that class (`fullscreen_state = "2 0"`; a plain
+  `fullscreen = true` is undone by Chromium), checks it with `hyprctl configerrors` and takes it back out if
+  Hyprland rejects it. `--remove` removes it.
 - App icon (`static/icons/`, SVG source + PNGs) served as the page favicon and as `/apple-touch-icon.png` for the
   phone home screen.
 

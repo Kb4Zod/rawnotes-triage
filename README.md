@@ -31,7 +31,14 @@ One-time setup, run from the repo:
    first and changes nothing if a check fails, e.g. the main checkout isn't on 2.08 yet (`git pull` there), or a
    server you started by hand is still running (stop it first). It always installs and runs the main checkout
    (`~/Projects/active/rawnotes-triage`), wherever you run the script from.
-2. Press `SUPER + SPACE`, type `RawNotes Triage`, Enter. The page opens in its own window, not a browser tab.
+2. Press `SUPER + SPACE`, type `RawNotes Triage`, Enter. The page opens in its own window, not a browser tab,
+   and always full screen. `SUPER + F` leaves full screen (and goes back), as for any window.
+
+- **Full screen** comes from a Hyprland window rule the installer appends to `~/.config/hypr/hyprland.lua`, between
+  `-- >>> rawnotes-triage` markers (a backup is saved next to it first). It matches only this app: `--app` opens
+  `/triage`, which gives the window its own class (`chrome-127.0.0.1__triage-Default`). It uses
+  `fullscreen_state = "2 0"` because Chromium undoes a plain `fullscreen = true` as soon as the window opens.
+- Opening another window on the same workspace takes the app out of full screen (Hyprland's normal behaviour).
 
 - If the service is down, the launcher starts a server itself, so you never get a blank window.
 - **After updating the app:** `rawtriage-web --restart` (or `systemctl --user restart rawtriage-web`). When the
