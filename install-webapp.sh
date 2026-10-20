@@ -32,18 +32,20 @@ warn() { echo "install-webapp: warning: $*" >&2; }
 # absent); anything else means the block was edited by hand, and is left for you to fix.
 hypr_markers() {  # prints: none | ok | damaged
   [[ -f $HYPR ]] || { echo none; return; }
-  local b e; b=$(grep -cxF -- "$BEGIN" "$HYPR" || true); e=$(grep -cxF -- "$END" "$HYPR" || true)
-  if [[ $b == 0 && $e == 0 ]]; then echo none; elif [[ $b == 1 && $e == 1 ]]; then echo ok; else echo damaged; fi
+  local b e; b=$(grep -nxF -- "$BEGIN" "$HYPR" | cut -d: -f1 || true); e=$(grep -nxF -- "$END" "$HYPR" | cut -d: -f1 || true)
+  if [[ -z $b && -z $e ]]; then echo none
+  elif [[ $b =~ ^[0-9]+$ && $e =~ ^[0-9]+$ ]] && (( b < e )); then echo ok   # exactly one of each, in order
+  else echo damaged; fi
 }
 hypr_up() { command -v hyprctl &>/dev/null && hyprctl version &>/dev/null; }
-hypr_errors() { local out; out=$(hyprctl configerrors 2>/dev/null) || return 0; printf '%s\n' "$out" | sed '/^[[:space:]]*$/d'; }
+hypr_errors() { local out; out=$(hyprctl configerrors 2>/dev/null) || return 0; printf '%s\n' "$out" | sed '/^[[:space:]]*$/d' | sort -u; }
 
-remove_hypr_rule() {
+remove_hypr_rule() {  # remove_hypr_rule [--no-backup]
   case $(hypr_markers) in
     none) return 0 ;;
-    damaged) warn "the rawnotes-triage block in $HYPR has a missing or repeated marker line; remove it by hand"; return 0 ;;
+    damaged) warn "the rawnotes-triage block in $HYPR has a missing, repeated or out-of-order marker line; remove it by hand"; return 0 ;;
   esac
-  cp "$HYPR" "$HYPR.bak.rawnotes-triage"
+  [[ ${1:-} == --no-backup ]] || cp "$HYPR" "$HYPR.bak.rawnotes-triage"
   sed -i "\|^$BEGIN\$|,\|^$END\$|d" "$HYPR"
   hypr_up && hyprctl reload &>/dev/null || true
 }
@@ -52,7 +54,7 @@ add_hypr_rule() {
   [[ -f $HYPR ]] || { warn "no $HYPR; the window won't open full screen"; return 0; }
   case $(hypr_markers) in
     ok) echo "Hyprland rule: already there"; return 0 ;;
-    damaged) warn "the rawnotes-triage block in $HYPR has a missing or repeated marker line; fix it by hand, then rerun"; return 0 ;;
+    damaged) warn "the rawnotes-triage block in $HYPR has a missing, repeated or out-of-order marker line; fix it by hand, then rerun"; return 0 ;;
   esac
   local before=""; hypr_up && before=$(hypr_errors)
   cp "$HYPR" "$HYPR.bak.rawnotes-triage"
@@ -64,9 +66,9 @@ add_hypr_rule() {
     "$END" >>"$HYPR"
   if ! hypr_up; then echo "Hyprland rule: added; Hyprland isn't reachable from here, so it applies at next login"; return 0; fi
   hyprctl reload &>/dev/null || true
-  local new; new=$(comm -13 <(sort <<<"$before") <(hypr_errors | sort) | sed '/^$/d')
+  local new; new=$(comm -13 <(printf '%s\n' "$before") <(hypr_errors) | sed '/^$/d')
   if [[ -n $new ]]; then
-    remove_hypr_rule
+    remove_hypr_rule --no-backup   # keep the backup from before the rule went in
     warn "Hyprland rejected the window rule, so it was taken out again (the app still works, just not full screen): $new"
     return 0
   fi
