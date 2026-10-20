@@ -4,6 +4,91 @@ The version shows in the page heading ("RawNotes Triage version X.XX") and
 in the startup line. Bump `VERSION` in `server.py` and add an entry here
 with every change. Versions 1.00-1.03 were numbered after the fact from git history.
 
+## 2.07 — 2026-10-19
+- Replace the search and keyboard-help dialog backdrop blur with the existing plain dimmed overlay. This avoids
+  mirrored/repeated background imagery observed in the preview browser. Modal focus handling is unchanged.
+- Track persistent undo, race-resistant filesystem operations, and physical-phone, screen-reader and authenticated
+  GitHub verification as separate follow-up tickets under `.scratch/`.
+
+## 2.06 — 2026-10-19
+Two defects found by independent verification of 2.05, fixed before release (2.05 was never released).
+- **Open folder works again.** 2.05 ran `xdg-open -- <path>`, but the installed `xdg-open` rejects `--` ("unexpected
+  option '--'") and exits without opening anything, while the page reported success. The command is now
+  `xdg-open <absolute path>`: the path was already validated and absolute, so it always starts with `/` and can never
+  be read as an option (a relative path is refused). An opener that fails at once is now reported on the page instead of
+  swallowed. A new test runs the real `/usr/bin/xdg-open` on the exact command line the app builds, in a clean
+  environment with no display and a stub handler, so nothing is ever opened; the old `--` form is asserted to be refused.
+- **Undo, rollback and redo can't write through a symlink.** 2.05 checked containment when a change was made but not
+  when it was reversed, so renaming a project folder away and putting a symlink in its place between requests let Undo
+  edit the real files behind the link. Every path an undo entry recorded (the file, a move's source *and* destination, a
+  created folder) is now checked again, for all steps, before the first one is touched; Undo then refuses with "Nothing
+  was changed", keeps the entry on the undo list and works again once the folder is put right. The same check runs
+  immediately before each reverse step, each rollback step and each "put it back" step after a half-failed undo, which
+  then reports the step as not put back rather than writing through the link. Covered: folder swapped for a link to a
+  renamed folder inside or outside the projects root, the file itself swapped for a link with identical content, a
+  move's destination folder or source name replaced, a promotion's new folder, rollback and redo recovery.
+- Still not covered (same as 2.05): a swap in the instant *between* a check and the write inside one request; Triage
+  assumes the folders are not being rearranged under it by another local process at that moment.
+- Tests: 206 → 220.
+
+## 2.05 — 2026-10-19
+Reliability, accessibility and load fixes from the v2.04 code review and browser audit (no new features, no new
+dependencies; `safefs.py` and `notemeta.py` are small stdlib helpers next to `server.py`).
+- **Changes are all-or-nothing and always undoable.** Every change (decide, batch, merge, restore, project status,
+  done means) now checks all its notes first (a note listed twice, a missing or already-archived one, a bad status),
+  replaces files atomically (permissions, CRLF and odd bytes survive), rolls back automatically if a later step
+  fails, and records its undo entry *before* anything is logged. A full disk or unwritable `triage.log` no longer
+  fails (or strands) a change that already happened. If a rollback can't finish, an "unfinished" entry stays on the
+  undo list so Z completes it; a half-failed undo puts back what it had already undone. Saving **done means** is now
+  undoable and shares the same lock, so a status change and a definition edit can't overwrite each other.
+- **Note headers are read and edited only where they are.** `set_field` used `\s*` across lines and searched the whole
+  document: `- status:` (blank) followed by `- type: research` became `- status:\ncooking type: research`. The header is
+  now the first run of `- key: value` lines under the title, before the first `##`; blank values are filled in place,
+  a missing header is added under the title, and `- status:`/`- due:` lines in a body, quote or merged section are
+  left alone.
+- **The reader shows the whole question** (every paragraph, list, code block); the list row keeps the 280-character
+  summary. `/api/note` returns `question` and `body` alongside `text`.
+- **Enter on a stack only opens it.** One Enter used to open the stack *and* merge it (the row's handler and the page
+  handler both acted). Rows now mark the key handled; a batch is submitted by its button, or by Enter after you chose
+  the action on purpose. **Space** opens rows like Enter.
+- **Late replies can't overwrite the wrong screen.** Reader, Archive, project drawer, Projects, Pulse and repo
+  requests are cancelled when superseded and ignored (success *and* failure) if their element is gone.
+- **Unsaved typing survives** a refresh on returning to the tab, a re-render, and a trip to another note or page
+  (done means editor, decision forms); closing the tab with an unsaved edit asks first.
+- **Projects/Pulse never show stale data after a change:** promotion, batch, merge, restore, project actions, done
+  means and undo all drop the cached lists (a promoted note's card now has its done-means editor straight away).
+- **Symlinks can't redirect a write.** (Undo and rollback were not covered until 2.06.) Writes need real paths inside `RawNotes/` or the projects folders with no
+  symlink on the way (the old check only looked at the final file). Symlinked project folders are still listed,
+  read-only, with a note.
+- **`--restart` verifies what it stops:** the port must serve the triage page *and* its owner must be a triage
+  `server.py` (command line checked); an HTTP error from some other service is no longer taken for an old triage.
+- **`/api/open` only launches a project folder or promoted file the board lists** (`{name, kind}` or `{path}`), only for a
+  client on the server's own machine, with `xdg-open` and no shell (2.05 passed `--`, which the installed `xdg-open` rejects; fixed in 2.06). URLs and arbitrary paths are refused.
+- **Reads no longer fail beside writes.** Listings take a shared lock that changes hold exclusively (and skip a file
+  that vanished or can't be read), so 16 clients doing 160 listings + 40 kills got 116/200 HTTP 400s before and 0 now.
+  Per-note summaries are cached by file stat (not trusted within 2 s of an edit); git inspection is cached for 20 s
+  on one shared bounded pool; Pulse stats no longer build the whole Projects board; GitHub is asked without holding a
+  lock (one caller fetches, others wait for its answer). The listen backlog is 128 (it was 5).
+  1000 notes, 24 clients: p95 2001 ms → ~590 ms; 8 clients: 557 → ~165 ms.
+- **GitHub activity is honest:** repos are paged (up to 1000) and per-repo history up to 2000 commits; when GitHub
+  has more the page says so. The graph counts commits by commit date on the default branch, so it is labelled
+  "commits", not "pushes".
+- **Accessibility (axe-core 4.10.3 clean):** contrast fixed in both themes (muted text, selected-segment hints,
+  dimmed action cards, the dark Undo button); `Ctrl K` and `?` are real modal dialogs (inert background, focus trap,
+  focus returns, listbox/option semantics); stack members are a native checkbox plus a button (no nested
+  interactive controls, unique names); `main`/`nav` landmarks, one `h1` per page, no skipped heading levels, named
+  search boxes, keyboard-reachable scrolling regions; the mobile toast floats above the tab bar or sheet with a 44 px
+  Undo; 44 px touch targets; no page-wide overflow at 1280, 390 or 320 px. The promote form's preview no longer clips at
+  desktop widths.
+- Found by an independent review before release and fixed: a held or doubled Enter could submit a decision twice; a rolled-back
+  change had already written its log lines (they now wait for the commit); `done means` in a file with mixed line endings
+  could edit the wrong line; Keep dropped the next step when `## Notes` was the last line; notes with YAML frontmatter
+  got their status written above it; a fenced `##` line cut the question short; an Outcome line went to the end of the
+  note instead of its section; armed stack + Enter on the focused row silently disarmed; a stale Projects reload could
+  repopulate a dropped cache; Enter on "No matches" closed the palette.
+- Tests: 62 → 206 (engine fault injection, headers, safety, caches/concurrency, GitHub, a real-browser suite with
+  optional axe sweeps); `loadcheck.py` for the load scenario.
+
 ## 2.04 — 2026-10-18
 - **Projects board, reorganized.** One column per group, left to right: Overdue, Due this week, Later, No ship date,
   Experiments, then Closed. Empty columns are hidden, and the board scrolls sideways when it doesn't fit.

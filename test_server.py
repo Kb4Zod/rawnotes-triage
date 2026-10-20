@@ -28,7 +28,7 @@ class ApiTestCase(unittest.TestCase):
         self.addCleanup(self._restore)
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.H)
         self.port = self.httpd.server_address[1]
-        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread = threading.Thread(target=lambda: self.httpd.serve_forever(poll_interval=0.02), daemon=True)
         self.thread.start()
         self.addCleanup(self.httpd.shutdown)
         self.addCleanup(self.httpd.server_close)
