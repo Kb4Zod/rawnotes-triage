@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- RawNotes Triage app icon: an inbox tray of notes with a decision tick. Source for icon-256.png -->
+  <rect width="256" height="256" rx="56" fill="#2b7a54"/>
+  <rect x="64" y="40" width="128" height="104" rx="12" fill="#cba85a" transform="rotate(-8 128 92)"/>
+  <rect x="64" y="52" width="128" height="104" rx="12" fill="#f4f7f4"/>
+  <rect x="84" y="76" width="88" height="10" rx="5" fill="#58695f"/>
+  <rect x="84" y="98" width="64" height="10" rx="5" fill="#58695f"/>
+  <path d="M40 140 h52 l12 24 h48 l12 -24 h52 v52 a20 20 0 0 1 -20 20 h-136 a20 20 0 0 1 -20 -20z" fill="#0f1512"/>
+  <path d="M102 180 l18 16 l36 -40" fill="none" stroke="#5fbf8d" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

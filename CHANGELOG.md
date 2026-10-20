@@ -4,6 +4,14 @@ The version shows in the page heading ("RawNotes Triage version X.XX") and
 in the startup line. Bump `VERSION` in `server.py` and add an entry here
 with every change. Versions 1.00-1.03 were numbered after the fact from git history.
 
+## 2.08 — 2026-10-20
+- **Standalone app in the Omarchy launcher.** New `--app` flag opens the page in its own window through
+  `omarchy-launch-webapp` (falls back to a browser tab off Omarchy). `install-webapp.sh` adds a **RawNotes Triage**
+  launcher entry (via `omarchy-webapp-install`, running `rawtriage-web --app`) and an always-on systemd user unit
+  (`systemd/rawtriage-web.service`); `--no-service` skips the unit, `--remove` undoes both.
+- App icon (`static/icons/`, SVG source + PNGs) served as the page favicon and as `/apple-touch-icon.png` for the
+  phone home screen.
+
 ## 2.07 — 2026-10-19
 - Replace the search and keyboard-help dialog backdrop blur with the existing plain dimmed overlay. This avoids
   mirrored/repeated background imagery observed in the preview browser. Modal focus handling is unchanged.

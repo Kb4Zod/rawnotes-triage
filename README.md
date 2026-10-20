@@ -19,7 +19,23 @@ rawtriage-web --host 0.0.0.0   # reachable from the phone (home Wi-Fi / Tailscal
                          # the page works on a phone: tap a row, decide from the bottom sheet
 rawtriage-web --notes /tmp/copy/RawNotes --log /tmp/copy/triage.log --port 8766   # try it on a copy
 rawtriage-web --restart   # stop the server already running (e.g. old version), start this one
+rawtriage-web --app       # same, but in its own app window instead of a browser tab (Omarchy)
 ```
+
+### As an app in the Omarchy launcher
+
+One-time setup, run from the repo:
+
+1. `./install-webapp.sh` — adds **RawNotes Triage** (with its icon) to the app launcher and starts the server as an
+   always-on systemd user service (`rawtriage-web.service`, starts at login).
+2. Press `SUPER + SPACE`, type `RawNotes Triage`, Enter. The page opens in its own window, not a browser tab.
+
+- If the service is down, the launcher starts a server itself, so you never get a blank window.
+- **After updating the app:** run `systemctl --user restart rawtriage-web`, not `rawtriage-web --restart`. The
+  `--restart` flag stops the service's server and starts one in your terminal, and the service stays stopped.
+- Launcher entry only, no service: `./install-webapp.sh --no-service`. Undo everything: `./install-webapp.sh --remove`.
+- The launcher entry runs `rawtriage-web --app`, not `omarchy-launch-webapp`, so it doesn't show up in Omarchy's
+  *Remove Web App* menu. Use `--remove` instead.
 
 No dependencies beyond python3. `server.py` is the API + file mover, `safefs.py` and `notemeta.py` are its two small
 helpers (safe file writes; note headers), `index.html` is the UI (read once at startup: after editing it,

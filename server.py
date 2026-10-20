@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """rawnotes-triage — local website for reviewing ~/Projects/RawNotes.
 
-Usage: python3 server.py [--port 8765] [--host 127.0.0.1] [--notes ~/Projects/RawNotes] [--log triage.log] [--restart]
+Usage: python3 server.py [--port 8765] [--host 127.0.0.1] [--notes ~/Projects/RawNotes] [--log triage.log] [--restart] [--app]
 
 --host 0.0.0.0 listens on every interface (phone on home Wi-Fi / Tailscale).
 There is no login: only do that on a network you trust. Firewall still applies.
 
 If a server is already on the port, warns when its version differs from this
 code; --restart stops it and starts this one.
+
+--app opens the page in its own window (Omarchy web app) instead of a browser tab;
+it is what the app-launcher entry from install-webapp.sh runs.
 
 Decisions (all move real files, nothing is deleted; the words match the CLI and CLAUDE.md):
   promote             -> copy note into ../experiments|active|learning|templates,
@@ -27,10 +30,11 @@ import safefs
 from notemeta import (field, set_field, drop_field, title_of, append_outcome, question_of, question_summary, note_body,
                       eol_of, with_eol, to_lf, header_lines, title_index, HEAD_LINE)
 
-VERSION = "2.07"  # bump on every change; history in CHANGELOG.md
+VERSION = "2.08"  # bump on every change; history in CHANGELOG.md
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOG_PATH = os.path.join(HERE, "triage.log")
 FONT_RE = re.compile(r"^/static/fonts/[A-Za-z0-9-]+\.woff2$")
+ICONS = {"/static/icons/icon-256.png": "icon-256.png", "/apple-touch-icon.png": "apple-touch-icon.png"}  # page favicon, phone home screen, app launcher
 NOTES = os.path.expanduser("~/Projects/RawNotes")
 PROJECTS = None
 BIND_HOST = "127.0.0.1"  # set from --host; the Host/Origin guard depends on it
@@ -1114,8 +1118,8 @@ class Server(ThreadingHTTPServer):
 class H(BaseHTTPRequestHandler):
     def _send(self, code, body, ctype="application/json"):
         data = body if isinstance(body, bytes) else json.dumps(body).encode()
-        self.send_response(code); self.send_header("Content-Type", ctype if ctype.startswith("font/") else ctype + "; charset=utf-8")
-        if ctype.startswith("font/"): self.send_header("Cache-Control", "max-age=604800")
+        self.send_response(code); self.send_header("Content-Type", ctype if ctype.startswith(("font/", "image/")) else ctype + "; charset=utf-8")
+        if ctype.startswith(("font/", "image/")): self.send_header("Cache-Control", "max-age=604800")
         else: self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Length", str(len(data)))
@@ -1157,6 +1161,8 @@ class H(BaseHTTPRequestHandler):
                 p = os.path.join(HERE, u.path.lstrip("/"))
                 if not os.path.isfile(p): return self._send(404, {"error": "not found"})
                 with open(p, "rb") as fh: return self._send(200, fh.read(), "font/woff2")
+            if u.path in ICONS:
+                with open(os.path.join(HERE, "static", "icons", ICONS[u.path]), "rb") as fh: return self._send(200, fh.read(), "image/png")
             if u.path == "/api/note": return self._send(200, note_view(q["f"][0]))
             self._send(404, {"error": "not found"})
         except Exception as e: self._fail(e)
@@ -1239,6 +1245,14 @@ def stop_server(info, port):
         time.sleep(0.1)
     raise SystemExit(f"rawtriage-web: pid {pid} didn't stop; try kill {pid}")
 
+def open_page(url, app):
+    """Open the page: in its own window with --app (Omarchy's web-app launcher), else a browser tab.
+    Without omarchy-launch-webapp (another desktop) --app falls back to the tab."""
+    if app and shutil.which("omarchy-launch-webapp"):
+        try: return subprocess.Popen(["omarchy-launch-webapp", url], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError: pass
+    import webbrowser; webbrowser.open(url)
+
 def notify(msg):
     try: subprocess.Popen(["notify-send", "RawNotes Triage", msg], stderr=subprocess.DEVNULL)
     except OSError: pass
@@ -1248,6 +1262,7 @@ if __name__ == "__main__":
     ap.add_argument("--host", default="127.0.0.1", help="interface to listen on; 0.0.0.0 = all (no auth, trusted networks only)")
     ap.add_argument("--notes", default=NOTES); ap.add_argument("--no-browser", action="store_true")
     ap.add_argument("--restart", action="store_true", help="stop a server already on the port, then start this one")
+    ap.add_argument("--app", action="store_true", help="open the page in its own app window (Omarchy web app), not a browser tab")
     ap.add_argument("--log", default=LOG_PATH, help="where actions are logged (and Pulse reads decisions from)")
     a = ap.parse_args(); BIND_HOST = a.host; NOTES = os.path.abspath(os.path.expanduser(a.notes)); PROJECTS = os.path.dirname(NOTES)
     LOG_PATH = os.path.abspath(os.path.expanduser(a.log))
@@ -1268,14 +1283,12 @@ if __name__ == "__main__":
                    f"  this code: version {VERSION}\n"
                    f"  -> run: rawtriage-web --restart")
             print("rawtriage-web: " + msg); notify(msg)
-        if not a.no_browser:
-            import webbrowser; webbrowser.open(url)
+        if not a.no_browser: open_page(url, a.app)
         raise SystemExit(0)
     try: httpd = Server((a.host, a.port), H)
     except OSError as e: raise SystemExit(f"rawtriage-web: port {a.port} is in use by something else ({e}); try --port N")
     print(f"rawnotes-triage v{VERSION}: {NOTES}\n{url}  (Ctrl-C to stop)")
     if a.host != "127.0.0.1": print(f"listening on {a.host}:{a.port} for other devices (no login; trusted networks only)")
-    if not a.no_browser:
-        import webbrowser; webbrowser.open(url)
+    if not a.no_browser: open_page(url, a.app)
     try: httpd.serve_forever()
     except KeyboardInterrupt: pass

@@ -6,6 +6,7 @@ import shutil
 import tempfile
 import threading
 import unittest
+from unittest import mock
 import urllib.parse
 import urllib.error
 import urllib.request
@@ -687,6 +688,35 @@ class DecisionTestCase(unittest.TestCase):
             self.assertEqual(r.headers["Content-Type"], "font/woff2")
         for bad in ("/static/fonts/../server.py", "/static/fonts/x.ttf", "/static/fonts/README.md"):
             with self.assertRaises(urllib.error.HTTPError): urllib.request.urlopen(f"http://127.0.0.1:{self.port}{bad}")
+
+    def test_app_icons_are_served_as_png_and_only_by_name(self):
+        for path in ("/static/icons/icon-256.png", "/apple-touch-icon.png"):
+            with urllib.request.urlopen(f"http://127.0.0.1:{self.port}{path}") as r:
+                self.assertEqual(r.headers["Content-Type"], "image/png")
+                self.assertTrue(r.read().startswith(b"\x89PNG"))
+        for bad in ("/static/icons/icon.svg", "/static/icons/../../server.py", "/static/icons/"):
+            with self.assertRaises(urllib.error.HTTPError): urllib.request.urlopen(f"http://127.0.0.1:{self.port}{bad}")
+
+
+class OpenPageTestCase(unittest.TestCase):
+    """--app opens Omarchy's app window; without it, or off Omarchy, a browser tab."""
+    def test_app_uses_the_omarchy_launcher(self):
+        with mock.patch.object(server.shutil, "which", return_value="/usr/bin/omarchy-launch-webapp"), \
+             mock.patch.object(server.subprocess, "Popen") as popen, mock.patch("webbrowser.open") as tab:
+            server.open_page("http://127.0.0.1:8765/", True)
+        self.assertEqual(popen.call_args.args[0], ["omarchy-launch-webapp", "http://127.0.0.1:8765/"])
+        tab.assert_not_called()
+
+    def test_app_falls_back_to_a_tab_without_omarchy(self):
+        with mock.patch.object(server.shutil, "which", return_value=None), \
+             mock.patch.object(server.subprocess, "Popen") as popen, mock.patch("webbrowser.open") as tab:
+            server.open_page("http://127.0.0.1:8765/", True)
+        popen.assert_not_called(); tab.assert_called_once_with("http://127.0.0.1:8765/")
+
+    def test_without_app_it_is_a_browser_tab(self):
+        with mock.patch.object(server.subprocess, "Popen") as popen, mock.patch("webbrowser.open") as tab:
+            server.open_page("http://127.0.0.1:8765/", False)
+        popen.assert_not_called(); tab.assert_called_once_with("http://127.0.0.1:8765/")
 
 
 if __name__ == "__main__":

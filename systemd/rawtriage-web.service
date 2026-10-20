@@ -1,0 +1,9 @@
+[Unit]
+Description=RawNotes triage website (http://127.0.0.1:8765)
+
+[Service]
+ExecStart=/usr/bin/python3 %h/Projects/active/rawnotes-triage/server.py --no-browser
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
