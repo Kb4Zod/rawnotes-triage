@@ -26,29 +26,51 @@ BIN="$HOME/.local/bin/rawtriage-web"
 
 fail() { echo "install-webapp: $*" >&2; exit 1; }
 
+warn() { echo "install-webapp: warning: $*" >&2; }
+
+# The window rule lives between two marker lines. Touch it only when each marker is there exactly once (or both are
+# absent); anything else means the block was edited by hand, and is left for you to fix.
+hypr_markers() {  # prints: none | ok | damaged
+  [[ -f $HYPR ]] || { echo none; return; }
+  local b e; b=$(grep -cxF -- "$BEGIN" "$HYPR" || true); e=$(grep -cxF -- "$END" "$HYPR" || true)
+  if [[ $b == 0 && $e == 0 ]]; then echo none; elif [[ $b == 1 && $e == 1 ]]; then echo ok; else echo damaged; fi
+}
+hypr_up() { command -v hyprctl &>/dev/null && hyprctl version &>/dev/null; }
+hypr_errors() { local out; out=$(hyprctl configerrors 2>/dev/null) || return 0; printf '%s\n' "$out" | sed '/^[[:space:]]*$/d'; }
+
 remove_hypr_rule() {
-  [[ -f $HYPR ]] && grep -qF -- "$BEGIN" "$HYPR" || return 0
-  cp "$HYPR" "$HYPR.bak.$(date +%s)"
+  case $(hypr_markers) in
+    none) return 0 ;;
+    damaged) warn "the rawnotes-triage block in $HYPR has a missing or repeated marker line; remove it by hand"; return 0 ;;
+  esac
+  cp "$HYPR" "$HYPR.bak.rawnotes-triage"
   sed -i "\|^$BEGIN\$|,\|^$END\$|d" "$HYPR"
-  hyprctl reload &>/dev/null || true
+  hypr_up && hyprctl reload &>/dev/null || true
 }
 
 add_hypr_rule() {
-  [[ -f $HYPR ]] || { echo "No $HYPR; skipping the full-screen window rule"; return 0; }
-  grep -qF -- "$BEGIN" "$HYPR" && { echo "Hyprland rule: already there"; return 0; }
-  cp "$HYPR" "$HYPR.bak.$(date +%s)"
+  [[ -f $HYPR ]] || { warn "no $HYPR; the window won't open full screen"; return 0; }
+  case $(hypr_markers) in
+    ok) echo "Hyprland rule: already there"; return 0 ;;
+    damaged) warn "the rawnotes-triage block in $HYPR has a missing or repeated marker line; fix it by hand, then rerun"; return 0 ;;
+  esac
+  local before=""; hypr_up && before=$(hypr_errors)
+  cp "$HYPR" "$HYPR.bak.rawnotes-triage"
+  sed -i -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$HYPR"   # drop trailing blank lines, so add/remove cycles don't pile them up
   printf '\n%s\n%s\n%s\n%s\n%s\n' "$BEGIN" \
     "-- The RawNotes Triage app window (rawtriage-web --app opens /triage) always opens full screen." \
     '-- fullscreen_state "2 0": full screen for Hyprland, not for Chromium (it undoes a plain fullscreen = true).' \
     'o.window([[^chrome-127\.0\.0\.1__triage-.*$]], { fullscreen_state = "2 0" })' \
     "$END" >>"$HYPR"
+  if ! hypr_up; then echo "Hyprland rule: added; Hyprland isn't reachable from here, so it applies at next login"; return 0; fi
   hyprctl reload &>/dev/null || true
-  local errs; errs=$(hyprctl configerrors 2>&1 || true)
-  if [[ -n ${errs//[[:space:]]/} ]]; then
+  local new; new=$(comm -13 <(sort <<<"$before") <(hypr_errors | sort) | sed '/^$/d')
+  if [[ -n $new ]]; then
     remove_hypr_rule
-    fail "Hyprland rejected the window rule, so it was taken out again: $errs"
+    warn "Hyprland rejected the window rule, so it was taken out again (the app still works, just not full screen): $new"
+    return 0
   fi
-  echo "Hyprland rule: app window opens full screen ($HYPR)"
+  echo "Hyprland rule: app window opens full screen ($HYPR; backup in $HYPR.bak.rawnotes-triage)"
 }
 
 case "${1:-}" in
@@ -82,7 +104,6 @@ fi
 
 omarchy-webapp-install "$NAME" "$APP_URL" "$REPO/static/icons/icon-256.png" "$BIN --app"
 echo "Launcher entry: ~/.local/share/applications/$NAME.desktop"
-add_hypr_rule
 
 if [[ ${1:-} != --no-service ]]; then
   mkdir -p "$UNIT_DIR"
@@ -94,4 +115,5 @@ if [[ ${1:-} != --no-service ]]; then
   systemctl --user -q is-active "$UNIT" || fail "$UNIT didn't stay up; see: journalctl --user -u $UNIT"
   echo "Service: $UNIT running (systemctl --user status $UNIT)"
 fi
+add_hypr_rule   # last: a problem here is only a warning, and everything else is already in place
 echo "Open it with SUPER + SPACE, type: $NAME"

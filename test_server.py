@@ -691,6 +691,8 @@ class DecisionTestCase(unittest.TestCase):
 
     def test_the_app_window_path_serves_the_same_page(self):
         with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/triage") as r: self.assertEqual(r.read(), server.INDEX_HTML)
+        for bad in ("/triage/", "/triagex", "/triage/api/notes"):
+            with self.assertRaises(urllib.error.HTTPError): urllib.request.urlopen(f"http://127.0.0.1:{self.port}{bad}")
 
     def test_app_icons_are_served_as_png_and_only_by_name(self):
         for path in ("/static/icons/icon-256.png", "/apple-touch-icon.png"):

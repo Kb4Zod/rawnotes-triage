@@ -35,7 +35,9 @@ One-time setup, run from the repo:
    and always full screen. `SUPER + F` leaves full screen (and goes back), as for any window.
 
 - **Full screen** comes from a Hyprland window rule the installer appends to `~/.config/hypr/hyprland.lua`, between
-  `-- >>> rawnotes-triage` markers (a backup is saved next to it first). It matches only this app: `--app` opens
+  `-- >>> rawnotes-triage` markers (backup: `hyprland.lua.bak.rawnotes-triage`). Problems with the rule are only
+  warnings: the app still installs, just not full screen. Over SSH (no Hyprland to ask) the rule is added and
+  applies at next login. It matches only this app: `--app` opens
   `/triage`, which gives the window its own class (`chrome-127.0.0.1__triage-Default`). It uses
   `fullscreen_state = "2 0"` because Chromium undoes a plain `fullscreen = true` as soon as the window opens.
 - Opening another window on the same workspace takes the app out of full screen (Hyprland's normal behaviour).
