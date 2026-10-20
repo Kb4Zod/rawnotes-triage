@@ -750,6 +750,14 @@ class ServiceTestCase(unittest.TestCase):
         self.assertFalse(server.service_owns(None))
         self.assertFalse(server.service_owns(2 ** 30))  # no such process
 
+    def test_under_the_service_the_opener_gets_its_own_scope(self):
+        argv = ["xdg-open", "/tmp/x.md"]
+        with mock.patch.object(server, "service_owns", return_value=True), \
+             mock.patch.object(server.shutil, "which", return_value="/usr/bin/systemd-run"):
+            self.assertEqual(server.in_own_scope(argv), ["systemd-run", "--user", "--scope", "--quiet", "--collect", *argv])
+        with mock.patch.object(server, "service_owns", return_value=False):
+            self.assertEqual(server.in_own_scope(argv), argv)  # from a terminal or the launcher: unchanged
+
 
 if __name__ == "__main__":
     unittest.main()

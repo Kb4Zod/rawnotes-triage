@@ -1093,12 +1093,20 @@ def open_argv(path):
     if not os.path.isabs(path): raise ValueError("only an absolute path can be opened")
     return ["xdg-open", path]
 
+def in_own_scope(argv):
+    """Under the systemd unit, run the opener in a scope of its own: otherwise the editor or file manager it starts
+    lives in the unit's cgroup and is killed whenever the unit stops or restarts. systemd-run --scope keeps the
+    opener in the foreground, so its exit code (and the failure report below) is unchanged."""
+    if service_owns(os.getpid()) and shutil.which("systemd-run"):
+        return ["systemd-run", "--user", "--scope", "--quiet", "--collect", *argv]
+    return argv
+
 def open_path(path):
     """Hand a validated path to the desktop's opener. No shell, one absolute operand. If the opener fails at once
     (it can't parse its arguments, or finds no handler) that is reported instead of swallowed; one that keeps
     running (it launched something) is left alone."""
     with tempfile.TemporaryFile() as err:
-        proc = subprocess.Popen(open_argv(path), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=err, start_new_session=True)
+        proc = subprocess.Popen(in_own_scope(open_argv(path)), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=err, start_new_session=True)
         try: code = proc.wait(timeout=1.5)
         except subprocess.TimeoutExpired: return
         if code:
