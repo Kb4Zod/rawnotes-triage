@@ -10,7 +10,10 @@ If a server is already on the port, warns when its version differs from this
 code; --restart stops it and starts this one.
 
 --app opens the page in its own window (Omarchy web app) instead of a browser tab;
-it is what the app-launcher entry from install-webapp.sh runs.
+it is what the app-launcher entry from install-webapp.sh runs. --service is what the
+systemd unit runs: no browser, and if the port is taken it exits with an error so
+systemd tries again later. When the running server belongs to that unit, --restart
+restarts the unit (systemctl) instead of stopping it.
 
 Decisions (all move real files, nothing is deleted; the words match the CLI and CLAUDE.md):
   promote             -> copy note into ../experiments|active|learning|templates,
@@ -1245,11 +1248,34 @@ def stop_server(info, port):
         time.sleep(0.1)
     raise SystemExit(f"rawtriage-web: pid {pid} didn't stop; try kill {pid}")
 
+SERVICE = "rawtriage-web.service"  # the systemd user unit install-webapp.sh installs
+
+def service_owns(pid):
+    """Is `pid` running inside the rawtriage-web systemd user unit? (Its cgroup path names the unit.)"""
+    try:
+        with open(f"/proc/{int(pid)}/cgroup") as fh: return f"/{SERVICE}" in fh.read()
+    except (OSError, ValueError, TypeError): return False
+
+def restart_service(port):
+    """Restart the unit rather than kill its server: a SIGTERM counts as a clean stop, so systemd would leave it down."""
+    r = subprocess.run(["systemctl", "--user", "restart", SERVICE], capture_output=True, text=True)
+    if r.returncode: raise SystemExit(f"rawtriage-web: systemctl --user restart {SERVICE} failed: {r.stderr.strip()}")
+    for _ in range(50):
+        info = running_server(port)
+        if info and not info["foreign"]: return info
+        time.sleep(0.1)
+    raise SystemExit(f"rawtriage-web: {SERVICE} restarted but nothing answers on port {port}; see: journalctl --user -u {SERVICE}")
+
 def open_page(url, app):
     """Open the page: in its own window with --app (Omarchy's web-app launcher), else a browser tab.
-    Without omarchy-launch-webapp (another desktop) --app falls back to the tab."""
+    Without omarchy-launch-webapp (another desktop), or if it fails at once (no supported browser), --app
+    falls back to the tab. Waits up to 2 s to see that; call it from a thread when that would hold things up."""
     if app and shutil.which("omarchy-launch-webapp"):
-        try: return subprocess.Popen(["omarchy-launch-webapp", url], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            p = subprocess.Popen(["omarchy-launch-webapp", url], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                if p.wait(timeout=2) == 0: return
+            except subprocess.TimeoutExpired: return  # still running: the window is up
         except OSError: pass
     import webbrowser; webbrowser.open(url)
 
@@ -1263,13 +1289,23 @@ if __name__ == "__main__":
     ap.add_argument("--notes", default=NOTES); ap.add_argument("--no-browser", action="store_true")
     ap.add_argument("--restart", action="store_true", help="stop a server already on the port, then start this one")
     ap.add_argument("--app", action="store_true", help="open the page in its own app window (Omarchy web app), not a browser tab")
+    ap.add_argument("--service", action="store_true", help="run under systemd: no browser; exit with an error if the port is taken, so systemd retries")
     ap.add_argument("--log", default=LOG_PATH, help="where actions are logged (and Pulse reads decisions from)")
-    a = ap.parse_args(); BIND_HOST = a.host; NOTES = os.path.abspath(os.path.expanduser(a.notes)); PROJECTS = os.path.dirname(NOTES)
+    a = ap.parse_args(); a.no_browser = a.no_browser or a.service; BIND_HOST = a.host; NOTES = os.path.abspath(os.path.expanduser(a.notes)); PROJECTS = os.path.dirname(NOTES)
     LOG_PATH = os.path.abspath(os.path.expanduser(a.log))
     url = f"http://127.0.0.1:{a.port}/"
     info = running_server(a.port)
     if info and info["foreign"]:
         raise SystemExit(f"rawtriage-web: port {a.port} is in use by something else (not rawnotes-triage); try --port N")
+    if info and a.restart and service_owns(info.get("pid") or port_pid(a.port)):
+        new = restart_service(a.port)
+        print(f"rawtriage-web: restarted {SERVICE}; it now runs version {new['version']} "
+              f"(the copy the unit points at, not necessarily this one)")
+        if not a.no_browser: open_page(url, a.app)
+        raise SystemExit(0)
+    if info and a.service:
+        raise SystemExit(f"rawtriage-web: port {a.port} is held by another triage server (pid {info.get('pid')}); "
+                         f"{SERVICE} will try again")
     if info and a.restart:
         pid = stop_server(info, a.port)
         print(f"rawtriage-web: stopped version {info['version'] or 'older than 1.05'} (pid {pid})")
@@ -1289,6 +1325,6 @@ if __name__ == "__main__":
     except OSError as e: raise SystemExit(f"rawtriage-web: port {a.port} is in use by something else ({e}); try --port N")
     print(f"rawnotes-triage v{VERSION}: {NOTES}\n{url}  (Ctrl-C to stop)")
     if a.host != "127.0.0.1": print(f"listening on {a.host}:{a.port} for other devices (no login; trusted networks only)")
-    if not a.no_browser: open_page(url, a.app)
+    if not a.no_browser: threading.Thread(target=open_page, args=(url, a.app), daemon=True).start()
     try: httpd.serve_forever()
     except KeyboardInterrupt: pass

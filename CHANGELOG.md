@@ -9,6 +9,15 @@ with every change. Versions 1.00-1.03 were numbered after the fact from git hist
   `omarchy-launch-webapp` (falls back to a browser tab off Omarchy). `install-webapp.sh` adds a **RawNotes Triage**
   launcher entry (via `omarchy-webapp-install`, running `rawtriage-web --app`) and an always-on systemd user unit
   (`systemd/rawtriage-web.service`); `--no-service` skips the unit, `--remove` undoes both.
+- Fixed before release, from the local PR review:
+  - `--restart` restarts the service when it owns the server. Before, it stopped it, and the service stayed down.
+  - The unit runs the new `--service` mode: if another triage server holds the port, it exits with an error and
+    systemd retries every 30 s. Before, it exited cleanly and never came back.
+  - The unit starts with the desktop session (`graphical-session.target`), so Open and notifications have a display.
+  - `install-webapp.sh` checks everything before changing anything (Omarchy, main checkout on 2.08, no server
+    started by hand on the port, a systemd user session) and installs from the main checkout only. It also confirms
+    the service stayed up. `--remove` finishes without a systemd user session.
+  - `--app` falls back to a browser tab if `omarchy-launch-webapp` fails (e.g. no supported browser).
 - App icon (`static/icons/`, SVG source + PNGs) served as the page favicon and as `/apple-touch-icon.png` for the
   phone home screen.
 

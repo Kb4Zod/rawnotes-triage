@@ -27,12 +27,16 @@ rawtriage-web --app       # same, but in its own app window instead of a browser
 One-time setup, run from the repo:
 
 1. `./install-webapp.sh` — adds **RawNotes Triage** (with its icon) to the app launcher and starts the server as an
-   always-on systemd user service (`rawtriage-web.service`, starts at login).
+   always-on systemd user service (`rawtriage-web.service`, starts with your desktop session). It checks everything
+   first and changes nothing if a check fails, e.g. the main checkout isn't on 2.08 yet (`git pull` there), or a
+   server you started by hand is still running (stop it first). It always installs and runs the main checkout
+   (`~/Projects/active/rawnotes-triage`), wherever you run the script from.
 2. Press `SUPER + SPACE`, type `RawNotes Triage`, Enter. The page opens in its own window, not a browser tab.
 
 - If the service is down, the launcher starts a server itself, so you never get a blank window.
-- **After updating the app:** run `systemctl --user restart rawtriage-web`, not `rawtriage-web --restart`. The
-  `--restart` flag stops the service's server and starts one in your terminal, and the service stays stopped.
+- **After updating the app:** `rawtriage-web --restart` (or `systemctl --user restart rawtriage-web`). When the
+  running server belongs to the service, `--restart` restarts the service instead of stopping it.
+- If a server you started by hand holds the port, the service waits and tries again every 30 s.
 - Launcher entry only, no service: `./install-webapp.sh --no-service`. Undo everything: `./install-webapp.sh --remove`.
 - The launcher entry runs `rawtriage-web --app`, not `omarchy-launch-webapp`, so it doesn't show up in Omarchy's
   *Remove Web App* menu. Use `--remove` instead.

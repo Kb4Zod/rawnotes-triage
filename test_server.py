@@ -700,12 +700,21 @@ class DecisionTestCase(unittest.TestCase):
 
 class OpenPageTestCase(unittest.TestCase):
     """--app opens Omarchy's app window; without it, or off Omarchy, a browser tab."""
-    def test_app_uses_the_omarchy_launcher(self):
+    def launch(self, wait):
+        """open_page with --app on Omarchy, where the launcher's wait() does `wait` (a return code or an exception)."""
         with mock.patch.object(server.shutil, "which", return_value="/usr/bin/omarchy-launch-webapp"), \
              mock.patch.object(server.subprocess, "Popen") as popen, mock.patch("webbrowser.open") as tab:
+            popen.return_value.wait.side_effect = [wait]
             server.open_page("http://127.0.0.1:8765/", True)
         self.assertEqual(popen.call_args.args[0], ["omarchy-launch-webapp", "http://127.0.0.1:8765/"])
-        tab.assert_not_called()
+        return tab
+
+    def test_app_uses_the_omarchy_launcher(self):
+        self.launch(0).assert_not_called()
+        self.launch(server.subprocess.TimeoutExpired("omarchy-launch-webapp", 2)).assert_not_called()  # window still up
+
+    def test_app_falls_back_to_a_tab_when_the_launcher_fails(self):
+        self.launch(1).assert_called_once_with("http://127.0.0.1:8765/")
 
     def test_app_falls_back_to_a_tab_without_omarchy(self):
         with mock.patch.object(server.shutil, "which", return_value=None), \
@@ -717,6 +726,29 @@ class OpenPageTestCase(unittest.TestCase):
         with mock.patch.object(server.subprocess, "Popen") as popen, mock.patch("webbrowser.open") as tab:
             server.open_page("http://127.0.0.1:8765/", False)
         popen.assert_not_called(); tab.assert_called_once_with("http://127.0.0.1:8765/")
+
+
+
+class ServiceTestCase(unittest.TestCase):
+    """The systemd side: --service retries when the port is taken; the unit's server is told apart by its cgroup."""
+    def test_service_mode_exits_with_an_error_when_a_triage_server_holds_the_port(self):
+        import subprocess, sys
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.H); port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.server_close); self.addCleanup(httpd.shutdown)
+        tmp = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        r = subprocess.run([sys.executable, server.__file__, "--service", "--port", str(port), "--notes", tmp,
+                            "--log", os.path.join(tmp, "t.log")], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 1)  # an error, so Restart=on-failure tries again
+        self.assertIn("will try again", r.stderr)
+
+    def test_service_owns_reads_the_unit_from_the_cgroup(self):
+        unit = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/rawtriage-web.service\n"
+        other = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-foot.scope\n"
+        for text, want in ((unit, True), (other, False)):
+            with mock.patch("builtins.open", mock.mock_open(read_data=text)): self.assertIs(server.service_owns(123), want)
+        self.assertFalse(server.service_owns(None))
+        self.assertFalse(server.service_owns(2 ** 30))  # no such process
 
 
 if __name__ == "__main__":

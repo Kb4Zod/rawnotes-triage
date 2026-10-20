@@ -1,9 +1,15 @@
 [Unit]
 Description=RawNotes triage website (http://127.0.0.1:8765)
+# Started with the desktop session, so the page's Open button (xdg-open) and notifications have a display.
+PartOf=graphical-session.target
+After=graphical-session.target
 
 [Service]
-ExecStart=/usr/bin/python3 %h/Projects/active/rawnotes-triage/server.py --no-browser
+# Listens on 127.0.0.1 only. Don't add --host 0.0.0.0 here: there is no login, and this runs all the time.
+# --service: if another triage server holds the port, exit with an error so systemd tries again in 30 s.
+ExecStart=/usr/bin/python3 %h/Projects/active/rawnotes-triage/server.py --service
 Restart=on-failure
+RestartSec=30
 
 [Install]
-WantedBy=default.target
+WantedBy=graphical-session.target
