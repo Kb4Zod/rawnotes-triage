@@ -29,6 +29,9 @@ with every change. Versions 1.00-1.03 were numbered after the fact from git hist
 - Fixed: the whole page scrolled as well as its panes, so a second scroll bar showed at the right edge. The Inbox
   list's hidden screen-reader labels ("waiting ...") were placed against the page instead of the list, so the ones
   further down made the page taller than the window. The list now anchors them (`.list{position:relative}`).
+- Fixed: while a long note scrolls under the pinned "What happens to this note?" panel, the text no longer shows
+  in the strip between the top of the window and the panel. That strip is now painted with the page background
+  (desktop only; the phone layout keeps its panel at the bottom).
 
 ## 2.07 — 2026-10-19
 - Replace the search and keyboard-help dialog backdrop blur with the existing plain dimmed overlay. This avoids
