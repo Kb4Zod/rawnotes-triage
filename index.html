@@ -121,7 +121,7 @@ svg.i{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.9;stro
 /* split view: Inbox and Archive */
 .split{display:grid;grid-template-columns:400px 1fr;height:100vh;min-height:0}
 .listpane{border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;background:color-mix(in srgb,var(--surface) 55%,transparent)}
-.list{overflow:auto;flex:1;padding:4px 10px 24px}
+.list{position:relative;overflow:auto;flex:1;padding:4px 10px 24px}
 .grp-h{font:900 10.5px var(--sans);letter-spacing:.2em;text-transform:uppercase;color:var(--mute);padding:14px 12px 6px;display:flex;justify-content:space-between}
 .grp-h h2{font:inherit;letter-spacing:inherit;text-transform:inherit;margin:0}
 .item{display:grid;grid-template-columns:4px 1fr auto;gap:0 12px;padding:10px 12px 10px 0;border-radius:11px;cursor:pointer;margin-bottom:2px;align-items:center;border:1px solid transparent}

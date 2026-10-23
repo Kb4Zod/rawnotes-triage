@@ -26,6 +26,9 @@ with every change. Versions 1.00-1.03 were numbered after the fact from git hist
   Hyprland rejects it. `--remove` removes it.
 - App icon (`static/icons/`, SVG source + PNGs) served as the page favicon and as `/apple-touch-icon.png` for the
   phone home screen.
+- Fixed: the whole page scrolled as well as its panes, so a second scroll bar showed at the right edge. The Inbox
+  list's hidden screen-reader labels ("waiting ...") were placed against the page instead of the list, so the ones
+  further down made the page taller than the window. The list now anchors them (`.list{position:relative}`).
 
 ## 2.07 — 2026-10-19
 - Replace the search and keyboard-help dialog backdrop blur with the existing plain dimmed overlay. This avoids
