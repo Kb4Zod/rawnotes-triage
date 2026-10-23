@@ -4,6 +4,35 @@ The version shows in the page heading ("RawNotes Triage version X.XX") and
 in the startup line. Bump `VERSION` in `server.py` and add an entry here
 with every change. Versions 1.00-1.03 were numbered after the fact from git history.
 
+## 2.08 — 2026-10-20
+- **Standalone app in the Omarchy launcher.** New `--app` flag opens the page in its own window through
+  `omarchy-launch-webapp` (falls back to a browser tab off Omarchy). `install-webapp.sh` adds a **RawNotes Triage**
+  launcher entry (via `omarchy-webapp-install`, running `rawtriage-web --app`) and an always-on systemd user unit
+  (`systemd/rawtriage-web.service`); `--no-service` skips the unit, `--remove` undoes both.
+- Fixed before release, from the local PR review:
+  - `--restart` restarts the service when it owns the server. Before, it stopped it, and the service stayed down.
+  - The unit runs the new `--service` mode: if another triage server holds the port, it exits with an error and
+    systemd retries every 30 s. Before, it exited cleanly and never came back.
+  - The unit starts with the desktop session (`graphical-session.target`), so Open and notifications have a display.
+  - `install-webapp.sh` checks everything before changing anything (Omarchy, main checkout on 2.08, no server
+    started by hand on the port, a systemd user session) and installs from the main checkout only. It also confirms
+    the service stayed up. `--remove` finishes without a systemd user session.
+  - `--app` falls back to a browser tab if `omarchy-launch-webapp` fails (e.g. no supported browser).
+  - Under the service, Open starts the editor or file manager in a scope of its own (`systemd-run --user --scope`),
+    so restarting or stopping the service no longer kills it, unsaved edits and all.
+- **Always opens full screen.** `--app` opens the page at `/triage` (same page as `/`), which gives the window its
+  own class. `install-webapp.sh` adds a marked Hyprland rule for that class (`fullscreen_state = "2 0"`; a plain
+  `fullscreen = true` is undone by Chromium), checks it with `hyprctl configerrors` and takes it back out if
+  Hyprland rejects it. `--remove` removes it.
+- App icon (`static/icons/`, SVG source + PNGs) served as the page favicon and as `/apple-touch-icon.png` for the
+  phone home screen.
+- Fixed: the whole page scrolled as well as its panes, so a second scroll bar showed at the right edge. The Inbox
+  list's hidden screen-reader labels ("waiting ...") were placed against the page instead of the list, so the ones
+  further down made the page taller than the window. The list now anchors them (`.list{position:relative}`).
+- Fixed: while a long note scrolls under the pinned "What happens to this note?" panel, the text no longer shows
+  in the strip between the top of the window and the panel. That strip is now painted with the page background
+  (desktop only; the phone layout keeps its panel at the bottom).
+
 ## 2.07 — 2026-10-19
 - Replace the search and keyboard-help dialog backdrop blur with the existing plain dimmed overlay. This avoids
   mirrored/repeated background imagery observed in the preview browser. Modal focus handling is unchanged.

@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>RawNotes · Triage __VERSION__</title>
+<link rel="icon" type="image/png" href="/static/icons/icon-256.png"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <script>(()=>{const t=localStorage.getItem('theme');if(t==='dark'||(!t&&matchMedia('(prefers-color-scheme:dark)').matches))document.documentElement.classList.add('dark')})()</script>
 <style>
 @font-face{font-family:'Cormorant Garamond';src:url(/static/fonts/CormorantGaramond.woff2) format('woff2');font-weight:300 700;font-display:swap}
@@ -42,7 +43,8 @@
 .skip:focus{top:8px}
 main:focus,#main h1:focus,h1:focus{outline:none}
 html,body{height:100%;margin:0}
-body{background:var(--bg);color:var(--ink);font:14px/1.55 var(--sans);-webkit-font-smoothing:antialiased;
+body{color:var(--ink);font:14px/1.55 var(--sans);-webkit-font-smoothing:antialiased}
+body,.reader:has(>.decide:not(.open)):before{background:var(--bg);
   background-image:radial-gradient(circle at 92% 0%,var(--glow1),transparent 45%),radial-gradient(circle at 0% 100%,var(--glow2),transparent 50%);background-attachment:fixed}
 h1,h2,h3,h4,.serif,.num{font-family:var(--serif);font-weight:600;letter-spacing:.2px;font-variant-numeric:lining-nums}
 button,input,select,textarea{font:inherit;color:inherit}
@@ -120,7 +122,7 @@ svg.i{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.9;stro
 /* split view: Inbox and Archive */
 .split{display:grid;grid-template-columns:400px 1fr;height:100vh;min-height:0}
 .listpane{border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;background:color-mix(in srgb,var(--surface) 55%,transparent)}
-.list{overflow:auto;flex:1;padding:4px 10px 24px}
+.list{position:relative;overflow:auto;flex:1;padding:4px 10px 24px}
 .grp-h{font:900 10.5px var(--sans);letter-spacing:.2em;text-transform:uppercase;color:var(--mute);padding:14px 12px 6px;display:flex;justify-content:space-between}
 .grp-h h2{font:inherit;letter-spacing:inherit;text-transform:inherit;margin:0}
 .item{display:grid;grid-template-columns:4px 1fr auto;gap:0 12px;padding:10px 12px 10px 0;border-radius:11px;cursor:pointer;margin-bottom:2px;align-items:center;border:1px solid transparent}
@@ -148,6 +150,10 @@ svg.i{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.9;stro
 /* decide */
 .decide{position:sticky;top:0;z-index:5;padding:14px;margin:-6px -6px 22px}
 .decide.open{position:relative}
+/* blanks the reader's 20px top padding above the pinned panel, so the note scrolls out of sight there (page background).
+   It pins one layer below the panel and runs 5px under its top edge: butted against the edge, a fractional scroll or a
+   browser zoom left a hairline row of text between the two. */
+.reader:has(>.decide:not(.open)):before{content:"";display:block;position:sticky;top:-20px;z-index:4;height:25px;margin:0 -32px -25px;pointer-events:none}
 .decide .q{display:flex;align-items:baseline;gap:10px;margin:0 4px 12px;flex-wrap:wrap}
 .decide .q h2{margin:0;font-size:21px}
 .decide .q .muted{font-size:13px}
@@ -318,6 +324,7 @@ button.tile{cursor:pointer;font:inherit;color:inherit}
   .back{display:inline-flex;align-items:center;gap:4px;color:var(--green);font-weight:700;padding:8px 4px;background:none;border:0;min-height:44px;cursor:pointer}
   .decide{position:fixed;left:0;right:0;bottom:0;top:auto;margin:0;z-index:40;border-radius:20px 20px 0 0;max-height:78vh;overflow:auto;padding:10px 14px calc(16px + env(safe-area-inset-bottom));box-shadow:0 -12px 40px rgba(0,0,0,.2);background:var(--solid)}
   .decide.open{position:fixed}
+  .reader:has(>.decide:not(.open)):before{content:none}
   .decide:before{content:"";display:block;width:40px;height:5px;border-radius:3px;background:var(--line2);margin:0 auto 10px}
   .decide .q h2{font-size:19px}.decide .q .kh{display:none}
   .opts{grid-template-columns:1fr 1fr}.opt{min-height:60px}.opt .k{display:none}

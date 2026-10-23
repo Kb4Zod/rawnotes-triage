@@ -19,7 +19,36 @@ rawtriage-web --host 0.0.0.0   # reachable from the phone (home Wi-Fi / Tailscal
                          # the page works on a phone: tap a row, decide from the bottom sheet
 rawtriage-web --notes /tmp/copy/RawNotes --log /tmp/copy/triage.log --port 8766   # try it on a copy
 rawtriage-web --restart   # stop the server already running (e.g. old version), start this one
+rawtriage-web --app       # same, but in its own app window instead of a browser tab (Omarchy)
 ```
+
+### As an app in the Omarchy launcher
+
+One-time setup, run from the repo:
+
+1. `./install-webapp.sh` — adds **RawNotes Triage** (with its icon) to the app launcher and starts the server as an
+   always-on systemd user service (`rawtriage-web.service`, starts with your desktop session). It checks everything
+   first and changes nothing if a check fails, e.g. the main checkout isn't on 2.08 yet (`git pull` there), or a
+   server you started by hand is still running (stop it first). It always installs and runs the main checkout
+   (`~/Projects/active/rawnotes-triage`), wherever you run the script from.
+2. Press `SUPER + SPACE`, type `RawNotes Triage`, Enter. The page opens in its own window, not a browser tab,
+   and always full screen. `SUPER + F` leaves full screen (and goes back), as for any window.
+
+- **Full screen** comes from a Hyprland window rule the installer appends to `~/.config/hypr/hyprland.lua`, between
+  `-- >>> rawnotes-triage` markers (backup: `hyprland.lua.bak.rawnotes-triage`). Problems with the rule are only
+  warnings: the app still installs, just not full screen. Over SSH (no Hyprland to ask) the rule is added and
+  applies at next login. It matches only this app: `--app` opens
+  `/triage`, which gives the window its own class (`chrome-127.0.0.1__triage-Default`). It uses
+  `fullscreen_state = "2 0"` because Chromium undoes a plain `fullscreen = true` as soon as the window opens.
+- Opening another window on the same workspace takes the app out of full screen (Hyprland's normal behaviour).
+
+- If the service is down, the launcher starts a server itself, so you never get a blank window.
+- **After updating the app:** `rawtriage-web --restart` (or `systemctl --user restart rawtriage-web`). When the
+  running server belongs to the service, `--restart` restarts the service instead of stopping it.
+- If a server you started by hand holds the port, the service waits and tries again every 30 s.
+- Launcher entry only, no service: `./install-webapp.sh --no-service`. Undo everything: `./install-webapp.sh --remove`.
+- The launcher entry runs `rawtriage-web --app`, not `omarchy-launch-webapp`, so it doesn't show up in Omarchy's
+  *Remove Web App* menu. Use `--remove` instead.
 
 No dependencies beyond python3. `server.py` is the API + file mover, `safefs.py` and `notemeta.py` are its two small
 helpers (safe file writes; note headers), `index.html` is the UI (read once at startup: after editing it,

@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
 """rawnotes-triage — local website for reviewing ~/Projects/RawNotes.
 
-Usage: python3 server.py [--port 8765] [--host 127.0.0.1] [--notes ~/Projects/RawNotes] [--log triage.log] [--restart]
+Usage: python3 server.py [--port 8765] [--host 127.0.0.1] [--notes ~/Projects/RawNotes] [--log triage.log] [--restart] [--app]
 
 --host 0.0.0.0 listens on every interface (phone on home Wi-Fi / Tailscale).
 There is no login: only do that on a network you trust. Firewall still applies.
 
 If a server is already on the port, warns when its version differs from this
 code; --restart stops it and starts this one.
+
+--app opens the page in its own window (Omarchy web app) instead of a browser tab;
+it is what the app-launcher entry from install-webapp.sh runs. --service is what the
+systemd unit runs: no browser, and if the port is taken it exits with an error so
+systemd tries again later. When the running server belongs to that unit, --restart
+restarts the unit (systemctl) instead of stopping it.
 
 Decisions (all move real files, nothing is deleted; the words match the CLI and CLAUDE.md):
   promote             -> copy note into ../experiments|active|learning|templates,
@@ -27,10 +33,12 @@ import safefs
 from notemeta import (field, set_field, drop_field, title_of, append_outcome, question_of, question_summary, note_body,
                       eol_of, with_eol, to_lf, header_lines, title_index, HEAD_LINE)
 
-VERSION = "2.07"  # bump on every change; history in CHANGELOG.md
+VERSION = "2.08"  # bump on every change; history in CHANGELOG.md
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOG_PATH = os.path.join(HERE, "triage.log")
 FONT_RE = re.compile(r"^/static/fonts/[A-Za-z0-9-]+\.woff2$")
+APP_PATH = "/triage"  # --app opens the page here: the path gives the window its own class, for a Hyprland rule
+ICONS = {"/static/icons/icon-256.png": "icon-256.png", "/apple-touch-icon.png": "apple-touch-icon.png"}  # page favicon, phone home screen, app launcher
 NOTES = os.path.expanduser("~/Projects/RawNotes")
 PROJECTS = None
 BIND_HOST = "127.0.0.1"  # set from --host; the Host/Origin guard depends on it
@@ -1086,12 +1094,20 @@ def open_argv(path):
     if not os.path.isabs(path): raise ValueError("only an absolute path can be opened")
     return ["xdg-open", path]
 
+def in_own_scope(argv):
+    """Under the systemd unit, run the opener in a scope of its own: otherwise the editor or file manager it starts
+    lives in the unit's cgroup and is killed whenever the unit stops or restarts. systemd-run --scope keeps the
+    opener in the foreground, so its exit code (and the failure report below) is unchanged."""
+    if service_owns(os.getpid()) and shutil.which("systemd-run"):
+        return ["systemd-run", "--user", "--scope", "--quiet", "--collect", *argv]
+    return argv
+
 def open_path(path):
     """Hand a validated path to the desktop's opener. No shell, one absolute operand. If the opener fails at once
     (it can't parse its arguments, or finds no handler) that is reported instead of swallowed; one that keeps
     running (it launched something) is left alone."""
     with tempfile.TemporaryFile() as err:
-        proc = subprocess.Popen(open_argv(path), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=err, start_new_session=True)
+        proc = subprocess.Popen(in_own_scope(open_argv(path)), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=err, start_new_session=True)
         try: code = proc.wait(timeout=1.5)
         except subprocess.TimeoutExpired: return
         if code:
@@ -1114,8 +1130,8 @@ class Server(ThreadingHTTPServer):
 class H(BaseHTTPRequestHandler):
     def _send(self, code, body, ctype="application/json"):
         data = body if isinstance(body, bytes) else json.dumps(body).encode()
-        self.send_response(code); self.send_header("Content-Type", ctype if ctype.startswith("font/") else ctype + "; charset=utf-8")
-        if ctype.startswith("font/"): self.send_header("Cache-Control", "max-age=604800")
+        self.send_response(code); self.send_header("Content-Type", ctype if ctype.startswith(("font/", "image/")) else ctype + "; charset=utf-8")
+        if ctype.startswith(("font/", "image/")): self.send_header("Cache-Control", "max-age=604800")
         else: self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Length", str(len(data)))
@@ -1144,7 +1160,7 @@ class H(BaseHTTPRequestHandler):
         bad = self._refuse(False)
         if bad: return self._send(403, {"error": bad})
         try:
-            if u.path == "/": return self._send(200, INDEX_HTML, "text/html")
+            if u.path in ("/", APP_PATH): return self._send(200, INDEX_HTML, "text/html")
             if u.path == "/api/version": return self._send(200, {"version": VERSION, "started": STARTED, "pid": os.getpid(), "app": "rawnotes-triage"})
             if u.path == "/api/projects": return self._send(200, {"projects": projects_listing(q.get("refresh") == ["1"])})
             if u.path == "/api/project": return self._send(200, project_detail(q.get("name", [""])[0], q.get("kind", [""])[0]))
@@ -1157,6 +1173,8 @@ class H(BaseHTTPRequestHandler):
                 p = os.path.join(HERE, u.path.lstrip("/"))
                 if not os.path.isfile(p): return self._send(404, {"error": "not found"})
                 with open(p, "rb") as fh: return self._send(200, fh.read(), "font/woff2")
+            if u.path in ICONS:
+                with open(os.path.join(HERE, "static", "icons", ICONS[u.path]), "rb") as fh: return self._send(200, fh.read(), "image/png")
             if u.path == "/api/note": return self._send(200, note_view(q["f"][0]))
             self._send(404, {"error": "not found"})
         except Exception as e: self._fail(e)
@@ -1239,6 +1257,39 @@ def stop_server(info, port):
         time.sleep(0.1)
     raise SystemExit(f"rawtriage-web: pid {pid} didn't stop; try kill {pid}")
 
+SERVICE = "rawtriage-web.service"  # the systemd user unit install-webapp.sh installs
+
+def service_owns(pid):
+    """Is `pid` running inside the rawtriage-web systemd user unit? (Its cgroup path names the unit.)"""
+    try:
+        with open(f"/proc/{int(pid)}/cgroup") as fh: return f"/{SERVICE}" in fh.read()
+    except (OSError, ValueError, TypeError): return False
+
+def restart_service(port):
+    """Restart the unit rather than kill its server: a SIGTERM counts as a clean stop, so systemd would leave it down."""
+    r = subprocess.run(["systemctl", "--user", "restart", SERVICE], capture_output=True, text=True)
+    if r.returncode: raise SystemExit(f"rawtriage-web: systemctl --user restart {SERVICE} failed: {r.stderr.strip()}")
+    for _ in range(50):
+        info = running_server(port)
+        if info and not info["foreign"]: return info
+        time.sleep(0.1)
+    raise SystemExit(f"rawtriage-web: {SERVICE} restarted but nothing answers on port {port}; see: journalctl --user -u {SERVICE}")
+
+def open_page(url, app):
+    """Open the page: in its own window with --app (Omarchy's web-app launcher), else a browser tab.
+    Without omarchy-launch-webapp (another desktop), or if it fails at once (no supported browser), --app
+    falls back to the tab. Waits up to 2 s to see that; call it from a thread when that would hold things up.
+    The app window opens at APP_PATH, so its class is chrome-127.0.0.1__triage-Default (the port isn't in it)."""
+    if app: url = url.rstrip("/") + APP_PATH
+    if app and shutil.which("omarchy-launch-webapp"):
+        try:
+            p = subprocess.Popen(["omarchy-launch-webapp", url], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                if p.wait(timeout=2) == 0: return
+            except subprocess.TimeoutExpired: return  # still running: the window is up
+        except OSError: pass
+    import webbrowser; webbrowser.open(url)
+
 def notify(msg):
     try: subprocess.Popen(["notify-send", "RawNotes Triage", msg], stderr=subprocess.DEVNULL)
     except OSError: pass
@@ -1248,13 +1299,24 @@ if __name__ == "__main__":
     ap.add_argument("--host", default="127.0.0.1", help="interface to listen on; 0.0.0.0 = all (no auth, trusted networks only)")
     ap.add_argument("--notes", default=NOTES); ap.add_argument("--no-browser", action="store_true")
     ap.add_argument("--restart", action="store_true", help="stop a server already on the port, then start this one")
+    ap.add_argument("--app", action="store_true", help="open the page in its own app window (Omarchy web app), not a browser tab")
+    ap.add_argument("--service", action="store_true", help="run under systemd: no browser; exit with an error if the port is taken, so systemd retries")
     ap.add_argument("--log", default=LOG_PATH, help="where actions are logged (and Pulse reads decisions from)")
-    a = ap.parse_args(); BIND_HOST = a.host; NOTES = os.path.abspath(os.path.expanduser(a.notes)); PROJECTS = os.path.dirname(NOTES)
+    a = ap.parse_args(); a.no_browser = a.no_browser or a.service; BIND_HOST = a.host; NOTES = os.path.abspath(os.path.expanduser(a.notes)); PROJECTS = os.path.dirname(NOTES)
     LOG_PATH = os.path.abspath(os.path.expanduser(a.log))
     url = f"http://127.0.0.1:{a.port}/"
     info = running_server(a.port)
     if info and info["foreign"]:
         raise SystemExit(f"rawtriage-web: port {a.port} is in use by something else (not rawnotes-triage); try --port N")
+    if info and a.restart and service_owns(info.get("pid") or port_pid(a.port)):
+        new = restart_service(a.port)
+        print(f"rawtriage-web: restarted {SERVICE}; it now runs version {new['version']} "
+              f"(the copy the unit points at, not necessarily this one)")
+        if not a.no_browser: open_page(url, a.app)
+        raise SystemExit(0)
+    if info and a.service:
+        raise SystemExit(f"rawtriage-web: port {a.port} is held by another triage server (pid {info.get('pid')}); "
+                         f"{SERVICE} will try again")
     if info and a.restart:
         pid = stop_server(info, a.port)
         print(f"rawtriage-web: stopped version {info['version'] or 'older than 1.05'} (pid {pid})")
@@ -1268,14 +1330,12 @@ if __name__ == "__main__":
                    f"  this code: version {VERSION}\n"
                    f"  -> run: rawtriage-web --restart")
             print("rawtriage-web: " + msg); notify(msg)
-        if not a.no_browser:
-            import webbrowser; webbrowser.open(url)
+        if not a.no_browser: open_page(url, a.app)
         raise SystemExit(0)
     try: httpd = Server((a.host, a.port), H)
     except OSError as e: raise SystemExit(f"rawtriage-web: port {a.port} is in use by something else ({e}); try --port N")
     print(f"rawnotes-triage v{VERSION}: {NOTES}\n{url}  (Ctrl-C to stop)")
     if a.host != "127.0.0.1": print(f"listening on {a.host}:{a.port} for other devices (no login; trusted networks only)")
-    if not a.no_browser:
-        import webbrowser; webbrowser.open(url)
+    if not a.no_browser: threading.Thread(target=open_page, args=(url, a.app), daemon=True).start()
     try: httpd.serve_forever()
     except KeyboardInterrupt: pass
