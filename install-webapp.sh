@@ -91,7 +91,7 @@ esac
 
 # Check everything before changing anything.
 command -v omarchy-webapp-install >/dev/null || fail "omarchy-webapp-install not found (this needs Omarchy)"
-[[ -x $BIN ]] || fail "$BIN is missing; see README 'Run it'"
+[[ -x $BIN ]] || fail "$BIN is missing; see README 'Omarchy launcher app'"
 [[ -f $REPO/server.py ]] || fail "$REPO/server.py not found"
 grep -q -- 'APP_PATH = "/triage"' "$REPO/server.py" || fail "$REPO is older than this installer (2.08); git pull there first"
 [[ -f $REPO/static/icons/icon-256.png && -f $REPO/systemd/$UNIT ]] || fail "icon or unit file missing in $REPO"

@@ -23,6 +23,7 @@ python3 server.py --host 0.0.0.0      # reachable from the phone (home Wi-Fi / T
 python3 server.py --notes /tmp/copy/RawNotes --log /tmp/copy/triage.log --port 8766   # try it on a copy
 python3 server.py --restart           # stop the server already on the port (e.g. an old version), start this one
 python3 server.py --app               # same, but in its own app window instead of a browser tab (Omarchy)
+python3 server.py --service           # for the systemd unit: no browser; exits with an error if the port is taken, so systemd retries
 ```
 
 `rawtriage-web` is a one-line wrapper around `python3 server.py` that lives in
@@ -84,7 +85,6 @@ One-time setup, run from the repo:
   `/triage`, which gives the window its own class (`chrome-127.0.0.1__triage-Default`). It uses
   `fullscreen_state = "2 0"` because Chromium undoes a plain `fullscreen = true` as soon as the window opens.
 - Opening another window on the same workspace takes the app out of full screen (Hyprland's normal behaviour).
-
 - If the service is down, the launcher starts a server itself, so you never get a blank window.
 - **After updating the app:** `rawtriage-web --restart` (or `systemctl --user restart rawtriage-web`). When the
   running server belongs to the service, `--restart` restarts the service instead of stopping it.
@@ -327,6 +327,8 @@ build of the page.
 - `notemeta.py`: note header and section parsing
 - `safefs.py`: symlink-safe path checks, atomic writes, read/write lock, stat cache
 - `index.html` + `static/fonts/`: the whole UI
+- `static/icons/`: app icon (SVG source + PNGs), the favicon and the phone home-screen icon
+- `install-webapp.sh`, `systemd/rawtriage-web.service`: the Omarchy launcher app and its always-on service
 - `test_*.py`, `testkit.py`, `cdp.py`, `loadcheck.py`: tests and load check
 - `.scratch/`: specs and tickets for past and pending work (see `AGENTS.md`)
 
