@@ -4,6 +4,11 @@ The version shows in the page heading ("RawNotes Triage version X.XX") and
 in the startup line. Bump `VERSION` in `server.py` and add an entry here
 with every change. Versions 1.00-1.03 were numbered after the fact from git history.
 
+## 2.11 — 2026-10-24
+- **Fixed: experiments no longer show up under "Due this week".** An open-ended experiment has no ship-by date, and
+  the "Due this week" check treated the missing date as 0 days left. Each experiment now appears only under
+  **Experiments**, and the "Due this week" count on the Projects page leaves them out.
+
 ## 2.10 — 2026-10-24
 - **Scroll the Projects board from the keyboard.** `H` / `L` or `←` / `→` scroll the board one column left or right
   when it is wider than the screen. Holding the key keeps scrolling. Listed in the `?` help and the user guide.

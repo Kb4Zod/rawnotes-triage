@@ -243,6 +243,15 @@ class Flows(BrowserCase):
         self.page.click("#tUndo"); self.settle(0.6)
         self.assertIn("- status: promoted", open(os.path.join(self.tmp, "active", "demo", "NOTES.md")).read())
 
+    def test_an_open_ended_experiment_is_only_under_experiments(self):
+        self.project("spike", kind="experiments", notes="# Spike\n\n- date: 2026-10-01\n- status: promoted\n- promoted: 2026-10-01\n\n## Plan\n\n- definition of done: We know.\n")
+        self.open("projects"); self.page.wait("document.querySelector('[data-pid^=\"experiments/spike\"]')")
+        cols = self.page.eval("[...document.querySelectorAll('#pscroll .col')].map(c=>[c.querySelector('h2').textContent,[...c.querySelectorAll('[data-pid]')].map(b=>b.dataset.pid)])")
+        where = [h for h, pids in cols if any(p.startswith("experiments/spike") for p in pids)]
+        self.assertEqual(len(where), 1, cols); self.assertIn("Experiments", where[0])
+        week = sum(len(pids) for h, pids in cols if h.startswith("Due this week"))
+        self.assertEqual(self.page.eval("[...document.querySelectorAll('.card.tile')].find(t=>t.textContent.includes('Due this week')).querySelector('.num').textContent"), str(week))
+
     def test_h_l_and_side_arrows_scroll_the_projects_board(self):
         self.page.resize(900, 800); self.open("projects")
         self.page.click("[data-pid='active/demo/NOTES.md']"); self.page.wait("document.querySelector('#drawer')")

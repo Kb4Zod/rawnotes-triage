@@ -784,7 +784,7 @@ function renderProjects(){
     $('#main').innerHTML='<div class="scroll"><div class="pane-h" style="padding-left:0"><h1>Projects</h1><div class="sub">Loading projects…</div></div></div>';
     loadProjects(fresh).then(()=>{if(sc.ok()&&S.route==='projects')render()}).catch(e=>{if(sc.ok()&&S.route==='projects')$('#main').innerHTML=`<div class="scroll"><h1 class="sr">Projects</h1><p class="err">${esc(e.message)}</p></div>`});return}
   const cards=projectCards(),open=cards.filter(c=>!c.closed);
-  const late=open.filter(c=>c.f&&c.f.days_left!==null&&c.f.days_left<0),week=open.filter(c=>c.f&&c.f.days_left>=0&&c.f.days_left<=7),
+  const late=open.filter(c=>c.f&&c.f.days_left!==null&&c.f.days_left<0),week=open.filter(c=>c.f&&c.f.days_left!==null&&c.f.days_left>=0&&c.f.days_left<=7),
     later=open.filter(c=>c.f&&!c.f.open_ended&&(c.f.days_left>7||c.f.days_left===null)),exps=open.filter(c=>c.f?c.f.open_ended:c.exp),
     none=open.filter(c=>!c.f&&!c.exp),closed=cards.filter(c=>c.closed);
   if(S.psel&&!cards.some(c=>c.id===S.psel))S.psel=null;
