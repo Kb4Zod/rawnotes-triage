@@ -490,6 +490,7 @@ function renderRail(){
   else if(a&&a.error)spark=`<span title="${esc(a.error)}">GitHub activity unavailable</span>`;
   const g=S.gh,gtxt=!g?'Checking GitHub…':g.state==='signed_in'?`Signed in as <b>${esc(g.login)}</b>`:g.state==='signed_out'?'Not signed in to GitHub':g.state==='no_gh'?'GitHub CLI not installed':'GitHub unreachable';
   const ghBtn=`<button class="linkish ghs ${g&&g.state==='signed_in'?'ok':''}" id="ghStatus" aria-haspopup="dialog" title="GitHub sign-in"><span class="dot"></span>${gtxt}</button>`;
+  const had=document.activeElement&&$('#rail').contains(document.activeElement)?document.activeElement.id:'';  // keep focus on a rail button across the redraw
   $('#rail').innerHTML=`<div class="brand"><div class="name">Raw<em>Notes</em></div><div class="sub">Triage</div></div>
   <nav class="nav" aria-label="Pages">${nav('inbox','inbox','Inbox',c.live)}${nav('projects','proj','Projects',c.late||c.flight,!!c.late)}${nav('archive','arch','Archive',c.done)}${nav('pulse','pulse','Pulse')}</nav>
   <div class="nav"><div class="label">Lifecycle</div>
@@ -499,6 +500,7 @@ function renderRail(){
    <div class="row"><button class="linkish" id="kPal">${kb('Ctrl K')} search</button><button class="linkish" id="kKeys">${kb('?')} keys</button></div>
    <div class="row"><button class="linkish" id="theme">${dark?I.sun:I.moon} ${dark?'Light':'Dark'}</button><span>v${VERSION}</span></div></div>`;
   $('#ghStatus').onclick=openGithub;$('#kPal').onclick=openPalette;$('#kKeys').onclick=openKeys;$('#theme').onclick=toggleTheme;
+  if(had&&document.getElementById(had))document.getElementById(had).focus({preventScroll:true});
   const tab=(id,ic,label,bd)=>`<a href="#/${id}" class="${S.route===id?'on':''}"${S.route===id?' aria-current="page"':''}>${I[ic]}${bd?`<span class="bd" aria-label="${bd} overdue">${bd}</span>`:''}${label}</a>`;
   $('#tabbar').innerHTML=tab('inbox','inbox','Inbox')+tab('projects','proj','Projects',c.late)+tab('archive','arch','Archive')+tab('pulse','pulse','Pulse')}
 function toggleTheme(){const d=document.documentElement.classList.toggle('dark');localStorage.setItem('theme',d?'dark':'light');renderRail();if(S.route==='pulse')render()}
@@ -937,9 +939,12 @@ let pal=null,returnFocus=null;
 const FOCUSABLE='a[href],button:not([disabled]),input:not([disabled]),select,textarea,[tabindex]:not([tabindex="-1"])';
 const backdrop=on=>['.app','#tabbar'].forEach(s=>{const el=$(s);el&&el.toggleAttribute('inert',on)});  // nothing behind a modal can be reached or read
 function showOverlay(html){closeOverlay(true);returnFocus=document.activeElement;$('#overlay').innerHTML=html;backdrop(true);
-  $('#scrim').onclick=e=>{if(e.target.id==='scrim')closeOverlay()}}
+  $('#scrim').onclick=e=>{if(e.target.id==='scrim'&&!sticky())closeOverlay()}}
+const sticky=()=>!!$('#overlay [data-sticky]');  // the first-run dialog: nothing to go back to until it's done
 function closeOverlay(quiet){const had=$('#overlay').innerHTML;$('#overlay').innerHTML='';pal=null;backdrop(false);
-  const back=returnFocus;returnFocus=null;if(!quiet&&had){if(back&&back.isConnected&&back!==document.body)back.focus();else($('#main')||document.body).focus({preventScroll:true})}}
+  let back=returnFocus;returnFocus=null;
+  if(back&&!back.isConnected&&back.id)back=document.getElementById(back.id);  // the rail is redrawn when GitHub data arrives: same button, new element
+  if(!quiet&&had){if(back&&back.isConnected&&back!==document.body)back.focus();else($('#main')||document.body).focus({preventScroll:true})}}
 function trapTab(e){const d=$('#overlay [role=dialog]');if(!d)return;const f=[...d.querySelectorAll(FOCUSABLE)].filter(x=>x.offsetParent!==null);
   if(!f.length){e.preventDefault();d.focus();return}
   const i=f.indexOf(document.activeElement);
@@ -968,6 +973,26 @@ function openGithub(){
     catch(x){$('#ghSave').disabled=false;err(x.message)}};
   if($('#ghRemove'))$('#ghRemove').onclick=async()=>{try{S.gh=await api('/api/github/token/remove',{});S.activity=null;closeOverlay();renderRail();loadActivity(true)}catch(x){err(x.message)}};
   $('#ghTok').focus()}
+// first run: the notes folder doesn't exist yet, so ask where it should go (the server creates it, with done/ and _template.md)
+function openSetup(st,then){
+  const parent=v=>{const t=v.trim().replace(/[\\/]+$/,'');const i=Math.max(t.lastIndexOf('/'),t.lastIndexOf('\\'));return i>0&&!/^[A-Za-z]:$/.test(t.slice(0,i))?t.slice(0,i):''};  // / or \ (Windows)
+  const head=`<h2 id="setupH">Welcome to RawNotes Triage</h2><p>Your notes live in one folder of Markdown files. There is no folder at <code>${esc(st.notes_dir)}</code> yet.</p>`;
+  showOverlay(`<div class="scrim" id="scrim"><div class="card keys" style="background:var(--solid)" role="dialog" aria-modal="true" aria-labelledby="setupH" tabindex="-1" data-sticky>${head}
+  ${!isLocalPage()?`<p>Set it up on the machine running the server: open this page there (at <code>localhost</code>), then reload here.</p>
+   <div style="text-align:right;margin-top:14px"><button type="button" class="btn" id="setupReload">Reload</button></div></div></div>`:`<form id="setupForm" autocomplete="off"><div class="field"><label for="setupPath" class="label">Notes folder</label>
+   <input class="input" id="setupPath" spellcheck="false" value="${esc(st.notes_dir)}" aria-describedby="setupHelp">
+   <p class="muted" id="setupHelp" style="font-size:12px;margin:6px 0 0">Created if it doesn’t exist (an existing folder is used as it is), with a <code>done/</code> folder for the Archive and a <code>_template.md</code> for new notes. Projects, experiments and reference copies go in folders next to it, in <code id="setupRoot"></code>. Remembered in <code>~/.config/rawnotes-triage/config.json</code>${st.source==='flag'?' (this run was started with <code>--notes</code>, which wins over the saved choice)':''}.</p></div>
+   <div class="err" id="setupErr" role="alert"></div>
+   <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button type="submit" class="btn primary" id="setupGo">Create notes folder</button></div></form></div></div>`}`);
+  if(!$('#setupForm')){$('#setupReload').onclick=()=>location.reload();return $('#setupReload').focus()}
+  const root=()=>{$('#setupRoot').textContent=parent($('#setupPath').value)||'…'};root();$('#setupPath').oninput=root;
+  const err=m=>{$('#setupErr').textContent=m||''};
+  $('#setupForm').onsubmit=async e=>{e.preventDefault();const v=$('#setupPath').value.trim();if(!v)return err('Type a folder first.');
+    $('#setupGo').disabled=true;err('');
+    try{const r=await api('/api/setup',{path:v});closeOverlay(true);then();toast((r.existed?'Using ':'Created ')+r.notes_dir)}
+    catch(x){if(/already set up/.test(x.message))return location.reload();  // done from another tab meanwhile
+      $('#setupGo').disabled=false;err(x.message)}};
+  $('#setupPath').focus()}
 function openKeys(){showOverlay(`<div class="scrim" id="scrim"><div class="card keys" style="background:var(--solid)" role="dialog" aria-modal="true" aria-labelledby="keysH" tabindex="-1"><h2 id="keysH">Keyboard</h2><table>
   <caption class="sr">Keyboard shortcuts</caption>${[['J / K or ↓ / ↑','next / previous'],['H / L or ← / →','scroll the Projects board left / right'],['P','Promote'],['R','Reference'],['C','Keep (cooking)'],['X','Kill'],['Enter','apply the open decision (Ctrl+Enter in a text box); on a stack, only after you chose an action with P R C X or a click'],['Esc','close the form / overlay (what you typed is kept)'],['Z','undo the last change'],['Y','copy the note’s full path'],['/','search the list'],['Ctrl K','search everything + commands'],['1 2 3 4','Inbox · Projects · Archive · Pulse'],['?','this help']].map(([k,v])=>`<tr><th scope="row" style="font-weight:400;text-align:left">${k.split(' ').map(x=>/^[A-Z↓↑←→]$|^[A-Za-z]{2,}$|^[\/?1-4]$/.test(x)?kb(x):x).join(' ')}</th><td>${v}</td></tr>`).join('')}</table>
   <div style="text-align:right;margin-top:14px"><button type="button" class="btn" id="keysClose">Close</button></div></div></div>`);
@@ -1003,9 +1028,9 @@ function focusMain(){const h=$('#main h1')||$('#main');if(h){h.setAttribute('tab
 document.addEventListener('keydown',e=>{
   if(e.defaultPrevented)return;  // something closer already handled this key (a row opening itself, a button, a form)
   if(e.repeat&&e.key==='Enter')return;  // holding Enter must never repeat a decision
-  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();pal?closeOverlay():openPalette();return}
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();if(!sticky())pal?closeOverlay():openPalette();return}
   if($('#overlay').innerHTML){
-    if(e.key==='Escape'){e.preventDefault();closeOverlay();return}
+    if(e.key==='Escape'){e.preventDefault();if(!sticky())closeOverlay();return}
     if(e.key==='Tab'){trapTab(e);return}
     if(pal){if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();if(pal.items.length)palSelect(Math.max(0,Math.min(pal.items.length-1,pal.i+(e.key==='ArrowDown'?1:-1))))}
       if(e.key==='Enter'){e.preventDefault();palGo(pal.i)}}return}
@@ -1067,6 +1092,8 @@ async function checkVersion(){try{const v=await api('/api/version');let b=$('#vb
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')checkVersion()});
 document.addEventListener('visibilitychange',async()=>{if(document.visibilityState!=='visible'||S.mode||$('#overlay').innerHTML)return;
   try{await refresh();if(!dirty())render()}catch(e){}});  // data is refreshed either way; the screen is redrawn only when nothing typed would be lost
-(async()=>{try{await loadNotes()}catch(e){$('#main').innerHTML=`<div class="empty">Can't reach the triage server: ${esc(e.message)}</div>`;return}
-  route();loadGithub();loadActivity();checkVersion();setInterval(()=>loadActivity(),600000)})();
+async function start(){try{await loadNotes()}catch(e){$('#main').innerHTML=`<div class="empty">Can't reach the triage server: ${esc(e.message)}</div>`;return}
+  route();loadGithub();loadActivity();checkVersion();setInterval(()=>loadActivity(),600000)}
+(async()=>{let st;try{st=await api('/api/setup')}catch(e){st=null}  // an older server has no /api/setup: carry on as before
+  if(st&&st.needed)openSetup(st,start);else start()})();
 </script></body></html>

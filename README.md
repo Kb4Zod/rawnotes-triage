@@ -26,12 +26,12 @@ python3 server.py --app               # same, but in its own app window instead 
 python3 server.py --service           # for the systemd unit: no browser; exits with an error if the port is taken, so systemd retries
 ```
 
-`rawtriage-web` is a one-line wrapper around `python3 server.py` that lives in
-`~/.local/bin` on the author's machines. It is not part of this repo yet; if you
-make one, every flag above works through it. The Omarchy launcher app (below)
-needs it.
+`bin/rawtriage-web` is a small wrapper around `python3 server.py`; every flag
+above works through it. The Omarchy launcher installer (below) links
+`~/.local/bin/rawtriage-web` to it, so after installing you can type
+`rawtriage-web` from anywhere.
 
-Defaults: port `8765`, host `127.0.0.1`, notes in `~/Projects/RawNotes`,
+Defaults: port `8765`, host `127.0.0.1`, notes in the folder chosen on first run (see [First run](#first-run)), else `~/Projects/RawNotes`,
 `triage.log` next to `server.py`. The **projects root is the parent of the
 notes folder**: with `--notes /tmp/copy/RawNotes`, promotions land in
 `/tmp/copy/active/`, `/tmp/copy/experiments/` and so on.
@@ -53,6 +53,20 @@ Optional tools (the app works for note triage without them):
 - the GitHub CLI (`gh`), signed in: pull requests, the Pulse commit graph, the repo viewer. See [GitHub sign-in](#github-sign-in)
 - `xdg-open`: the **Open folder** button
 - `notify-send`: the old-server warning as a desktop notification
+
+## First run
+
+If the notes folder doesn't exist yet (a fresh install), the page opens with a **Welcome** dialog asking where your
+notes should live, suggesting `~/Projects/RawNotes`. It can't be dismissed: there is nothing to show until it's done.
+**Create notes folder** makes the folder (an existing folder is used as it is) with a `done/` folder for the Archive
+and a `_template.md` for new notes (copied from `starter/_template.md`, never over one you already have). The parent
+of the folder becomes the projects root, so it must be a full path at least two levels deep (not `/notes`). The
+choice is saved in `~/.config/rawnotes-triage/config.json` (`$XDG_CONFIG_HOME` and `RAWTRIAGE_CONFIG_DIR` are
+honoured) and used on every later start, including by the systemd service. `--notes` still wins over it.
+
+The dialog only appears while the folder is missing, and setup only works from the machine running the server: a
+phone on the network is told to do it there. To move to another folder later, start with `--notes`, or edit
+`config.json` and restart.
 
 ## GitHub sign-in
 
@@ -83,25 +97,18 @@ on the network; there the dialog offers no token field, so a token is never type
 
 ## Omarchy launcher app
 
-Needs Omarchy and the `rawtriage-web` wrapper in `~/.local/bin` (the installer checks for both and stops if either is
-missing). The wrapper is one line; make it executable (`chmod +x ~/.local/bin/rawtriage-web`):
-
-```
-#!/usr/bin/env bash
-exec python3 "$HOME/Projects/active/rawnotes-triage/server.py" "$@"
-```
-
-> **To do before installing this on another computer:** the wrapper is not in the repo yet, so a fresh machine needs
-> the manual step above. Planned fix: ship `bin/rawtriage-web` in the repo and have `install-webapp.sh` put it in
-> `~/.local/bin` (and `--remove` take it out). Do that first, then deploy.
+Needs Omarchy. Clone the repo anywhere you like; the installer works out where it is.
 
 One-time setup, run from the repo:
 
 1. `./install-webapp.sh` — adds **RawNotes Triage** (with its icon) to the app launcher and starts the server as an
    always-on systemd user service (`rawtriage-web.service`, starts with your desktop session). It checks everything
-   first and changes nothing if a check fails, e.g. the main checkout isn't on 2.08 yet (`git pull` there), or a
-   server you started by hand is still running (stop it first). It always installs and runs the main checkout
-   (`~/Projects/active/rawnotes-triage`), wherever you run the script from.
+   first and changes nothing if a check fails, e.g. the checkout is older than the installer (`git pull` there), or a
+   server you started by hand is still running (stop it first). It installs and runs the checkout the script is in;
+   run from a linked git worktree (a feature branch), it uses the main checkout of that repo instead, so the
+   always-on service never runs a branch. It also links `~/.local/bin/rawtriage-web` to `bin/rawtriage-web`
+   there. A hand-made wrapper from before 2.12 is backed up (`rawtriage-web.bak.rawnotes-triage`) and replaced;
+   any other file with that name stops the install, untouched.
 2. Press `SUPER + SPACE`, type `RawNotes Triage`, Enter. The page opens in its own window, not a browser tab,
    and always full screen. `SUPER + F` leaves full screen (and goes back), as for any window.
 
@@ -116,7 +123,10 @@ One-time setup, run from the repo:
 - **After updating the app:** `rawtriage-web --restart` (or `systemctl --user restart rawtriage-web`). When the
   running server belongs to the service, `--restart` restarts the service instead of stopping it.
 - If a server you started by hand holds the port, the service waits and tries again every 30 s.
-- Launcher entry only, no service: `./install-webapp.sh --no-service`. Undo everything: `./install-webapp.sh --remove`.
+- Launcher entry only, no service: `./install-webapp.sh --no-service`. Undo everything: `./install-webapp.sh --remove`
+  (it removes `~/.local/bin/rawtriage-web` only if it is the installer's link).
+- **Moved the checkout?** Run `./install-webapp.sh` again from the new place: the service file and the link are
+  rewritten to point there.
 - The launcher entry runs `rawtriage-web --app`, not `omarchy-launch-webapp`, so it doesn't show up in Omarchy's
   *Remove Web App* menu. Use `--remove` instead.
 
@@ -357,8 +367,11 @@ build of the page.
 - `notemeta.py`: note header and section parsing
 - `safefs.py`: symlink-safe path checks, atomic writes, read/write lock, stat cache
 - `index.html` + `static/fonts/`: the whole UI
+- `starter/_template.md`: the note template copied into a new notes folder on first run
 - `static/icons/`: app icon (SVG source + PNGs), the favicon and the phone home-screen icon
-- `install-webapp.sh`, `systemd/rawtriage-web.service`: the Omarchy launcher app and its always-on service
+- `install-webapp.sh`, `systemd/rawtriage-web.service`: the Omarchy launcher app and its always-on service (the
+  installer fills in the checkout's path in the service file)
+- `bin/rawtriage-web`: the command-line wrapper the launcher runs
 - `test_*.py`, `testkit.py`, `cdp.py`, `loadcheck.py`: tests and load check
 - `.scratch/`: specs and tickets for past and pending work (see `AGENTS.md`)
 

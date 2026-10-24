@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """rawnotes-triage — local website for reviewing ~/Projects/RawNotes.
 
-Usage: python3 server.py [--port 8765] [--host 127.0.0.1] [--notes ~/Projects/RawNotes] [--log triage.log] [--restart] [--app]
+Usage: python3 server.py [--port 8765] [--host 127.0.0.1] [--notes DIR (else the saved folder, else ~/Projects/RawNotes)] [--log triage.log] [--restart] [--app]
 
 --host 0.0.0.0 listens on every interface (phone on home Wi-Fi / Tailscale).
 There is no login: only do that on a network you trust. Firewall still applies.
@@ -33,13 +33,15 @@ import safefs
 from notemeta import (field, set_field, drop_field, title_of, append_outcome, question_of, question_summary, note_body,
                       eol_of, with_eol, to_lf, header_lines, title_index, HEAD_LINE)
 
-VERSION = "2.11"  # bump on every change; history in CHANGELOG.md
+VERSION = "2.12"  # bump on every change; history in CHANGELOG.md
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOG_PATH = os.path.join(HERE, "triage.log")
 FONT_RE = re.compile(r"^/static/fonts/[A-Za-z0-9-]+\.woff2$")
 APP_PATH = "/triage"  # --app opens the page here: the path gives the window its own class, for a Hyprland rule
 ICONS = {"/static/icons/icon-256.png": "icon-256.png", "/apple-touch-icon.png": "apple-touch-icon.png"}  # page favicon, phone home screen, app launcher
-NOTES = os.path.expanduser("~/Projects/RawNotes")
+DEFAULT_NOTES = os.path.expanduser("~/Projects/RawNotes")
+NOTES = DEFAULT_NOTES
+NOTES_SOURCE = "default"  # where NOTES came from: "flag" (--notes), "config" (chosen in the first-run dialog) or "default"
 PROJECTS = None
 BIND_HOST = "127.0.0.1"  # set from --host; the Host/Origin guard depends on it
 CLOSED = ("done", "shipped", "dead")  # a project file or folder with one of these statuses is finished
@@ -493,6 +495,73 @@ def remove_github_token():
     with contextlib.suppress(FileNotFoundError): os.unlink(token_path())
     forget_github(); _log("github token removed")
     return github_status(True)
+
+# ---- first run: the notes folder. Chosen in the page when it doesn't exist yet, then remembered in config.json ----
+TEMPLATE = os.path.join(HERE, "starter", "_template.md")  # copied into a new notes folder
+
+def config_path(): return os.path.join(CONFIG_DIR, "config.json")
+
+def saved_notes_dir():
+    """The notes folder chosen in the first-run dialog, or None (nothing saved, or the file is unreadable)."""
+    try:
+        with open(config_path(), encoding="utf-8") as fh: d = json.load(fh)
+    except (OSError, ValueError): return None
+    p = d.get("notes") if isinstance(d, dict) else None
+    return p if isinstance(p, str) and os.path.isabs(p) else None
+
+def save_config(**changes):
+    """Merge `changes` into config.json (folder 0700, written through a private temp file and renamed into place)."""
+    try:
+        with open(config_path(), encoding="utf-8") as fh: d = json.load(fh)
+        if not isinstance(d, dict): d = {}
+    except (OSError, ValueError): d = {}
+    d.update(changes)
+    os.makedirs(CONFIG_DIR, mode=0o700, exist_ok=True); os.chmod(CONFIG_DIR, 0o700)
+    fd, tmp = tempfile.mkstemp(dir=CONFIG_DIR, prefix=".config.json.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh: json.dump(d, fh, indent=2); fh.write("\n")
+        os.replace(tmp, config_path())
+    except BaseException:
+        with contextlib.suppress(OSError): os.unlink(tmp)
+        raise
+
+def setup_state():
+    """Whether the page must ask where the notes live: only while the notes folder doesn't exist."""
+    return {"needed": not os.path.isdir(NOTES), "notes_dir": NOTES, "projects_dir": PROJECTS, "source": NOTES_SOURCE,
+            "default": DEFAULT_NOTES}
+
+def _setup_target(raw):
+    """The folder the user typed, checked: absolute (~ allowed), at least two levels deep (its parent becomes the
+    projects root, so never /), and not an existing file."""
+    if not isinstance(raw, str) or not raw.strip(): raise ValueError("Type the folder where your notes should live.")
+    raw = raw.strip()
+    if "\0" in raw or len(raw) > 4096: raise ValueError("That is not a usable folder path.")
+    p = os.path.expanduser(raw)
+    if not os.path.isabs(p): raise ValueError("Use a full path, for example ~/Projects/RawNotes (or C:\\Users\\you\\RawNotes on Windows).")
+    p = os.path.normpath(p); parent = os.path.dirname(p)
+    if parent == p or os.path.dirname(parent) == parent: raise ValueError("Pick a folder inside another folder (for example ~/Projects/RawNotes): "
+                                                       "projects are created next to the notes folder, so it can't sit at the top of the disk.")
+    if os.path.exists(p) and not os.path.isdir(p): raise ValueError(f"{p} is a file, not a folder.")
+    return p
+
+def setup_notes(req):
+    """First run: create (or adopt) the notes folder, with done/ and _template.md, remember it, and switch to it."""
+    global NOTES, PROJECTS
+    with _lock.write():
+        if os.path.isdir(NOTES): raise ValueError(f"The notes folder is already set up: {NOTES}")
+        p = _setup_target(req.get("path"))
+        existed = os.path.isdir(p)
+        try:
+            os.makedirs(os.path.join(p, "done"), exist_ok=True)
+            t = os.path.join(p, "_template.md")
+            if not os.path.exists(t): shutil.copyfile(TEMPLATE, t)
+        except OSError as e: raise ValueError(f"Couldn't create {p}: {e.strerror or e}")
+        try: save_config(notes=p)
+        except OSError as e: raise ValueError(f"Created {p}, but couldn't save the choice in {config_path()}: {e.strerror or e}")
+        NOTES, PROJECTS = p, os.path.dirname(p)
+        for c in (_notes_cache, _meta_cache, _proj_cache): c.clear()
+    _log(f"notes folder set up: {p}" + (" (existing folder)" if existed else ""))
+    return {**setup_state(), "existed": existed}
 
 def gh_graphql(query):
     """Run a GraphQL query through gh. Returns the parsed 'data'."""
@@ -1230,6 +1299,11 @@ class H(BaseHTTPRequestHandler):
         if post and self.headers.get("Content-Type", "").split(";")[0].strip().lower() != "application/json":
             return "Content-Type must be application/json"
         return None
+    def _this_machine(self):
+        """A browser on the server's own machine: the peer and the Host name (on a --host 0.0.0.0 bind a rebound DNS
+        name would otherwise pass as this machine)."""
+        return (self.client_address[0] in ("127.0.0.1", "::1", "::ffff:127.0.0.1")
+                and urlparse("//" + self.headers.get("Host", "")).hostname in ("127.0.0.1", "localhost", "::1"))
     def do_GET(self):
         u = urlparse(self.path); q = parse_qs(u.query)
         bad = self._refuse(False)
@@ -1243,6 +1317,7 @@ class H(BaseHTTPRequestHandler):
             if u.path == "/api/activity": return self._send(200, github_activity(q.get("refresh") == ["1"]))
             if u.path == "/api/repo": return self._send(200, repo_overview(q.get("name", [""])[0]))
             if u.path == "/api/repo/path": return self._send(200, repo_path(q.get("name", [""])[0], q.get("path", [""])[0]))
+            if u.path == "/api/setup": return self._send(200, setup_state())
             if u.path == "/api/notes": return self._send(200, list_notes())
             if u.path == "/api/stats": return self._send(200, stats())
             if FONT_RE.match(u.path):
@@ -1269,11 +1344,11 @@ class H(BaseHTTPRequestHandler):
             if path == "/api/restore": return self._send(200, restore(req))
             if path == "/api/project/status": return self._send(200, project_status(req))
             if path in ("/api/github/token", "/api/github/token/remove"):
-                # the peer and the Host name: on a --host 0.0.0.0 bind a rebound DNS name would otherwise pass as this machine
-                if (self.client_address[0] not in ("127.0.0.1", "::1", "::ffff:127.0.0.1")
-                        or urlparse("//" + self.headers.get("Host", "")).hostname not in ("127.0.0.1", "localhost", "::1")):
-                    raise ValueError("The GitHub sign-in can only be changed from the machine running the server.")
+                if not self._this_machine(): raise ValueError("The GitHub sign-in can only be changed from the machine running the server.")
                 return self._send(200, set_github_token(req) if path == "/api/github/token" else remove_github_token())
+            if path == "/api/setup":
+                if not self._this_machine(): raise ValueError("The notes folder can only be set up from the machine running the server.")
+                return self._send(200, setup_notes(req))
             if path == "/api/undo": return self._send(200, undo())
             if path == "/api/done": return self._send(200, set_done(req.get("name", ""), req.get("text", ""), req.get("expected", ""), req.get("kind")))
             if path == "/api/open":
@@ -1379,12 +1454,13 @@ def notify(msg):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(); ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--host", default="127.0.0.1", help="interface to listen on; 0.0.0.0 = all (no auth, trusted networks only)")
-    ap.add_argument("--notes", default=NOTES); ap.add_argument("--no-browser", action="store_true")
+    ap.add_argument("--notes", help="the notes folder (default: the one chosen on first run, else ~/Projects/RawNotes)"); ap.add_argument("--no-browser", action="store_true")
     ap.add_argument("--restart", action="store_true", help="stop a server already on the port, then start this one")
     ap.add_argument("--app", action="store_true", help="open the page in its own app window (Omarchy web app), not a browser tab")
     ap.add_argument("--service", action="store_true", help="run under systemd: no browser; exit with an error if the port is taken, so systemd retries")
     ap.add_argument("--log", default=LOG_PATH, help="where actions are logged (and Pulse reads decisions from)")
-    a = ap.parse_args(); a.no_browser = a.no_browser or a.service; BIND_HOST = a.host; NOTES = os.path.abspath(os.path.expanduser(a.notes)); PROJECTS = os.path.dirname(NOTES)
+    a = ap.parse_args(); a.no_browser = a.no_browser or a.service; BIND_HOST = a.host; NOTES_SOURCE = "flag" if a.notes else "config" if saved_notes_dir() else "default"
+    NOTES = os.path.abspath(os.path.expanduser(a.notes or saved_notes_dir() or DEFAULT_NOTES)); PROJECTS = os.path.dirname(NOTES)
     LOG_PATH = os.path.abspath(os.path.expanduser(a.log))
     url = f"http://127.0.0.1:{a.port}/"
     info = running_server(a.port)
@@ -1417,6 +1493,7 @@ if __name__ == "__main__":
     try: httpd = Server((a.host, a.port), H)
     except OSError as e: raise SystemExit(f"rawtriage-web: port {a.port} is in use by something else ({e}); try --port N")
     print(f"rawnotes-triage v{VERSION}: {NOTES}\n{url}  (Ctrl-C to stop)")
+    if not os.path.isdir(NOTES): print(f"no notes folder at {NOTES} yet: the page will ask where to create it")
     if a.host != "127.0.0.1": print(f"listening on {a.host}:{a.port} for other devices (no login; trusted networks only)")
     if not a.no_browser: threading.Thread(target=open_page, args=(url, a.app), daemon=True).start()
     try: httpd.serve_forever()
