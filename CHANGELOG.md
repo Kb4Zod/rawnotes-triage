@@ -4,6 +4,29 @@ The version shows in the page heading ("RawNotes Triage version X.XX") and
 in the startup line. Bump `VERSION` in `server.py` and add an entry here
 with every change. Versions 1.00-1.03 were numbered after the fact from git history.
 
+## 2.13 — 2026-10-24
+- **Runs on Windows.** A fresh clone started fine with `python server.py`, but several parts quietly assumed Linux. Fixed:
+- **Fixed: on Windows the Projects board couldn't ship, extend, kill or open a promoted file** ("unknown project
+  file", "that is not a project the board knows"). The server listed project files with `\` (`os.path.relpath`) and
+  then compared what the page sent back against that list. Paths the page, the log and a note's Outcome line see are
+  now always written with `/` (new `api_rel`), so a Windows promotion also no longer records `` `../active\x\NOTES.md` ``,
+  which made Pulse count a reference filing as a promotion. Outcome lines already written with `\` are read correctly.
+- **Fixed: a Windows junction got past the "never write through a link" rule.** `os.path.islink` doesn't report
+  junctions, and any Windows user can make one without admin rights, so a junctioned `done/`, `active/` or project
+  folder pointing outside the roots was written through. New `safefs.is_link` (symlink or junction) is used by
+  `ensure_inside`, the notes listing and the `linked` badges.
+- **Open folder works on Windows** through Explorer (`os.startfile`) instead of `xdg-open`, which isn't there; the
+  error names the opener.
+- **`--restart` works on Windows**: the port's owner comes from `netstat -ano` and its command line from PowerShell
+  (`Get-CimInstance`), since there is no `ss` or `/proc`.
+- **`bin\rawtriage-web.cmd`**, a Windows twin of the wrapper, using the `py` launcher (else `python`), never `python3`,
+  which on Windows is usually the Microsoft Store stub. `.gitattributes` keeps it CRLF.
+- **The test suite runs on Windows.** Folder-link tests use junctions there (no admin rights needed); file-symlink
+  tests skip without Developer Mode; Unix permission bits, `xdg-open`, systemd and installer tests skip. Test-only
+  fixes: `snapshot()` keys use `/`, `~` is patched through `USERPROFILE` as well as `HOME`, absolute paths are built
+  per platform, and a stub `server.py` is written as UTF-8.
+- README: a [Windows](README.md#windows) section.
+
 ## 2.12 — 2026-10-24
 - **First run asks where the notes live.** When the notes folder doesn't exist (a fresh install), the page opens a
   **Welcome** dialog, prefilled with `~/Projects/RawNotes`, before anything else. It creates the folder (or adopts an

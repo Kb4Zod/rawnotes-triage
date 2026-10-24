@@ -19,7 +19,7 @@ STUBS = {
 }
 
 
-@unittest.skipUnless(shutil.which("git") and shutil.which("bash"), "needs git and bash")
+@unittest.skipUnless(shutil.which("git") and shutil.which("bash") and os.name != "nt", "needs git and bash on Linux (the Omarchy installer)")
 class Installer(unittest.TestCase):
     def setUp(self):
         self.tmp = os.path.realpath(tempfile.mkdtemp()); self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)

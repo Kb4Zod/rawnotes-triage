@@ -43,7 +43,7 @@ class FirstRun(Fixture):
         with open(os.path.join(target, "_template.md")) as fh: self.assertEqual(fh.read(), "my own\n")
 
     def test_tilde_and_trailing_slash(self):
-        with mock.patch.dict(os.environ, {"HOME": self.tmp}):
+        with mock.patch.dict(os.environ, {"HOME": self.tmp, "USERPROFILE": self.tmp}):  # ~ is USERPROFILE on Windows
             r = self.post("/api/setup", {"path": "~/Projects/RawNotes/"})
         self.assertEqual(r["notes_dir"], os.path.join(self.tmp, "Projects", "RawNotes"))
 
@@ -70,7 +70,8 @@ class FirstRun(Fixture):
     def test_saved_notes_dir(self):
         self.assertIsNone(server.saved_notes_dir())
         os.makedirs(server.CONFIG_DIR)
-        for content, want in (('{"notes": "/a/b"}', "/a/b"), ('{"notes": "rel"}', None), ("[1]", None), ("not json", None)):
+        ab = os.path.abspath("/a/b")  # /a/b, or X:\a\b on Windows
+        for content, want in ((json.dumps({"notes": ab}), ab), ('{"notes": "rel"}', None), ("[1]", None), ("not json", None)):
             with open(server.config_path(), "w") as fh: fh.write(content)
             self.assertEqual(server.saved_notes_dir(), want, content)
 
