@@ -118,7 +118,7 @@ grep -q -- 'APP_PATH = "/triage"' "$REPO/server.py" || fail "$REPO is older than
 [[ -x $WRAPPER ]] || fail "$WRAPPER not found (the checkout is older than 2.12); git pull there first"
 [[ -f $REPO/static/icons/icon-256.png && -f $REPO/systemd/$UNIT ]] || fail "icon or unit file missing in $REPO"
 grep -qF '@REPO@' "$REPO/systemd/$UNIT" || fail "$REPO/systemd/$UNIT is older than this installer (2.12); git pull there first"
-[[ $REPO != *[\"\\$'\n']* ]] || fail "the checkout's path ($REPO) has a quote, backslash or newline in it, which the service file can't hold; move it"
+[[ $REPO != *[\"\\\$$'\n']* ]] || fail "the checkout's path ($REPO) has a quote, backslash, \$ or newline in it, which the service file can't hold; move it"
 [[ $(bin_kind) != other ]] || fail "$BIN exists and isn't the rawnotes-triage wrapper; move it away, then rerun"
 if [[ ${1:-} != --no-service ]]; then
   systemctl --user show-environment &>/dev/null || fail "no systemd user session here; run this from your desktop"

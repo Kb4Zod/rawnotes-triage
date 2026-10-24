@@ -100,7 +100,7 @@ class FirstRunDialog(BrowserCase):
         self.assertEqual(self.active(), "setupPath")
         self.assertEqual(self.page.eval("document.querySelector('#setupPath').value"), self.notes)
         self.assertEqual(self.text("#setupRoot"), self.tmp)
-        self.page.key("Escape"); self.page.click("#scrim"); self.settle()
+        self.page.key("Escape"); self.page.click("#scrim"); self.page.key("k", ctrl=True); self.settle()
         self.assertTrue(self.exists("#setupForm"))  # can't be dismissed: there is nothing behind it yet
         self.page.eval("{const i=document.querySelector('#setupPath');i.value='relative';i.dispatchEvent(new Event('input'))}")
         self.page.click("#setupGo"); self.page.wait("/full path/.test(document.querySelector('#setupErr').textContent)")

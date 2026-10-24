@@ -981,7 +981,7 @@ function openSetup(st,then){
   ${!isLocalPage()?`<p>Set it up on the machine running the server: open this page there (at <code>localhost</code>), then reload here.</p>
    <div style="text-align:right;margin-top:14px"><button type="button" class="btn" id="setupReload">Reload</button></div></div></div>`:`<form id="setupForm" autocomplete="off"><div class="field"><label for="setupPath" class="label">Notes folder</label>
    <input class="input" id="setupPath" spellcheck="false" value="${esc(st.notes_dir)}" aria-describedby="setupHelp">
-   <p class="muted" id="setupHelp" style="font-size:12px;margin:6px 0 0">Created if it doesn’t exist (an existing folder is used as it is), with a <code>done/</code> folder for the Archive and a <code>_template.md</code> for new notes. Projects, experiments and reference copies go in folders next to it, in <code id="setupRoot"></code>. Remembered in <code>~/.config/rawnotes-triage/config.json</code>.</p></div>
+   <p class="muted" id="setupHelp" style="font-size:12px;margin:6px 0 0">Created if it doesn’t exist (an existing folder is used as it is), with a <code>done/</code> folder for the Archive and a <code>_template.md</code> for new notes. Projects, experiments and reference copies go in folders next to it, in <code id="setupRoot"></code>. Remembered in <code>~/.config/rawnotes-triage/config.json</code>${st.source==='flag'?' (this run was started with <code>--notes</code>, which wins over the saved choice)':''}.</p></div>
    <div class="err" id="setupErr" role="alert"></div>
    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button type="submit" class="btn primary" id="setupGo">Create notes folder</button></div></form></div></div>`}`);
   if(!$('#setupForm')){$('#setupReload').onclick=()=>location.reload();return $('#setupReload').focus()}
@@ -990,7 +990,8 @@ function openSetup(st,then){
   $('#setupForm').onsubmit=async e=>{e.preventDefault();const v=$('#setupPath').value.trim();if(!v)return err('Type a folder first.');
     $('#setupGo').disabled=true;err('');
     try{const r=await api('/api/setup',{path:v});closeOverlay(true);then();toast((r.existed?'Using ':'Created ')+r.notes_dir)}
-    catch(x){$('#setupGo').disabled=false;err(x.message)}};
+    catch(x){if(/already set up/.test(x.message))return location.reload();  // done from another tab meanwhile
+      $('#setupGo').disabled=false;err(x.message)}};
   $('#setupPath').focus()}
 function openKeys(){showOverlay(`<div class="scrim" id="scrim"><div class="card keys" style="background:var(--solid)" role="dialog" aria-modal="true" aria-labelledby="keysH" tabindex="-1"><h2 id="keysH">Keyboard</h2><table>
   <caption class="sr">Keyboard shortcuts</caption>${[['J / K or ↓ / ↑','next / previous'],['H / L or ← / →','scroll the Projects board left / right'],['P','Promote'],['R','Reference'],['C','Keep (cooking)'],['X','Kill'],['Enter','apply the open decision (Ctrl+Enter in a text box); on a stack, only after you chose an action with P R C X or a click'],['Esc','close the form / overlay (what you typed is kept)'],['Z','undo the last change'],['Y','copy the note’s full path'],['/','search the list'],['Ctrl K','search everything + commands'],['1 2 3 4','Inbox · Projects · Archive · Pulse'],['?','this help']].map(([k,v])=>`<tr><th scope="row" style="font-weight:400;text-align:left">${k.split(' ').map(x=>/^[A-Z↓↑←→]$|^[A-Za-z]{2,}$|^[\/?1-4]$/.test(x)?kb(x):x).join(' ')}</th><td>${v}</td></tr>`).join('')}</table>
@@ -1027,7 +1028,7 @@ function focusMain(){const h=$('#main h1')||$('#main');if(h){h.setAttribute('tab
 document.addEventListener('keydown',e=>{
   if(e.defaultPrevented)return;  // something closer already handled this key (a row opening itself, a button, a form)
   if(e.repeat&&e.key==='Enter')return;  // holding Enter must never repeat a decision
-  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();pal?closeOverlay():openPalette();return}
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();if(!sticky())pal?closeOverlay():openPalette();return}
   if($('#overlay').innerHTML){
     if(e.key==='Escape'){e.preventDefault();if(!sticky())closeOverlay();return}
     if(e.key==='Tab'){trapTab(e);return}
