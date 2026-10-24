@@ -115,6 +115,14 @@ class GithubSignIn(Fixture):
         self.assertEqual(self.remove_as("127.0.0.1", "localhost:8765")[0], 200)  # the browser on this machine may
         self.assertFalse(os.path.exists(server.token_path()))
 
+    def test_an_unwritable_log_does_not_hide_a_change_of_sign_in(self):
+        self.stub_gh({"": "me", TOKEN: "tokenuser"})
+        def full(msg): raise OSError(28, "No space left on device")
+        p = mock.patch.object(server, "log", full); p.start(); self.addCleanup(p.stop)
+        p = mock.patch.object(server, "_log_warned", [1]); p.start(); self.addCleanup(p.stop)  # no stderr warning
+        self.assertEqual(self.post("/api/github/token", {"token": TOKEN})["login"], "tokenuser")
+        self.assertEqual(self.post("/api/github/token/remove", {})["login"], "me")
+
     def test_unreadable_token_file_falls_back_to_gh(self):
         os.makedirs(server.CONFIG_DIR, exist_ok=True)
         with open(server.token_path(), "wb") as fh: fh.write(b"\xff\xfe not utf-8")

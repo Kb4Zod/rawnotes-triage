@@ -18,6 +18,7 @@ with every change. Versions 1.00-1.03 were numbered after the fact from git hist
 - The saved token is used by every `gh` call, including the Projects page's pull-request list (one shared `gh_env`).
   An existing config folder is tightened to `0700`; a token file that isn't UTF-8 is treated as no token.
   `loadcheck.py` keeps the spawned server off a saved token too. With `gh` missing, a saved token can still be removed.
+  An unwritable `triage.log` no longer makes a token save or removal that went through report as failed.
 - README: new **GitHub sign-in** section saying plainly that `gh` is required for every GitHub feature and that
   `gh auth login` is how a person signs in; Pulse and Network sections point to it.
 - Tests: `test_github.py` (status states, token validation/permissions/environment-only, cache reset, local-only),

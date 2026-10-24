@@ -483,13 +483,13 @@ def set_github_token(req):
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as fh: fh.write(token + "\n")
     os.replace(tmp, token_path())
-    forget_github(); log(f"github token saved ({login})")
+    forget_github(); _log(f"github token saved ({login})")
     return github_status(True)
 
 def remove_github_token():
     """Forget the saved token; GitHub features go back to gh's own sign-in."""
     with contextlib.suppress(FileNotFoundError): os.unlink(token_path())
-    forget_github(); log("github token removed")
+    forget_github(); _log("github token removed")
     return github_status(True)
 
 def gh_graphql(query):
