@@ -243,6 +243,17 @@ class Flows(BrowserCase):
         self.page.click("#tUndo"); self.settle(0.6)
         self.assertIn("- status: promoted", open(os.path.join(self.tmp, "active", "demo", "NOTES.md")).read())
 
+    def test_h_l_and_side_arrows_scroll_the_projects_board(self):
+        self.page.resize(900, 800); self.open("projects")
+        self.page.click("[data-pid='active/demo/NOTES.md']"); self.page.wait("document.querySelector('#drawer')")
+        self.page.eval("document.activeElement&&document.activeElement.blur();document.querySelector('#pscroll').scrollLeft=0")
+        self.assertGreater(self.page.eval("(s=>s.scrollWidth-s.clientWidth)(document.querySelector('#pscroll'))"), 300)  # the board is wider than the screen
+        left = lambda: self.page.eval("document.querySelector('#pscroll').scrollLeft")
+        self.page.key("l"); self.settle(0.6); a = left(); self.assertGreater(a, 0)
+        self.page.key("ArrowRight"); self.settle(0.6); b = left(); self.assertGreater(b, a)
+        self.page.key("ArrowLeft"); self.settle(0.6); self.assertLess(left(), b)
+        self.page.key("h"); self.settle(0.6); self.assertEqual(left(), 0)
+
     def test_list_search_and_palette_search_find_notes(self):
         self.focus("#q"); self.page.type("lone"); self.settle(0.3)
         self.assertEqual(self.page.eval("[...document.querySelectorAll('#list .t')].map(e=>e.textContent)"), ["Lone old note"])

@@ -48,7 +48,7 @@ class WS:
 
 KEYS = {  # key -> (code, windowsVirtualKeyCode, text)
     "Enter": ("Enter", 13, "\r"), "Escape": ("Escape", 27, ""), "Tab": ("Tab", 9, ""), " ": ("Space", 32, " "),
-    "ArrowDown": ("ArrowDown", 40, ""), "ArrowUp": ("ArrowUp", 38, ""), "Backspace": ("Backspace", 8, ""),
+    "ArrowDown": ("ArrowDown", 40, ""), "ArrowUp": ("ArrowUp", 38, ""), "ArrowLeft": ("ArrowLeft", 37, ""), "ArrowRight": ("ArrowRight", 39, ""), "Backspace": ("Backspace", 8, ""),
 }
 
 

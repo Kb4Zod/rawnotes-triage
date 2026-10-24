@@ -969,7 +969,7 @@ function openGithub(){
   if($('#ghRemove'))$('#ghRemove').onclick=async()=>{try{S.gh=await api('/api/github/token/remove',{});S.activity=null;closeOverlay();renderRail();loadActivity(true)}catch(x){err(x.message)}};
   $('#ghTok').focus()}
 function openKeys(){showOverlay(`<div class="scrim" id="scrim"><div class="card keys" style="background:var(--solid)" role="dialog" aria-modal="true" aria-labelledby="keysH" tabindex="-1"><h2 id="keysH">Keyboard</h2><table>
-  <caption class="sr">Keyboard shortcuts</caption>${[['J / K or ↓ / ↑','next / previous'],['P','Promote'],['R','Reference'],['C','Keep (cooking)'],['X','Kill'],['Enter','apply the open decision (Ctrl+Enter in a text box); on a stack, only after you chose an action with P R C X or a click'],['Esc','close the form / overlay (what you typed is kept)'],['Z','undo the last change'],['Y','copy the note’s full path'],['/','search the list'],['Ctrl K','search everything + commands'],['1 2 3 4','Inbox · Projects · Archive · Pulse'],['?','this help']].map(([k,v])=>`<tr><th scope="row" style="font-weight:400;text-align:left">${k.split(' ').map(x=>/^[A-Z↓↑]$|^[A-Za-z]{2,}$|^[\/?1-4]$/.test(x)?kb(x):x).join(' ')}</th><td>${v}</td></tr>`).join('')}</table>
+  <caption class="sr">Keyboard shortcuts</caption>${[['J / K or ↓ / ↑','next / previous'],['H / L or ← / →','scroll the Projects board left / right'],['P','Promote'],['R','Reference'],['C','Keep (cooking)'],['X','Kill'],['Enter','apply the open decision (Ctrl+Enter in a text box); on a stack, only after you chose an action with P R C X or a click'],['Esc','close the form / overlay (what you typed is kept)'],['Z','undo the last change'],['Y','copy the note’s full path'],['/','search the list'],['Ctrl K','search everything + commands'],['1 2 3 4','Inbox · Projects · Archive · Pulse'],['?','this help']].map(([k,v])=>`<tr><th scope="row" style="font-weight:400;text-align:left">${k.split(' ').map(x=>/^[A-Z↓↑←→]$|^[A-Za-z]{2,}$|^[\/?1-4]$/.test(x)?kb(x):x).join(' ')}</th><td>${v}</td></tr>`).join('')}</table>
   <div style="text-align:right;margin-top:14px"><button type="button" class="btn" id="keysClose">Close</button></div></div></div>`);
   $('#keysClose').onclick=()=>closeOverlay();$('#keysClose').focus()}
 function openPalette(){
@@ -1038,6 +1038,10 @@ document.addEventListener('keydown',e=>{
     if(k==='y'){const el=$('#doc [data-copy]');if(el)copyPath(el.dataset.copy,el)}return}
   if(S.route==='projects'&&!S.repo){const ids=$$('[data-pid]').map(b=>b.dataset.pid),i=ids.indexOf(S.psel);
     if(down||up){e.preventDefault();const n=ids[i+(down?1:-1)];if(n)selectProject(n)}
+    // H / L or ← / → scroll the board sideways one column at a time (a held key jumps, so repeats don't queue up).
+    const left=k==='h'||k==='ArrowLeft',right=k==='l'||k==='ArrowRight',sc=$('#pscroll');
+    if((left||right)&&sc){e.preventDefault();const col=sc.querySelector('.board>.col'),step=col?col.offsetWidth+16:300;
+      sc.scrollBy({left:right?step:-step,behavior:e.repeat||matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});return}
     if(k==='y'){const el=$('#drawer [data-copy]');if(el)copyPath(el.dataset.copy,el)}}});
 
 /* ---------- routing ---------- */

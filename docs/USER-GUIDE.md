@@ -129,6 +129,7 @@ From **Browse repo** or a Pulse repo row: README, files, last 15 commits, 10 pul
 ## 7. Keyboard shortcuts
 
 - `j` / `k`, arrows: Move
+- `h` / `l`, `←` / `→`: Scroll the Projects board left and right
 - `p` `r` `c` `x`: Promote, Reference, Keep, Kill
 - `Enter`: Apply (`Ctrl+Enter` in a text box)
 - `Esc`: Cancel or close
