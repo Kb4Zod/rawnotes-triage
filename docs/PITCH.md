@@ -1,6 +1,6 @@
 # RawNotes Triage
 
-I wanted a notes sytem that would help **Drive me to DONE.** I have discovered that I am good at coming up with Ideas and  bad at deciding. Ideas pile up in a folder, and each one is a small promise I never keep. RawNotes Triage is a small local web app that turns that pile into a short list of decisions.
+I wanted a notes system that would help **Drive me to DONE.** I have discovered that I am good at coming up with ideas and bad at deciding. Ideas pile up in a folder, and each one is a small promise I never keep. RawNotes Triage is a small local web app that turns that pile into a short list of decisions.
 
 Point it at a folder of Markdown notes. It shows an Inbox, oldest first, split into notes that have waited two weeks or more and notes from this fortnight. Pick a note and decide:
 
@@ -15,6 +15,6 @@ Promoted notes show up on a Projects board sorted by deadline: Overdue, Due this
 
 The goal: every promoted note is shipped or killed within 3 to 7 days.
 
-It is plain Python 3 (no dependencies) plus one HTML page, runs on your own machine, works offline, is keyboard-driven, and has a phone layout(in progress). There is no login, so keep it on localhost or a private network.
+It is plain Python 3 (no dependencies) plus one HTML page, runs on your own machine, works offline, is keyboard-driven, and has a phone layout (in progress). There is no login, so keep it on localhost or a private network.
 
 Written and tested on Linux. The core should run anywhere Python does, but macOS and Windows are untested.
