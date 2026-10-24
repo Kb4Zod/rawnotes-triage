@@ -115,6 +115,11 @@ class GithubPanel(BrowserCase):
         self.page.click("#ghRemove")
         self.page.wait("!document.querySelector('#ghRemove') && /Not signed in/.test(document.querySelector('#ghStatus').textContent)")
         self.assertEqual(server.saved_token(), "")
+        # opened from a phone: no token field at all, so a token never crosses the network
+        self.page.eval("window.isLocalPage=()=>false"); self.page.click("#ghStatus"); self.page.wait("document.querySelector('#ghClose')")
+        self.assertEqual(self.page.eval("document.querySelectorAll('#ghTok, #ghForm, #ghRemove').length"), 0)
+        self.assertEqual(self.active(), "ghClose")
+        self.assertIn("machine running the server", self.text("#overlay"))
 
 
 class Keyboard(BrowserCase):

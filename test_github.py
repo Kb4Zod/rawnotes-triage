@@ -123,6 +123,15 @@ class GithubSignIn(Fixture):
         self.assertEqual(self.post("/api/github/token", {"token": TOKEN})["login"], "tokenuser")
         self.assertEqual(self.post("/api/github/token/remove", {})["login"], "me")
 
+    def test_a_failed_save_leaves_no_copy_of_the_token(self):
+        self.stub_gh({"": "me", TOKEN: "tokenuser"})
+        def fail(*a): raise OSError(28, "No space left on device")
+        with mock.patch.object(server.os, "replace", fail):
+            self.post("/api/github/token", {"token": TOKEN}, ok=False)
+        self.assertEqual(os.listdir(server.CONFIG_DIR), [])
+        self.post("/api/github/token", {"token": TOKEN})
+        self.assertEqual(os.listdir(server.CONFIG_DIR), ["github-token"])  # no temp file left beside it
+
     def test_unreadable_token_file_falls_back_to_gh(self):
         os.makedirs(server.CONFIG_DIR, exist_ok=True)
         with open(server.token_path(), "wb") as fh: fh.write(b"\xff\xfe not utf-8")

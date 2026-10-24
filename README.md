@@ -71,14 +71,15 @@ Whichever account `gh` is signed in as is the account the app acts as: the commi
 commits, and the repo viewer opens only that account's own repositories.
 
 **Signing in with a token instead.** Click the status line in the rail to open the GitHub dialog and paste a personal
-access token (classic: `repo`; fine-grained: read-only Contents, Pull requests and Issues). The server checks it
+access token (best fine-grained, read-only Contents, Pull requests and Issues; a classic token needs `repo`, which also
+allows writes). The server checks it
 with GitHub, and only if it works saves it to `~/.config/rawnotes-triage/github-token` (`$XDG_CONFIG_HOME` is
 honoured; folder `0700`, file `0600`). From then on it is handed to `gh` as `GH_TOKEN` in the process environment (never on a
 command line) and takes precedence over `gh auth login`. The token is never sent back to the page. **Remove saved
 token** deletes the file and returns to `gh`'s own login. The `gh` CLI is still needed: a token replaces the login,
 not the CLI. A `GH_TOKEN` / `GITHUB_TOKEN` already in the server's environment is also honoured, and shown as the
 source in the dialog. Saving or removing a token only works from the machine running the server, not from a phone
-on the network.
+on the network; there the dialog offers no token field, so a token is never typed into a page served over the LAN.
 
 ## Omarchy launcher app
 

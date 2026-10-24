@@ -478,11 +478,13 @@ def set_github_token(req):
     except RuntimeError as e:
         raise ValueError("GitHub rejected that token." if any(k in str(e).lower() for k in ("401", "bad credentials", "gh_token")) else str(e))
     os.makedirs(CONFIG_DIR, mode=0o700, exist_ok=True); os.chmod(CONFIG_DIR, 0o700)  # makedirs leaves an existing folder as it was
-    tmp = token_path() + ".new"
-    with contextlib.suppress(FileNotFoundError): os.unlink(tmp)
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as fh: fh.write(token + "\n")
-    os.replace(tmp, token_path())
+    fd, tmp = tempfile.mkstemp(dir=CONFIG_DIR, prefix=".github-token.")  # 0600, its own name: concurrent saves don't collide
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh: fh.write(token + "\n")
+        os.replace(tmp, token_path())
+    except BaseException:
+        with contextlib.suppress(OSError): os.unlink(tmp)
+        raise
     forget_github(); _log(f"github token saved ({login})")
     return github_status(True)
 

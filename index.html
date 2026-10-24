@@ -944,20 +944,24 @@ function trapTab(e){const d=$('#overlay [role=dialog]');if(!d)return;const f=[..
   if(!f.length){e.preventDefault();d.focus();return}
   const i=f.indexOf(document.activeElement);
   if(e.shiftKey&&(i<=0)){e.preventDefault();f[f.length-1].focus()}else if(!e.shiftKey&&(i===f.length-1||i<0)){e.preventDefault();f[0].focus()}}
+// the token form only on the server's own machine: from a phone it would cross the network in the clear, only to be refused
+function isLocalPage(){return ['localhost','127.0.0.1','[::1]'].includes(location.hostname)}
 function openGithub(){
   const g=S.gh||{state:'unavailable',error:'Not checked yet.'},src={token:'the token saved here',environment:'a GH_TOKEN / GITHUB_TOKEN variable in the server’s environment',gh:'the GitHub CLI’s own login (gh auth login)'};
   const head=g.state==='signed_in'?`<p>Signed in as <b>${esc(g.login)}</b>, through ${src[g.source]||'gh'}.</p>`
-    :g.state==='signed_out'?`<p>Not signed in.${g.error?' '+esc(g.error):''} Run <code>gh auth login</code> in a terminal, or save a personal access token below.</p>`
+    :g.state==='signed_out'?`<p>Not signed in.${g.error?' '+esc(g.error):''} Run <code>gh auth login</code> in a terminal${isLocalPage()?', or save a personal access token below':''}.</p>`
     :g.state==='no_gh'?'<p>The GitHub CLI (<code>gh</code>) is not installed. RawNotes Triage reaches GitHub only through it, so install it first, then sign in.</p>'
     :`<p>Could not reach GitHub: ${esc(g.error||'unknown error')}</p>`;
   showOverlay(`<div class="scrim" id="scrim"><div class="card keys" style="background:var(--solid)" role="dialog" aria-modal="true" aria-labelledby="ghH" tabindex="-1"><h2 id="ghH">GitHub</h2>${head}
-  <form id="ghForm" autocomplete="off"><div class="field"><label for="ghTok" class="label">Personal access token</label>
+  ${!isLocalPage()?`<p>Signing in or out is done on the machine running the server: open this page there (at <code>localhost</code>) to save or remove a token. Never paste a token here; it would cross the network unencrypted.</p>
+   <div style="text-align:right;margin-top:14px"><button type="button" class="btn" id="ghClose">Close</button></div></div></div>`:`<form id="ghForm" autocomplete="off"><div class="field"><label for="ghTok" class="label">Personal access token</label>
    <input class="input" id="ghTok" type="password" autocomplete="off" spellcheck="false" placeholder="ghp_… or github_pat_…" aria-describedby="ghHelp">
-   <p class="muted" id="ghHelp" style="font-size:12px;margin:6px 0 0">Needs read access to your repositories (classic: <code>repo</code>; fine-grained: Contents, Pull requests and Issues, read-only). It is checked with GitHub, then kept in a file only you can read (<code>~/.config/rawnotes-triage/github-token</code>) and used instead of the CLI’s login. It is never shown again.</p></div>
+   <p class="muted" id="ghHelp" style="font-size:12px;margin:6px 0 0">Needs read access to your repositories: best a fine-grained token with read-only Contents, Pull requests and Issues (a classic token needs <code>repo</code>, which also allows writes). It is checked with GitHub, then kept in a file only you can read (<code>~/.config/rawnotes-triage/github-token</code>) and used instead of the CLI’s login. It is never shown again.</p></div>
    <div class="err" id="ghErr" role="alert"></div>
-   <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">${g.source==='token'?'<button type="button" class="btn" id="ghRemove">Remove saved token</button>':''}<button type="button" class="btn" id="ghClose">Close</button><button type="submit" class="btn primary" id="ghSave">Save token</button></div></form></div></div>`);
-  const err=m=>{$('#ghErr').textContent=m||''};
+   <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">${g.source==='token'?'<button type="button" class="btn" id="ghRemove">Remove saved token</button>':''}<button type="button" class="btn" id="ghClose">Close</button><button type="submit" class="btn primary" id="ghSave">Save token</button></div></form></div></div>`}`);
   $('#ghClose').onclick=()=>closeOverlay();
+  if(!$('#ghForm'))return $('#ghClose').focus();
+  const err=m=>{$('#ghErr').textContent=m||''};
   $('#ghForm').onsubmit=async e=>{e.preventDefault();const t=$('#ghTok').value.trim();if(!t)return err('Paste a token first.');
     $('#ghSave').disabled=true;err('Checking with GitHub…');
     try{S.gh=await api('/api/github/token',{token:t});S.activity=null;closeOverlay();renderRail();loadActivity(true)}
