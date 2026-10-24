@@ -7,7 +7,8 @@ After=graphical-session.target
 [Service]
 # Listens on 127.0.0.1 only. Don't add --host 0.0.0.0 here: there is no login, and this runs all the time.
 # --service: if another triage server holds the port, exit with an error so systemd tries again in 30 s.
-ExecStart=/usr/bin/python3 %h/Projects/active/rawnotes-triage/server.py --service
+# install-webapp.sh replaces @REPO@ with the checkout it installs (the main one, never a linked worktree).
+ExecStart=/usr/bin/python3 "@REPO@/server.py" --service
 Restart=on-failure
 RestartSec=30
 

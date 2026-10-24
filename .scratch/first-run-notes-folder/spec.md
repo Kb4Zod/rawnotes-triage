@@ -19,9 +19,13 @@ notes should live or creates the structure the app expects.
 - Refused: relative paths, files, `/x` (parent would be `/`), requests from another
   machine, and any request once the folder exists.
 
+## Launcher on a fresh clone (same PR)
+
+- `install-webapp.sh` installs the checkout it is in; from a linked worktree, the main checkout.
+- `bin/rawtriage-web` ships in the repo; the installer links `~/.local/bin/rawtriage-web` to it (a hand-made
+  pre-2.12 wrapper is backed up and replaced; anything else stops the install). `--remove` deletes only its link.
+- `systemd/rawtriage-web.service` has an `@REPO@` placeholder the installer fills in.
+
 ## Not in scope (follow-ups)
 
-- Changing the folder later from the page (today: `--notes` or edit config.json).
-- `install-webapp.sh` and `systemd/rawtriage-web.service` still hardcode the repo at
-  `~/Projects/active/rawnotes-triage`, and the `rawtriage-web` wrapper is still not in
-  the repo. A fresh clone elsewhere still needs those fixed to use the launcher.
+- Changing the notes folder later from the page (today: `--notes` or edit config.json).

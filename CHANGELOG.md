@@ -13,6 +13,14 @@ with every change. Versions 1.00-1.03 were numbered after the fact from git hist
   paths, files, top-level folders (the parent becomes the projects root) and any request once a folder exists, and
   only answers a browser on the server's own machine (same check as the GitHub token routes, now shared as
   `_this_machine`). The dialog can't be dismissed with Esc or a click outside.
+- **The launcher installs from wherever you cloned the repo.** `install-webapp.sh` no longer assumes
+  `~/Projects/active/rawnotes-triage`: it installs the checkout it is in, or, run from a linked git worktree, the main
+  checkout of that repo (so the service never runs a feature branch). `systemd/rawtriage-web.service` is now a
+  template; the installer writes the checkout's path into the installed copy.
+- **The `rawtriage-web` wrapper ships in the repo** as `bin/rawtriage-web` (it follows its own link back to the
+  checkout). The installer links `~/.local/bin/rawtriage-web` to it, backing up and replacing a hand-made wrapper
+  from before 2.12, and stops, changing nothing, if some other file has that name. `--remove` deletes the link, never
+  a file it didn't make. New `test_install.py` runs the real installer against a temp copy and a fake `$HOME`.
 
 ## 2.11 — 2026-10-24
 - **Fixed: experiments no longer show up under "Due this week".** An open-ended experiment has no ship-by date, and

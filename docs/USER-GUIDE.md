@@ -42,14 +42,7 @@ The projects root is the **parent** of the notes folder: `active/`, `experiments
 After editing `index.html` or updating the app, restart the server. A tab left open shows a banner asking you to reload when versions differ.
 
 ### Omarchy launcher (optional, Linux only)
-Needs Omarchy and a one-line `rawtriage-web` wrapper in `~/.local/bin` (the repo does not ship it yet, so create it yourself and `chmod +x` it):
-
-```
-#!/usr/bin/env bash
-exec python3 "$HOME/Projects/active/rawnotes-triage/server.py" "$@"
-```
-
-The installer always installs and runs the checkout at `~/Projects/active/rawnotes-triage`, wherever you run it from, so clone the repo there. Then run `./install-webapp.sh`. It adds **RawNotes Triage** to the launcher (`SUPER + SPACE`) and runs the server as an always-on user service. The window opens full screen; `SUPER + F` toggles that. Use `--no-service` for the launcher entry only, and `--remove` to undo everything.
+Needs Omarchy. Clone the repo wherever you like, then run `./install-webapp.sh` from it. It adds **RawNotes Triage** to the launcher (`SUPER + SPACE`), runs the server as an always-on user service, and links `~/.local/bin/rawtriage-web` to the repo's `bin/rawtriage-web`, so `rawtriage-web` works from any terminal. The window opens full screen; `SUPER + F` toggles that. Use `--no-service` for the launcher entry only, and `--remove` to undo everything. If you move the repo, run the installer again from the new place.
 
 ## 3. The four pages
 

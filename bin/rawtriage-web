@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# rawtriage-web — start (or open) the RawNotes triage website: server.py from this checkout, every flag passed on.
+# install-webapp.sh links ~/.local/bin/rawtriage-web to this file; the link is followed back to the repo.
+repo=$(dirname "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")")
+exec python3 "$repo/server.py" "$@"
