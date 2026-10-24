@@ -50,9 +50,35 @@ server versions differ.
 Optional tools (the app works for note triage without them):
 
 - `git`: branch, commits and GitHub-remote badges on the Projects page
-- a signed-in `gh`: pull requests, the Pulse commit graph, the repo viewer
+- the GitHub CLI (`gh`), signed in: pull requests, the Pulse commit graph, the repo viewer. See [GitHub sign-in](#github-sign-in)
 - `xdg-open`: the **Open folder** button
 - `notify-send`: the old-server warning as a desktop notification
+
+## GitHub sign-in
+
+The app has no GitHub login of its own, and no account is built in. Every GitHub feature (pull requests, the Pulse
+commit graph, the repo viewer) works by running the **GitHub CLI, `gh`**, on the machine that runs the server. So
+**`gh` is required for those features, and signing in with it is how a person logs in.** Without `gh`, notes triage
+and the git-only parts (branch, commits, the **On GitHub** badges, which only read each project's `origin` remote)
+still work; the GitHub parts say why they are unavailable.
+
+1. Install `gh` ([cli.github.com](https://cli.github.com)).
+2. Sign in once: `gh auth login`.
+3. Start (or restart) the server. The bottom of the left rail shows **Signed in as `<your login>`**, or **Not signed in
+   to GitHub**, with a link to the fix.
+
+Whichever account `gh` is signed in as is the account the app acts as: the commit graph counts that account's
+commits, and the repo viewer opens only that account's own repositories.
+
+**Signing in with a token instead.** Click the status line in the rail to open the GitHub dialog and paste a personal
+access token (classic: `repo`; fine-grained: read-only Contents, Pull requests and Issues). The server checks it
+with GitHub, and only if it works saves it to `~/.config/rawnotes-triage/github-token` (`$XDG_CONFIG_HOME` is
+honoured; folder `0700`, file `0600`). From then on it is handed to `gh` as `GH_TOKEN` in the process environment (never on a
+command line) and takes precedence over `gh auth login`. The token is never sent back to the page. **Remove saved
+token** deletes the file and returns to `gh`'s own login. The `gh` CLI is still needed: a token replaces the login,
+not the CLI. A `GH_TOKEN` / `GITHUB_TOKEN` already in the server's environment is also honoured, and shown as the
+source in the dialog. Saving or removing a token only works from the machine running the server, not from a phone
+on the network.
 
 ## Omarchy launcher app
 
@@ -238,8 +264,8 @@ Project inspection is otherwise read-only: no fetch, checkout or repository edit
 - **Commits on GitHub:** a 53-week graph of your commits on the default
   branch of repos you own or collaborate on, counted by *commit date* in the
   server's timezone (not by when they were pushed), so private repos count
-  and local-only repos never show. Uses `gh api graphql` with your existing
-  sign-in; cached 10 minutes; **Refresh** bypasses the cache; a failed
+  and local-only repos never show. Uses `gh api graphql` with the account
+  shown in the rail ([GitHub sign-in](#github-sign-in)); cached 10 minutes; **Refresh** bypasses the cache; a failed
   refresh shows the last good data marked stale. Up to 1,000 repos (most
   recently pushed first) and 2,000 commits per repo are read; if GitHub had
   more, the page says so. The rail shows a 16-week sparkline, total and streak.
@@ -271,7 +297,8 @@ network. Guards against a web page you visit driving the server: on a
 localhost bind, requests whose `Host` is not localhost are refused; on any
 bind, a request from another origin and a non-JSON `POST` are refused.
 `/api/open` only answers a browser on the server's own machine and only for
-project folders or dated files the board lists.
+project folders or dated files the board lists. Saving or removing the GitHub
+token (`/api/github/token`) is likewise limited to the server's own machine.
 
 `triage.log` records every action after it has gone through, best-effort: if
 the log cannot be written, the change still happens and the Pulse decided

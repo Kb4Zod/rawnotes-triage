@@ -4,6 +4,21 @@ The version shows in the page heading ("RawNotes Triage version X.XX") and
 in the startup line. Bump `VERSION` in `server.py` and add an entry here
 with every change. Versions 1.00-1.03 were numbered after the fact from git history.
 
+## 2.09 — 2026-10-23
+- **GitHub sign-in status.** The left rail now says **Signed in as `<login>`** or **Not signed in to GitHub** (or
+  that `gh` is missing, or GitHub is unreachable), through new `GET /api/github` (cached 60 s; `?refresh=1` bypasses).
+  Click it for a dialog with the details. Nothing about the account is hardcoded: it is whoever `gh` (or the token) is.
+- **Sign in with a personal access token.** The dialog saves a token, after GitHub accepts it, to
+  `~/.config/rawnotes-triage/github-token` (folder `0700`, file `0600`; `RAWTRIAGE_CONFIG_DIR` overrides). It is
+  passed to `gh` as `GH_TOKEN` in the environment, never on a command line, takes precedence over `gh auth login`,
+  and is never returned to the page. **Remove saved token** goes back to `gh`'s own login. Changing the sign-in
+  drops the cached commit graph and repo-viewer results of the old account. `POST /api/github/token` and
+  `/api/github/token/remove` only answer a browser on the server's own machine.
+- README: new **GitHub sign-in** section saying plainly that `gh` is required for every GitHub feature and that
+  `gh auth login` is how a person signs in; Pulse and Network sections point to it.
+- Tests: `test_github.py` (status states, token validation/permissions/environment-only, cache reset, local-only),
+  a browser test for the rail status and dialog; the shared fixture keeps tests off the real saved token.
+
 ## 2.08 — 2026-10-20
 - **Standalone app in the Omarchy launcher.** New `--app` flag opens the page in its own window through
   `omarchy-launch-webapp` (falls back to a browser tab off Omarchy). `install-webapp.sh` adds a **RawNotes Triage**

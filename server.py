@@ -33,7 +33,7 @@ import safefs
 from notemeta import (field, set_field, drop_field, title_of, append_outcome, question_of, question_summary, note_body,
                       eol_of, with_eol, to_lf, header_lines, title_index, HEAD_LINE)
 
-VERSION = "2.08"  # bump on every change; history in CHANGELOG.md
+VERSION = "2.09"  # bump on every change; history in CHANGELOG.md
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOG_PATH = os.path.join(HERE, "triage.log")
 FONT_RE = re.compile(r"^/static/fonts/[A-Za-z0-9-]+\.woff2$")
@@ -406,11 +406,28 @@ HISTORY_FIELDS = "id defaultBranchRef { target { ... on Commit { history(first: 
 _activity = {"at": 0.0, "data": None, "busy": None, "last": None}
 _activity_lock = threading.Lock()  # guards the dict only: never held while waiting for GitHub
 
-def _gh(args, timeout=25):
-    """Run the gh CLI (your existing sign-in) and return stdout. Read-only use: callers only issue GETs and queries."""
+# ---- the GitHub sign-in: gh's own login, or a personal access token saved here and handed to gh as GH_TOKEN ----
+CONFIG_DIR = os.environ.get("RAWTRIAGE_CONFIG_DIR") or os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "rawnotes-triage")
+TOKEN_RE = re.compile(r"[A-Za-z0-9_]{20,255}")  # classic (ghp_...), fine-grained (github_pat_...) and older 40-hex tokens
+STATUS_TTL = 60
+_gh_status = {"at": 0.0, "data": None}
+_gh_status_lock = threading.Lock()
+
+def token_path(): return os.path.join(CONFIG_DIR, "github-token")
+
+def saved_token():
+    """The token saved through the page, or '' (none saved, or unreadable)."""
+    try:
+        with open(token_path(), encoding="utf-8") as fh: return fh.read().strip()
+    except OSError: return ""
+
+def _gh(args, timeout=25, token=None):
+    """Run the gh CLI and return stdout. Signed in as the token saved through the page if there is one (given to gh in
+    its environment, never on the command line), otherwise as gh itself. Read-only use: callers only issue GETs and queries."""
+    token = token or saved_token()
     try:
         proc = subprocess.run(["gh"] + args, capture_output=True, text=True, timeout=timeout,
-                              env={**os.environ, "GH_PROMPT_DISABLED": "1"})
+                              env={**os.environ, "GH_PROMPT_DISABLED": "1", **({"GH_TOKEN": token} if token else {})})
     except FileNotFoundError: raise RuntimeError("gh is not installed")
     except subprocess.TimeoutExpired: raise RuntimeError("GitHub took too long to answer")
     if proc.returncode != 0:
@@ -418,6 +435,58 @@ def _gh(args, timeout=25):
         if "HTTP 404" in err: raise RuntimeError("Not found, or not visible to your GitHub sign-in.")
         raise RuntimeError((err.splitlines() or ["gh failed; check `gh auth status` and the network"])[-1])
     return proc.stdout
+
+def forget_github():
+    """The sign-in changed: whatever was fetched as the old account is wrong."""
+    with _gh_status_lock: _gh_status.update(at=0.0, data=None)
+    with _activity_lock: _activity.update(at=0.0, data=None, last=None)
+    with _rest_lock: _rest_cache.clear()
+    _viewer["login"] = None
+
+def github_status(refresh=False):
+    """Who GitHub features act as: {state: signed_in | signed_out | no_gh | unavailable, login, source: token | environment | gh, error}.
+    The token itself is never returned."""
+    with _gh_status_lock:
+        if _gh_status["data"] and not refresh and time.time() - _gh_status["at"] < STATUS_TTL: return _gh_status["data"]
+    source = "token" if saved_token() else "environment" if (os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")) else "gh"
+    out = {"state": "signed_in", "login": "", "source": source}
+    if not shutil.which("gh"): out.update(state="no_gh", source="", error="The GitHub CLI (gh) is not installed.")
+    else:
+        try:
+            out["login"] = json.loads(_gh(["api", "user"], timeout=15))["login"]; _viewer["login"] = out["login"]
+        except (ValueError, KeyError): out.update(state="unavailable", error="unexpected answer from GitHub")
+        except RuntimeError as e:
+            msg = str(e); low = msg.lower()
+            bad = any(k in low for k in ("gh auth login", "not logged", "http 401", "bad credentials", "authentication", "gh_token"))
+            out.update(state="signed_out" if bad else "unavailable", error="" if bad and source == "gh" else msg)
+            if bad and source == "token": out["error"] = "GitHub rejected the saved token."
+    with _gh_status_lock: _gh_status.update(at=time.time(), data=out)
+    return out
+
+def set_github_token(req):
+    """Save a personal access token: checked against GitHub first, kept in a file only you can read."""
+    token = req.get("token")
+    if not isinstance(token, str) or not TOKEN_RE.fullmatch(token.strip()): raise ValueError("That does not look like a GitHub token (letters, digits and underscores, 20+ characters).")
+    token = token.strip()
+    if not shutil.which("gh"): raise ValueError("The GitHub CLI (gh) is not installed; install it first.")
+    try: login = json.loads(_gh(["api", "user"], timeout=15, token=token))["login"]
+    except (ValueError, KeyError): raise ValueError("unexpected answer from GitHub")
+    except RuntimeError as e:
+        raise ValueError("GitHub rejected that token." if any(k in str(e).lower() for k in ("401", "bad credentials", "gh_token")) else str(e))
+    os.makedirs(CONFIG_DIR, mode=0o700, exist_ok=True)
+    tmp = token_path() + ".new"
+    with contextlib.suppress(FileNotFoundError): os.unlink(tmp)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh: fh.write(token + "\n")
+    os.replace(tmp, token_path())
+    forget_github(); log(f"github token saved ({login})")
+    return github_status(True)
+
+def remove_github_token():
+    """Forget the saved token; GitHub features go back to gh's own sign-in."""
+    with contextlib.suppress(FileNotFoundError): os.unlink(token_path())
+    forget_github(); log("github token removed")
+    return github_status(True)
 
 def gh_graphql(query):
     """Run a GraphQL query through gh. Returns the parsed 'data'."""
@@ -1164,6 +1233,7 @@ class H(BaseHTTPRequestHandler):
             if u.path == "/api/version": return self._send(200, {"version": VERSION, "started": STARTED, "pid": os.getpid(), "app": "rawnotes-triage"})
             if u.path == "/api/projects": return self._send(200, {"projects": projects_listing(q.get("refresh") == ["1"])})
             if u.path == "/api/project": return self._send(200, project_detail(q.get("name", [""])[0], q.get("kind", [""])[0]))
+            if u.path == "/api/github": return self._send(200, github_status(q.get("refresh") == ["1"]))
             if u.path == "/api/activity": return self._send(200, github_activity(q.get("refresh") == ["1"]))
             if u.path == "/api/repo": return self._send(200, repo_overview(q.get("name", [""])[0]))
             if u.path == "/api/repo/path": return self._send(200, repo_path(q.get("name", [""])[0], q.get("path", [""])[0]))
@@ -1192,6 +1262,9 @@ class H(BaseHTTPRequestHandler):
             if path == "/api/merge": return self._send(200, merge(req))
             if path == "/api/restore": return self._send(200, restore(req))
             if path == "/api/project/status": return self._send(200, project_status(req))
+            if path in ("/api/github/token", "/api/github/token/remove"):
+                if self.client_address[0] not in ("127.0.0.1", "::1", "::ffff:127.0.0.1"): raise ValueError("The GitHub sign-in can only be changed from the machine running the server.")
+                return self._send(200, set_github_token(req) if path == "/api/github/token" else remove_github_token())
             if path == "/api/undo": return self._send(200, undo())
             if path == "/api/done": return self._send(200, set_done(req.get("name", ""), req.get("text", ""), req.get("expected", ""), req.get("kind")))
             if path == "/api/open":

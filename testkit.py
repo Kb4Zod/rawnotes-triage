@@ -18,7 +18,9 @@ class Fixture(unittest.TestCase):
         self.tmp = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self.notes = os.path.join(self.tmp, "RawNotes"); os.makedirs(self.notes)
-        self.saved = (server.NOTES, server.PROJECTS, server.log, server.LOG_PATH)
+        self.saved = (server.NOTES, server.PROJECTS, server.log, server.LOG_PATH, server.CONFIG_DIR)
+        server.CONFIG_DIR = os.path.join(self.tmp, "config")  # never read or write the real saved GitHub token
+        server.forget_github()
         server.NOTES, server.PROJECTS = self.notes, self.tmp
         server.log = lambda msg: None  # never write test actions into the real triage.log
         server.LOG_PATH = os.path.join(self.tmp, "triage.log")
@@ -31,7 +33,8 @@ class Fixture(unittest.TestCase):
         self.addCleanup(self.httpd.server_close); self.addCleanup(self.httpd.shutdown)
 
     def _restore(self):
-        server.NOTES, server.PROJECTS, server.log, server.LOG_PATH = self.saved
+        server.NOTES, server.PROJECTS, server.log, server.LOG_PATH, server.CONFIG_DIR = self.saved
+        server.forget_github()
         server._undo.clear()
 
     # -- http

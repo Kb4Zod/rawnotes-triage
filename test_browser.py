@@ -91,6 +91,32 @@ class BrowserCase(Fixture):
     def settle(self, ms=0.3): time.sleep(ms)
 
 
+class GithubPanel(BrowserCase):
+    """v2.09: the rail says who GitHub features act as, and the dialog saves or removes a token."""
+    def test_status_and_token_dialog(self):
+        tok = "ghp_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8"
+        def fake_gh(args, timeout=25, token=None):
+            token = token or server.saved_token()
+            if token == tok: return '{"login": "tokenuser"}'
+            raise RuntimeError("To get started, please run:  gh auth login")
+        p = mock.patch.object(server, "_gh", fake_gh); p.start(); self.addCleanup(p.stop)
+        p = mock.patch.object(server.shutil, "which", lambda n: "/usr/bin/gh"); p.start(); self.addCleanup(p.stop)
+        server.forget_github(); self.open()
+        self.page.wait("document.querySelector('#ghStatus') && /Not signed in/.test(document.querySelector('#ghStatus').textContent)")
+        self.page.click("#ghStatus"); self.page.wait("document.querySelector('#ghTok')")
+        self.assertEqual(self.active(), "ghTok")
+        self.page.eval("document.querySelector('#ghTok').value='nope'"); self.page.click("#ghSave"); self.settle(0.5)
+        self.assertIn("does not look like", self.text("#ghErr"))
+        self.page.eval(f"document.querySelector('#ghTok').value={json.dumps(tok)}"); self.page.click("#ghSave")
+        self.page.wait("!document.querySelector('#ghTok') && /tokenuser/.test(document.querySelector('#ghStatus').textContent)")
+        self.assertEqual(server.saved_token(), tok)
+        self.page.click("#ghStatus"); self.page.wait("document.querySelector('#ghRemove')")
+        self.assertNotIn(tok, self.page.eval("document.body.innerHTML"))
+        self.page.click("#ghRemove")
+        self.page.wait("!document.querySelector('#ghRemove') && /Not signed in/.test(document.querySelector('#ghStatus').textContent)")
+        self.assertEqual(server.saved_token(), "")
+
+
 class Keyboard(BrowserCase):
     def test_one_enter_on_a_collapsed_stack_only_opens_it(self):
         self.assertEqual(self.page.eval("document.querySelector('.item.stack').getAttribute('aria-expanded')"), "false")
