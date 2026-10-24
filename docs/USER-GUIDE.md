@@ -29,7 +29,7 @@ Useful options:
 
 - `--port N`: Use a different port
 - `--no-browser`: Don't open a browser
-- `--host 0.0.0.0`: Reach it from your phone (home Wi-Fi or Tailscale). There is no login, so use a trusted network only
+- `--host 0.0.0.0`: Reach it from your phone (Tailscale or a network you fully trust). There is no login, so use a trusted network only
 - `--notes PATH`: Use another notes folder. Promotions go to sibling folders of it
 - `--restart`: Stop the old triage server on the port and start this one
 - `--app`: Open in its own app window (Omarchy)
@@ -42,7 +42,14 @@ The projects root is the **parent** of the notes folder: `active/`, `experiments
 After editing `index.html` or updating the app, restart the server. A tab left open shows a banner asking you to reload when versions differ.
 
 ### Omarchy launcher (optional, Linux only)
-Needs Omarchy and a one-line `rawtriage-web` wrapper in `~/.local/bin`. From the repo run `./install-webapp.sh`. It adds **RawNotes Triage** to the launcher (`SUPER + SPACE`) and runs the server as an always-on user service. The window opens full screen; `SUPER + F` toggles that. Use `--no-service` for the launcher entry only, and `--remove` to undo everything.
+Needs Omarchy and a one-line `rawtriage-web` wrapper in `~/.local/bin` (the repo does not ship it yet, so create it yourself and `chmod +x` it):
+
+```
+#!/usr/bin/env bash
+exec python3 "$HOME/Projects/active/rawnotes-triage/server.py" "$@"
+```
+
+The installer always installs and runs the checkout at `~/Projects/active/rawnotes-triage`, wherever you run it from, so clone the repo there. Then run `./install-webapp.sh`. It adds **RawNotes Triage** to the launcher (`SUPER + SPACE`) and runs the server as an always-on user service. The window opens full screen; `SUPER + F` toggles that. Use `--no-service` for the launcher entry only, and `--remove` to undo everything.
 
 ## 3. The four pages
 
@@ -149,4 +156,4 @@ Dark mode follows your system; the rail toggle overrides it. Below 800px wide th
 - No PRs, Pulse graph or repo viewer: Sign in with `gh auth login`
 - Open folder does nothing on the phone: It only works from a browser on the server's machine
 - A decided note is still in the Inbox: Check the **Stuck** filter
-- Launcher shows a blank window: Run `rawtriage-web --restart` or restart the `rawtriage-web` systemd user service
+- Launcher shows a blank window: Run `rawtriage-web --restart` (the wrapper from the launcher section) or restart the `rawtriage-web` systemd user service
