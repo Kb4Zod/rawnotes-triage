@@ -31,7 +31,7 @@ python3 server.py --service           # for the systemd unit: no browser; exits 
 make one, every flag above works through it. The Omarchy launcher app (below)
 needs it.
 
-Defaults: port `8765`, host `127.0.0.1`, notes in `~/Projects/RawNotes`,
+Defaults: port `8765`, host `127.0.0.1`, notes in the folder chosen on first run (see [First run](#first-run)), else `~/Projects/RawNotes`,
 `triage.log` next to `server.py`. The **projects root is the parent of the
 notes folder**: with `--notes /tmp/copy/RawNotes`, promotions land in
 `/tmp/copy/active/`, `/tmp/copy/experiments/` and so on.
@@ -53,6 +53,20 @@ Optional tools (the app works for note triage without them):
 - the GitHub CLI (`gh`), signed in: pull requests, the Pulse commit graph, the repo viewer. See [GitHub sign-in](#github-sign-in)
 - `xdg-open`: the **Open folder** button
 - `notify-send`: the old-server warning as a desktop notification
+
+## First run
+
+If the notes folder doesn't exist yet (a fresh install), the page opens with a **Welcome** dialog asking where your
+notes should live, suggesting `~/Projects/RawNotes`. It can't be dismissed: there is nothing to show until it's done.
+**Create notes folder** makes the folder (an existing folder is used as it is) with a `done/` folder for the Archive
+and a `_template.md` for new notes (copied from `starter/_template.md`, never over one you already have). The parent
+of the folder becomes the projects root, so it must be a full path at least two levels deep (not `/notes`). The
+choice is saved in `~/.config/rawnotes-triage/config.json` (`$XDG_CONFIG_HOME` and `RAWTRIAGE_CONFIG_DIR` are
+honoured) and used on every later start, including by the systemd service. `--notes` still wins over it.
+
+The dialog only appears while the folder is missing, and setup only works from the machine running the server: a
+phone on the network is told to do it there. To move to another folder later, start with `--notes`, or edit
+`config.json` and restart.
 
 ## GitHub sign-in
 
@@ -357,6 +371,7 @@ build of the page.
 - `notemeta.py`: note header and section parsing
 - `safefs.py`: symlink-safe path checks, atomic writes, read/write lock, stat cache
 - `index.html` + `static/fonts/`: the whole UI
+- `starter/_template.md`: the note template copied into a new notes folder on first run
 - `static/icons/`: app icon (SVG source + PNGs), the favicon and the phone home-screen icon
 - `install-webapp.sh`, `systemd/rawtriage-web.service`: the Omarchy launcher app and its always-on service
 - `test_*.py`, `testkit.py`, `cdp.py`, `loadcheck.py`: tests and load check

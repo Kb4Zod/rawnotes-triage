@@ -91,6 +91,29 @@ class BrowserCase(Fixture):
     def settle(self, ms=0.3): time.sleep(ms)
 
 
+class FirstRunDialog(BrowserCase):
+    """v2.12: with no notes folder, the page asks where to create it before showing anything else."""
+    def test_dialog_creates_the_folder_and_loads_the_inbox(self):
+        os.rename(self.notes, self.notes + ".away")  # a fresh install
+        self.page.goto(f"http://127.0.0.1:{self.port}/?first=1#/inbox")
+        self.page.wait("document.querySelector('#setupPath')")
+        self.assertEqual(self.active(), "setupPath")
+        self.assertEqual(self.page.eval("document.querySelector('#setupPath').value"), self.notes)
+        self.assertEqual(self.text("#setupRoot"), self.tmp)
+        self.page.key("Escape"); self.page.click("#scrim"); self.settle()
+        self.assertTrue(self.exists("#setupForm"))  # can't be dismissed: there is nothing behind it yet
+        self.page.eval("{const i=document.querySelector('#setupPath');i.value='relative';i.dispatchEvent(new Event('input'))}")
+        self.page.click("#setupGo"); self.page.wait("/full path/.test(document.querySelector('#setupErr').textContent)")
+        fresh = os.path.join(self.tmp, "home", "Notes")
+        self.page.eval(f"{{const i=document.querySelector('#setupPath');i.value={json.dumps(fresh)};i.dispatchEvent(new Event('input'))}}")
+        self.assertEqual(self.text("#setupRoot"), os.path.join(self.tmp, "home"))
+        self.page.click("#setupGo")
+        self.page.wait("!document.querySelector('#setupForm') && S.notes && document.querySelector('#main h1, #main .empty')")
+        self.assertTrue(os.path.isdir(os.path.join(fresh, "done")))
+        self.assertEqual(server.NOTES, fresh)
+        self.assertEqual(self.page.eval("S.notes.notes_dir"), fresh)
+
+
 class GithubPanel(BrowserCase):
     """v2.09: the rail says who GitHub features act as, and the dialog saves or removes a token."""
     def test_status_and_token_dialog(self):

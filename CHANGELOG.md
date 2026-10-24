@@ -4,6 +4,16 @@ The version shows in the page heading ("RawNotes Triage version X.XX") and
 in the startup line. Bump `VERSION` in `server.py` and add an entry here
 with every change. Versions 1.00-1.03 were numbered after the fact from git history.
 
+## 2.12 — 2026-10-24
+- **First run asks where the notes live.** When the notes folder doesn't exist (a fresh install), the page opens a
+  **Welcome** dialog, prefilled with `~/Projects/RawNotes`, before anything else. It creates the folder (or adopts an
+  existing one) with `done/` and a `_template.md` from the new `starter/` folder, switches the running server to it,
+  and saves the choice in `~/.config/rawnotes-triage/config.json`. Later starts, the systemd service included, use the
+  saved folder; `--notes` still overrides it. New `GET /api/setup` and `POST /api/setup`; the POST refuses relative
+  paths, files, top-level folders (the parent becomes the projects root) and any request once a folder exists, and
+  only answers a browser on the server's own machine (same check as the GitHub token routes, now shared as
+  `_this_machine`). The dialog can't be dismissed with Esc or a click outside.
+
 ## 2.11 — 2026-10-24
 - **Fixed: experiments no longer show up under "Due this week".** An open-ended experiment has no ship-by date, and
   the "Due this week" check treated the missing date as 0 days left. Each experiment now appears only under

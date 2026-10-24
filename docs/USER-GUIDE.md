@@ -23,7 +23,7 @@ Requirements: Python 3 (standard library only, nothing to install). Optional: `g
 python3 server.py
 ```
 
-This starts http://127.0.0.1:8765 and opens your browser. By default notes are read from `~/Projects/RawNotes`; to use another folder, pass `--notes /path/to/RawNotes` (on Windows, use the equivalent path).
+This starts http://127.0.0.1:8765 and opens your browser. The first time, if there is no notes folder yet, a **Welcome** dialog asks where your notes should live (suggesting `~/Projects/RawNotes`) and creates it, with a `done/` folder and a `_template.md`; the choice is remembered from then on. To use another folder for one run, pass `--notes /path/to/RawNotes` (on Windows, use the equivalent path).
 
 Useful options:
 
