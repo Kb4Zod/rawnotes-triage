@@ -490,6 +490,7 @@ function renderRail(){
   else if(a&&a.error)spark=`<span title="${esc(a.error)}">GitHub activity unavailable</span>`;
   const g=S.gh,gtxt=!g?'Checking GitHub…':g.state==='signed_in'?`Signed in as <b>${esc(g.login)}</b>`:g.state==='signed_out'?'Not signed in to GitHub':g.state==='no_gh'?'GitHub CLI not installed':'GitHub unreachable';
   const ghBtn=`<button class="linkish ghs ${g&&g.state==='signed_in'?'ok':''}" id="ghStatus" aria-haspopup="dialog" title="GitHub sign-in"><span class="dot"></span>${gtxt}</button>`;
+  const had=document.activeElement&&$('#rail').contains(document.activeElement)?document.activeElement.id:'';  // keep focus on a rail button across the redraw
   $('#rail').innerHTML=`<div class="brand"><div class="name">Raw<em>Notes</em></div><div class="sub">Triage</div></div>
   <nav class="nav" aria-label="Pages">${nav('inbox','inbox','Inbox',c.live)}${nav('projects','proj','Projects',c.late||c.flight,!!c.late)}${nav('archive','arch','Archive',c.done)}${nav('pulse','pulse','Pulse')}</nav>
   <div class="nav"><div class="label">Lifecycle</div>
@@ -499,6 +500,7 @@ function renderRail(){
    <div class="row"><button class="linkish" id="kPal">${kb('Ctrl K')} search</button><button class="linkish" id="kKeys">${kb('?')} keys</button></div>
    <div class="row"><button class="linkish" id="theme">${dark?I.sun:I.moon} ${dark?'Light':'Dark'}</button><span>v${VERSION}</span></div></div>`;
   $('#ghStatus').onclick=openGithub;$('#kPal').onclick=openPalette;$('#kKeys').onclick=openKeys;$('#theme').onclick=toggleTheme;
+  if(had&&document.getElementById(had))document.getElementById(had).focus({preventScroll:true});
   const tab=(id,ic,label,bd)=>`<a href="#/${id}" class="${S.route===id?'on':''}"${S.route===id?' aria-current="page"':''}>${I[ic]}${bd?`<span class="bd" aria-label="${bd} overdue">${bd}</span>`:''}${label}</a>`;
   $('#tabbar').innerHTML=tab('inbox','inbox','Inbox')+tab('projects','proj','Projects',c.late)+tab('archive','arch','Archive')+tab('pulse','pulse','Pulse')}
 function toggleTheme(){const d=document.documentElement.classList.toggle('dark');localStorage.setItem('theme',d?'dark':'light');renderRail();if(S.route==='pulse')render()}
@@ -940,7 +942,9 @@ function showOverlay(html){closeOverlay(true);returnFocus=document.activeElement
   $('#scrim').onclick=e=>{if(e.target.id==='scrim'&&!sticky())closeOverlay()}}
 const sticky=()=>!!$('#overlay [data-sticky]');  // the first-run dialog: nothing to go back to until it's done
 function closeOverlay(quiet){const had=$('#overlay').innerHTML;$('#overlay').innerHTML='';pal=null;backdrop(false);
-  const back=returnFocus;returnFocus=null;if(!quiet&&had){if(back&&back.isConnected&&back!==document.body)back.focus();else($('#main')||document.body).focus({preventScroll:true})}}
+  let back=returnFocus;returnFocus=null;
+  if(back&&!back.isConnected&&back.id)back=document.getElementById(back.id);  // the rail is redrawn when GitHub data arrives: same button, new element
+  if(!quiet&&had){if(back&&back.isConnected&&back!==document.body)back.focus();else($('#main')||document.body).focus({preventScroll:true})}}
 function trapTab(e){const d=$('#overlay [role=dialog]');if(!d)return;const f=[...d.querySelectorAll(FOCUSABLE)].filter(x=>x.offsetParent!==null);
   if(!f.length){e.preventDefault();d.focus();return}
   const i=f.indexOf(document.activeElement);

@@ -22,6 +22,9 @@ with every change. Versions 1.00-1.03 were numbered after the fact from git hist
   checkout). The installer links `~/.local/bin/rawtriage-web` to it, backing up and replacing a hand-made wrapper
   from before 2.12, and stops, changing nothing, if some other file has that name. `--remove` deletes the link, never
   a file it didn't make. New `test_install.py` runs the real installer against a temp copy and a fake `$HOME`.
+- **Fixed: focus no longer drops off a rail button when the rail is redrawn** (GitHub status or activity arriving), and
+  closing an overlay still returns focus to the button that opened it if the rail was redrawn meanwhile. Focus used to
+  fall back to the page, which also made a browser test fail about one run in three.
 
 ## 2.11 — 2026-10-24
 - **Fixed: experiments no longer show up under "Due this week".** An open-ended experiment has no ship-by date, and
