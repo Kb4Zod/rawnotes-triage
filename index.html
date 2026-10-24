@@ -70,6 +70,7 @@ a{color:var(--green)}
 .lifecycle{margin:2px 10px 0;font-size:12px;color:var(--mute);display:grid;gap:4px}
 .rail .foot{margin-top:auto;padding:12px 10px 0;border-top:1px solid var(--line);font-size:12px;color:var(--mute)}
 .rail .foot b{color:var(--ink)}
+.ghs{display:flex;align-items:center;gap:7px;text-align:left}.ghs .dot{width:8px;height:8px;border-radius:50%;background:var(--rust);flex:none}.ghs.ok .dot{background:var(--green)}
 .spark{display:flex;gap:2px;align-items:flex-end;height:26px;margin:6px 0 8px}
 .spark i{flex:1;background:var(--g3);border-radius:2px 2px 0 0;min-height:2px;opacity:.85}
 .foot .row{display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:6px}
@@ -405,7 +406,7 @@ const aborted=e=>e&&e.name==='AbortError';
 function cancelScopes(){for(const k in SC)SC[k].c.abort()}
 
 /* ---------- state ---------- */
-const S={route:'inbox',notes:null,projects:null,activity:null,stats:null,
+const S={route:'inbox',notes:null,projects:null,activity:null,gh:null,stats:null,
   sel:null,mode:null,expanded:null,batch:new Set(),batchMode:'merge',
   f:{q:'',status:'all',type:null},af:{q:'',fate:'all'},asel:null,
   psel:null,pdetail:null,repo:null,undoCount:0,
@@ -471,6 +472,7 @@ async function changed(){projSeq++;S.projects=null;S.pdetail=null;S.stats=null;a
   if(S.route==='projects')await loadProjects().catch(()=>{})}
 async function loadActivity(force){try{S.activity=await api('/api/activity'+(force?'?refresh=1':''))}catch(e){S.activity={error:e.message}}renderRail();
   if(S.route==='pulse'&&S.notes&&!S.repo)render()}  // opened straight onto Pulse: the graph arrives after the page first drew
+async function loadGithub(force){try{S.gh=await api('/api/github'+(force?'?refresh=1':''))}catch(e){S.gh={state:'unavailable',error:e.message}}renderRail()}
 async function loadStats(){try{S.stats=await api('/api/stats')}catch(e){S.stats={error:e.message}}}
 async function refresh(){await loadNotes();if(S.projects||S.route==='projects')await loadProjects().catch(()=>{});if(S.route==='pulse')await loadStats()}
 // true while the user has something typed that a re-render would throw away
@@ -486,15 +488,17 @@ function renderRail(){
   let spark='';if(a&&a.weeks){const wk=a.weeks.slice(-16).map(w=>w.reduce((s,d)=>s+d.count,0)),mx=Math.max(...wk,1);
     spark=`<div class="spark" role="img" aria-label="Commits per week, last 16 weeks" title="Commits per week, last 16 weeks">${wk.map(v=>`<i style="height:${Math.max(8,v/mx*100)}%"></i>`).join('')}</div><b>${a.total}</b> commits this year · streak <b>${a.streak}d</b>`}
   else if(a&&a.error)spark=`<span title="${esc(a.error)}">GitHub activity unavailable</span>`;
+  const g=S.gh,gtxt=!g?'Checking GitHub…':g.state==='signed_in'?`Signed in as <b>${esc(g.login)}</b>`:g.state==='signed_out'?'Not signed in to GitHub':g.state==='no_gh'?'GitHub CLI not installed':'GitHub unreachable';
+  const ghBtn=`<button class="linkish ghs ${g&&g.state==='signed_in'?'ok':''}" id="ghStatus" aria-haspopup="dialog" title="GitHub sign-in"><span class="dot"></span>${gtxt}</button>`;
   $('#rail').innerHTML=`<div class="brand"><div class="name">Raw<em>Notes</em></div><div class="sub">Triage</div></div>
   <nav class="nav" aria-label="Pages">${nav('inbox','inbox','Inbox',c.live)}${nav('projects','proj','Projects',c.late||c.flight,!!c.late)}${nav('archive','arch','Archive',c.done)}${nav('pulse','pulse','Pulse')}</nav>
   <div class="nav"><div class="label">Lifecycle</div>
   <div class="lifecycle"><div>${st('open')} <span>captured</span></div><div>${st('cooking')} <span>being worked</span></div><div style="font-size:11px;margin-top:2px">then one of</div>
   <div>${st('promoted')} → Projects</div><div>${st('reference')} → reference/</div><div>${st('killed')} → Archive</div></div></div>
-  <div class="foot">${spark}
+  <div class="foot">${ghBtn}${spark?'<div style="margin-top:8px">'+spark+'</div>':''}
    <div class="row"><button class="linkish" id="kPal">${kb('Ctrl K')} search</button><button class="linkish" id="kKeys">${kb('?')} keys</button></div>
    <div class="row"><button class="linkish" id="theme">${dark?I.sun:I.moon} ${dark?'Light':'Dark'}</button><span>v${VERSION}</span></div></div>`;
-  $('#kPal').onclick=openPalette;$('#kKeys').onclick=openKeys;$('#theme').onclick=toggleTheme;
+  $('#ghStatus').onclick=openGithub;$('#kPal').onclick=openPalette;$('#kKeys').onclick=openKeys;$('#theme').onclick=toggleTheme;
   const tab=(id,ic,label,bd)=>`<a href="#/${id}" class="${S.route===id?'on':''}"${S.route===id?' aria-current="page"':''}>${I[ic]}${bd?`<span class="bd" aria-label="${bd} overdue">${bd}</span>`:''}${label}</a>`;
   $('#tabbar').innerHTML=tab('inbox','inbox','Inbox')+tab('projects','proj','Projects',c.late)+tab('archive','arch','Archive')+tab('pulse','pulse','Pulse')}
 function toggleTheme(){const d=document.documentElement.classList.toggle('dark');localStorage.setItem('theme',d?'dark':'light');renderRail();if(S.route==='pulse')render()}
@@ -940,6 +944,30 @@ function trapTab(e){const d=$('#overlay [role=dialog]');if(!d)return;const f=[..
   if(!f.length){e.preventDefault();d.focus();return}
   const i=f.indexOf(document.activeElement);
   if(e.shiftKey&&(i<=0)){e.preventDefault();f[f.length-1].focus()}else if(!e.shiftKey&&(i===f.length-1||i<0)){e.preventDefault();f[0].focus()}}
+// the token form only on the server's own machine: from a phone it would cross the network in the clear, only to be refused
+function isLocalPage(){return ['localhost','127.0.0.1','[::1]'].includes(location.hostname)}
+function openGithub(){
+  const g=S.gh||{state:'unavailable',error:'Not checked yet.'},src={token:'the token saved here',environment:'a GH_TOKEN / GITHUB_TOKEN variable in the server’s environment',gh:'the GitHub CLI’s own login (gh auth login)'};
+  const head=g.state==='signed_in'?`<p>Signed in as <b>${esc(g.login)}</b>, through ${src[g.source]||'gh'}.</p>`
+    :g.state==='signed_out'?`<p>Not signed in.${g.error?' '+esc(g.error):''} Run <code>gh auth login</code> in a terminal${isLocalPage()?', or save a personal access token below':''}.</p>`
+    :g.state==='no_gh'?'<p>The GitHub CLI (<code>gh</code>) is not installed. RawNotes Triage reaches GitHub only through it, so install it first, then sign in.</p>'
+    :`<p>Could not reach GitHub: ${esc(g.error||'unknown error')}</p>`;
+  showOverlay(`<div class="scrim" id="scrim"><div class="card keys" style="background:var(--solid)" role="dialog" aria-modal="true" aria-labelledby="ghH" tabindex="-1"><h2 id="ghH">GitHub</h2>${head}
+  ${!isLocalPage()?`<p>Signing in or out is done on the machine running the server: open this page there (at <code>localhost</code>) to save or remove a token. Never paste a token here; it would cross the network unencrypted.</p>
+   <div style="text-align:right;margin-top:14px"><button type="button" class="btn" id="ghClose">Close</button></div></div></div>`:`<form id="ghForm" autocomplete="off"><div class="field"><label for="ghTok" class="label">Personal access token</label>
+   <input class="input" id="ghTok" type="password" autocomplete="off" spellcheck="false" placeholder="ghp_… or github_pat_…" aria-describedby="ghHelp">
+   <p class="muted" id="ghHelp" style="font-size:12px;margin:6px 0 0">Needs read access to your repositories: best a fine-grained token with read-only Contents, Pull requests and Issues (a classic token needs <code>repo</code>, which also allows writes). It is checked with GitHub, then kept in a file only you can read (<code>~/.config/rawnotes-triage/github-token</code>) and used instead of the CLI’s login. It is never shown again.</p></div>
+   <div class="err" id="ghErr" role="alert"></div>
+   <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">${g.source==='token'?'<button type="button" class="btn" id="ghRemove">Remove saved token</button>':''}<button type="button" class="btn" id="ghClose">Close</button><button type="submit" class="btn primary" id="ghSave">Save token</button></div></form></div></div>`}`);
+  $('#ghClose').onclick=()=>closeOverlay();
+  if(!$('#ghForm'))return $('#ghClose').focus();
+  const err=m=>{$('#ghErr').textContent=m||''};
+  $('#ghForm').onsubmit=async e=>{e.preventDefault();const t=$('#ghTok').value.trim();if(!t)return err('Paste a token first.');
+    $('#ghSave').disabled=true;err('Checking with GitHub…');
+    try{S.gh=await api('/api/github/token',{token:t});S.activity=null;closeOverlay();renderRail();loadActivity(true)}
+    catch(x){$('#ghSave').disabled=false;err(x.message)}};
+  if($('#ghRemove'))$('#ghRemove').onclick=async()=>{try{S.gh=await api('/api/github/token/remove',{});S.activity=null;closeOverlay();renderRail();loadActivity(true)}catch(x){err(x.message)}};
+  $('#ghTok').focus()}
 function openKeys(){showOverlay(`<div class="scrim" id="scrim"><div class="card keys" style="background:var(--solid)" role="dialog" aria-modal="true" aria-labelledby="keysH" tabindex="-1"><h2 id="keysH">Keyboard</h2><table>
   <caption class="sr">Keyboard shortcuts</caption>${[['J / K or ↓ / ↑','next / previous'],['P','Promote'],['R','Reference'],['C','Keep (cooking)'],['X','Kill'],['Enter','apply the open decision (Ctrl+Enter in a text box); on a stack, only after you chose an action with P R C X or a click'],['Esc','close the form / overlay (what you typed is kept)'],['Z','undo the last change'],['Y','copy the note’s full path'],['/','search the list'],['Ctrl K','search everything + commands'],['1 2 3 4','Inbox · Projects · Archive · Pulse'],['?','this help']].map(([k,v])=>`<tr><th scope="row" style="font-weight:400;text-align:left">${k.split(' ').map(x=>/^[A-Z↓↑]$|^[A-Za-z]{2,}$|^[\/?1-4]$/.test(x)?kb(x):x).join(' ')}</th><td>${v}</td></tr>`).join('')}</table>
   <div style="text-align:right;margin-top:14px"><button type="button" class="btn" id="keysClose">Close</button></div></div></div>`);
@@ -1036,5 +1064,5 @@ document.addEventListener('visibilitychange',()=>{if(document.visibilityState===
 document.addEventListener('visibilitychange',async()=>{if(document.visibilityState!=='visible'||S.mode||$('#overlay').innerHTML)return;
   try{await refresh();if(!dirty())render()}catch(e){}});  // data is refreshed either way; the screen is redrawn only when nothing typed would be lost
 (async()=>{try{await loadNotes()}catch(e){$('#main').innerHTML=`<div class="empty">Can't reach the triage server: ${esc(e.message)}</div>`;return}
-  route();loadActivity();checkVersion();setInterval(()=>loadActivity(),600000)})();
+  route();loadGithub();loadActivity();checkVersion();setInterval(()=>loadActivity(),600000)})();
 </script></body></html>
