@@ -7,7 +7,7 @@ import unittest
 from unittest import mock
 
 import server
-from testkit import Fixture
+from testkit import Fixture, WINDOWS, posix_modes
 
 TOKEN = "ghp_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8"
 
@@ -61,8 +61,9 @@ class GithubSignIn(Fixture):
         self.assertEqual(d, {"state": "signed_in", "login": "tokenuser", "source": "token"})
         self.assertNotIn(TOKEN, json.dumps(d))
         self.assertEqual(server.saved_token(), TOKEN)
-        self.assertEqual(stat.S_IMODE(os.stat(server.token_path()).st_mode), 0o600)
-        self.assertEqual(stat.S_IMODE(os.stat(server.CONFIG_DIR).st_mode), 0o700)
+        if not WINDOWS:  # no Unix bits there; the file sits in the user's own profile, private by its ACL
+            self.assertEqual(stat.S_IMODE(os.stat(server.token_path()).st_mode), 0o600)
+            self.assertEqual(stat.S_IMODE(os.stat(server.CONFIG_DIR).st_mode), 0o700)
         self.assertEqual(self.get("/api/github")["login"], "tokenuser")
         self.assertEqual(calls[-1][1], TOKEN)  # later GitHub calls run as the saved token
 
@@ -137,6 +138,7 @@ class GithubSignIn(Fixture):
         with open(server.token_path(), "wb") as fh: fh.write(b"\xff\xfe not utf-8")
         self.assertEqual(server.saved_token(), "")
 
+    @posix_modes
     def test_an_existing_loose_config_folder_is_tightened(self):
         self.stub_gh({"": "me", TOKEN: "tokenuser"})
         os.makedirs(server.CONFIG_DIR); os.chmod(server.CONFIG_DIR, 0o755)

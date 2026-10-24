@@ -31,6 +31,24 @@ above works through it. The Omarchy launcher installer (below) links
 `~/.local/bin/rawtriage-web` to it, so after installing you can type
 `rawtriage-web` from anywhere.
 
+### Windows
+
+The server is plain Python and runs on Windows too (tested on Windows 11 with Python 3.13). Use `py -3 server.py` or
+`python server.py`, not `python3`: on Windows `python3` is usually the Microsoft Store stub, which only prints
+"Python was not found". `binawtriage-web.cmd` is the Windows twin of the wrapper (it uses the `py` launcher when it
+is there, else `python`); every flag works through it. What differs:
+
+- **Open folder** hands the path to Explorer (`os.startfile`): a folder opens in Explorer, a note in whatever app
+  `.md` files are associated with. With no association, the button reports it.
+- `--restart` finds the port's owner with `netstat -ano` and checks its command line through PowerShell
+  (`Get-CimInstance Win32_Process`). Windows doesn't let one process read another's working folder, so a
+  `server.py` started by a relative path is recognised by its name; one started by a full path is still opened and
+  checked. It takes a few seconds (PowerShell starts slowly).
+- Linux-only, not available: `--app` (falls back to a browser tab), `--service` / the systemd unit,
+  `install-webapp.sh`, and the `notify-send` desktop notification (the terminal warning still prints).
+- Settings still live in `~/.config/rawnotes-triage/` (under `%USERPROFILE%`). Windows has no Unix permission bits,
+  so the saved GitHub token is private through your user profile's own access rules rather than `0600`.
+
 Defaults: port `8765`, host `127.0.0.1`, notes in the folder chosen on first run (see [First run](#first-run)), else `~/Projects/RawNotes`,
 `triage.log` next to `server.py`. The **projects root is the parent of the
 notes folder**: with `--notes /tmp/copy/RawNotes`, promotions land in
@@ -40,7 +58,7 @@ If a triage server is already on the port, startup just opens it (and warns,
 in the terminal and with `notify-send`, when its version differs). `--restart`
 stops it first, but only after two checks: the port must serve the triage
 page or `/api/version`, and the process that owns the port (found with `ss`
-and `/proc`) must be a `server.py` of this app. Anything else on the port is
+and `/proc`; on Windows `netstat` and PowerShell, see [Windows](#windows)) must be a `server.py` of this app. Anything else on the port is
 left alone and the command exits.
 
 `index.html` is read once at startup; after editing it, restart. A tab left
@@ -51,7 +69,7 @@ Optional tools (the app works for note triage without them):
 
 - `git`: branch, commits and GitHub-remote badges on the Projects page
 - the GitHub CLI (`gh`), signed in: pull requests, the Pulse commit graph, the repo viewer. See [GitHub sign-in](#github-sign-in)
-- `xdg-open`: the **Open folder** button
+- `xdg-open`: the **Open folder** button (on Windows, Explorer; nothing to install)
 - `notify-send`: the old-server warning as a desktop notification
 
 ## First run
@@ -313,6 +331,9 @@ token (`/api/github/token`) is likewise limited to the server's own machine,
 and also needs a localhost `Host` on any bind (so a DNS-rebound page can't do it
 under `--host 0.0.0.0`).
 
+Writes never go through a link: a symlinked (or, on Windows, junctioned) note, `done/` folder or project folder is
+read-only to the app. Junctions count because any Windows user can make one without admin rights.
+
 `triage.log` records every action after it has gone through, best-effort: if
 the log cannot be written, the change still happens and the Pulse decided
 count is lower than reality.
@@ -354,6 +375,10 @@ python3 -W ignore::ResourceWarning -m unittest                 # API, engine/fau
 AXE_JS=/path/to/axe.min.js python3 -m unittest test_browser    # + accessibility sweeps (axe-core 4.10.3; not part of the app)
 python3 loadcheck.py                                           # disposable 100/1000-note load, reads beside writes
 ```
+
+On Windows run them with `py -3` (or `python`). Tests of a folder link use a junction there, so they run without
+admin rights; the few that need a *file* symlink are skipped unless Developer Mode is on or the shell is elevated.
+Tests of Unix permission bits, `xdg-open`, the systemd unit and the Omarchy installer are skipped on Windows.
 
 `test_browser.py` drives Chromium through `cdp.py` (a tiny stdlib DevTools
 client) against a disposable server; it is skipped when no Chromium/Chrome is

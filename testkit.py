@@ -11,6 +11,22 @@ from http.server import ThreadingHTTPServer
 
 import server
 
+WINDOWS = os.name == "nt"
+
+def link(target, path):
+    """Make `path` a link to `target`, the way an attacker on this OS could. A folder on Windows gets a junction:
+    anyone can make one without admin rights, and the app must refuse it like a symlink. A file link on Windows
+    needs a symlink, which needs Developer Mode or an elevated shell; without that the calling test is skipped."""
+    if WINDOWS and os.path.isdir(target):
+        import _winapi; _winapi.CreateJunction(os.path.abspath(os.path.join(os.path.dirname(path), target)), path); return
+    try: os.symlink(target, path)
+    except OSError as e:
+        if WINDOWS and getattr(e, "winerror", None) == 1314:
+            raise unittest.SkipTest("a file symlink needs Windows Developer Mode or an elevated shell")
+        raise
+
+posix_modes = unittest.skipIf(WINDOWS, "Windows keeps no Unix permission bits (chmod only sets read-only)")
+
 
 class Fixture(unittest.TestCase):
     """HTTP server bound to a temporary RawNotes + projects root. Helpers read/write only inside it."""
@@ -71,13 +87,13 @@ class Fixture(unittest.TestCase):
         return path
 
     def snapshot(self, root=None):
-        out = {}
+        out = {}; rel = lambda p: os.path.relpath(p, self.tmp).replace(os.sep, "/")  # same keys on Windows
         for r, dirs, files in os.walk(root or self.tmp):
-            for d in dirs: out[os.path.relpath(os.path.join(r, d), self.tmp) + "/"] = ("dir",)
+            for d in dirs: out[rel(os.path.join(r, d)) + "/"] = ("dir",)
             for f in files:
                 p = os.path.join(r, f)
-                if os.path.islink(p): out[os.path.relpath(p, self.tmp)] = ("link", os.readlink(p)); continue
-                with open(p, "rb") as fh: out[os.path.relpath(p, self.tmp)] = (fh.read(), os.stat(p).st_mode & 0o7777)
+                if os.path.islink(p): out[rel(p)] = ("link", os.readlink(p)); continue
+                with open(p, "rb") as fh: out[rel(p)] = (fh.read(), os.stat(p).st_mode & 0o7777)
         return out
 
     def tmp_leftovers(self):

@@ -7,7 +7,7 @@ import unittest
 from unittest import mock
 
 import server
-from testkit import Fixture
+from testkit import Fixture, link
 
 
 class Faults(Fixture):
@@ -73,7 +73,7 @@ class Faults(Fixture):
         self.assertEqual((self.snapshot(), server._undo), (mid, []))
 
     def test_symlink_alias_of_the_same_note_counts_as_a_duplicate(self):
-        os.symlink(self.a, os.path.join(self.notes, "2026-10-09-alias.md"))
+        link(self.a, os.path.join(self.notes, "2026-10-09-alias.md"))
         self.post("/api/batch", {"files": ["2026-10-01-a.md", "2026-10-09-alias.md"], "action": "kill"}, ok=False)
         self.assertEqual(server._undo, [])
 
@@ -174,15 +174,15 @@ class Faults(Fixture):
         raw = b"# Cafe \xe9\r\n\r\n- date: 2026-10-04\r\n- status: open\r\n- type: research\r\n\r\n## Notes\r\n\r\nline\r\n"
         path = os.path.join(self.notes, "2026-10-04-crlf.md")
         with open(path, "wb") as fh: fh.write(raw)
-        os.chmod(path, 0o640)
+        os.chmod(path, 0o640); mode = os.stat(path).st_mode & 0o7777  # 0o640, or 0o666 on Windows (no Unix bits there)
         self.post("/api/action", {"file": "2026-10-04-crlf.md", "action": "keep", "note": "go"})
         with open(path, "rb") as fh: got = fh.read()
         self.assertIn(b"- status: cooking\r\n", got); self.assertIn(b"Cafe \xe9\r\n", got)
         self.assertNotIn(b"\n", got.replace(b"\r\n", b""))  # no lone LF crept in
-        self.assertEqual(os.stat(path).st_mode & 0o7777, 0o640)
+        self.assertEqual(os.stat(path).st_mode & 0o7777, mode)
         self.post("/api/undo", {})
         with open(path, "rb") as fh: self.assertEqual(fh.read(), raw)
-        self.assertEqual(os.stat(path).st_mode & 0o7777, 0o640)
+        self.assertEqual(os.stat(path).st_mode & 0o7777, mode)
 
     def test_killed_crlf_note_keeps_its_line_endings_in_done(self):
         path = os.path.join(self.notes, "2026-10-04-crlf.md")
@@ -249,7 +249,7 @@ class UndoContainment(Fixture):
 
     def swap_for_link(self, path, target):
         """Rename the real folder/file `path` to `target` (outside the roots) and leave a symlink with its old name."""
-        os.rename(path, target); os.symlink(target, path)
+        os.rename(path, target); link(target, path)
 
     def assertRefused(self, snapshot, msg="symlink"):
         n = len(server._undo)
@@ -276,7 +276,7 @@ class UndoContainment(Fixture):
 
     def test_undo_refuses_when_the_file_itself_was_swapped_for_a_link_with_identical_content(self):
         p = self.shipped_demo(); copy = os.path.join(self.outside, "NOTES.md")
-        os.replace(p + "/NOTES.md", copy); os.symlink(copy, p + "/NOTES.md")
+        os.replace(p + "/NOTES.md", copy); link(copy, p + "/NOTES.md")
         before = self.snapshot(self.outside)
         r = self.post("/api/undo", {}, ok=False); self.assertIn("symlink", r["error"])
         self.assertEqual((self.snapshot(self.outside), len(server._undo)), (before, 1)); self.assertTrue(os.path.islink(p + "/NOTES.md"))
@@ -289,7 +289,7 @@ class UndoContainment(Fixture):
 
     def test_undo_of_a_move_refuses_a_dangling_link_where_the_source_was(self):
         a = self.note("2026-10-01-a.md", "A"); self.post("/api/action", {"file": "2026-10-01-a.md", "action": "kill", "note": "x"})
-        os.symlink(os.path.join(self.outside, "nowhere"), a); before = self.snapshot()
+        link(os.path.join(self.outside, "nowhere"), a); before = self.snapshot()
         self.assertRefused(before)
         self.assertTrue(os.path.islink(a)); self.assertEqual(os.listdir(self.outside), [])
 
@@ -345,7 +345,7 @@ class UndoContainment(Fixture):
         def inverse(op):
             calls.append(op)
             if len(calls) == 2:  # d2 was put back; now d2 is swapped for a link and the next step fails
-                os.rename(d2, d2 + ".real"); os.symlink(decoy, d2); raise OSError(5, "simulated")
+                os.rename(d2, d2 + ".real"); link(decoy, d2); raise OSError(5, "simulated")
             return real(op)
         with mock.patch.object(server, "_apply_inverse", inverse):
             r = self.post("/api/undo", {}, ok=False)

@@ -11,7 +11,7 @@ from unittest import mock
 
 import safefs
 import server
-from testkit import Fixture
+from testkit import Fixture, WINDOWS, link
 
 
 class Containment(Fixture):
@@ -22,7 +22,7 @@ class Containment(Fixture):
         self.addCleanup(__import__("shutil").rmtree, self.outside, ignore_errors=True)
         with open(os.path.join(self.outside, "NOTES.md"), "w") as fh: fh.write("# Out\n\n- status: promoted\n- due: 2026-12-01\n\n- definition of done: Safe.\n")
         os.makedirs(os.path.join(self.tmp, "active"))
-        self.link = os.path.join(self.tmp, "active", "linked"); os.symlink(self.outside, self.link)
+        self.link = os.path.join(self.tmp, "active", "linked"); link(self.outside, self.link)
         self.before_outside = self.snapshot(self.outside)
 
     def assertOutsideUntouched(self):
@@ -42,14 +42,14 @@ class Containment(Fixture):
         self.assertEqual((d["abs_path"], d["linked"], d["done"]["text"]), (self.link, True, "Safe."))
 
     def test_symlinked_project_file_inside_a_real_folder_is_refused(self):
-        real = self.project("real"); os.symlink(os.path.join(self.outside, "NOTES.md"), os.path.join(real, "NOTES.md"))
+        real = self.project("real"); link(os.path.join(self.outside, "NOTES.md"), os.path.join(real, "NOTES.md"))
         self.post("/api/project/status", {"name": "real", "action": "shipped"}, ok=False)
         self.post("/api/done", {"name": "real", "text": "Hacked", "expected": "Safe."}, ok=False)
         self.assertOutsideUntouched()
 
     def test_symlinked_active_folder_blocks_promotion_and_rolls_back(self):
         real_active = os.path.join(self.tmp, "active"); moved = os.path.join(self.outside, "elsewhere"); os.makedirs(moved)
-        os.rename(real_active, moved + "/active-real"); os.symlink(moved, real_active)
+        os.rename(real_active, moved + "/active-real"); link(moved, real_active)
         self.note("2026-10-01-a.md", "A"); before = self.snapshot()
         r = self.post("/api/action", {"file": "2026-10-01-a.md", "action": "promote", "dest": "active", "note": "Ships.", "due_days": 3}, ok=False)
         self.assertIn("symlink", r["error"])
@@ -57,7 +57,7 @@ class Containment(Fixture):
         self.assertEqual(os.listdir(moved), ["active-real"])
 
     def test_symlinked_notes_cannot_be_decided_or_listed_when_they_point_outside(self):
-        os.symlink(os.path.join(self.outside, "NOTES.md"), os.path.join(self.notes, "2026-10-01-link.md"))
+        link(os.path.join(self.outside, "NOTES.md"), os.path.join(self.notes, "2026-10-01-link.md"))
         self.assertEqual([n["file"] for n in self.get("/api/notes")["live"]], [])  # not read, not shown
         self.post("/api/action", {"file": "2026-10-01-link.md", "action": "kill"}, ok=False)
         self.post("/api/batch", {"files": ["2026-10-01-link.md"], "action": "kill"}, ok=False)
@@ -65,12 +65,12 @@ class Containment(Fixture):
         self.assertOutsideUntouched()
 
     def test_symlinked_note_to_another_note_inside_is_readable_but_not_writable(self):
-        self.note("2026-10-01-real.md", "Real"); os.symlink("2026-10-01-real.md", os.path.join(self.notes, "2026-10-02-alias.md"))
+        self.note("2026-10-01-real.md", "Real"); link("2026-10-01-real.md", os.path.join(self.notes, "2026-10-02-alias.md"))
         self.assertEqual(self.get("/api/note?f=2026-10-02-alias.md")["text"][:6], "# Real")
         self.post("/api/action", {"file": "2026-10-02-alias.md", "action": "kill"}, ok=False)
 
     def test_symlinked_done_folder_is_refused(self):
-        self.note("2026-10-01-a.md", "A"); os.symlink(self.outside, os.path.join(self.notes, "done"))
+        self.note("2026-10-01-a.md", "A"); link(self.outside, os.path.join(self.notes, "done"))
         self.post("/api/action", {"file": "2026-10-01-a.md", "action": "kill"}, ok=False)
         self.assertOutsideUntouched(); self.assertTrue(os.path.exists(os.path.join(self.notes, "2026-10-01-a.md")))
 
@@ -79,14 +79,14 @@ class Containment(Fixture):
 
     def test_ensure_inside_rules(self):
         root = os.path.join(self.tmp, "root"); os.makedirs(root + "/a")
-        os.symlink(self.outside, root + "/out")
-        ok = lambda p: safefs.ensure_inside([root], p)
-        self.assertEqual(ok(root + "/a/new.md"), root + "/a/new.md")
-        self.assertEqual(ok(root + "/a/../a/x.md"), root + "/a/x.md")
+        link(self.outside, root + "/out")
+        ok = lambda p: safefs.ensure_inside([root], p); n = os.path.normpath  # `\` on Windows
+        self.assertEqual(ok(root + "/a/new.md"), n(root + "/a/new.md"))
+        self.assertEqual(ok(root + "/a/../a/x.md"), n(root + "/a/x.md"))
         for bad in (root + "/out/x.md", root + "/out", root + "/../x", self.tmp, "/etc/passwd", root + "/a/../../x"):
             with self.assertRaises(ValueError, msg=bad): ok(bad)
-        link_root = os.path.join(self.tmp, "linkroot"); os.symlink(root, link_root)
-        self.assertEqual(safefs.ensure_inside([link_root], link_root + "/a/x.md"), link_root + "/a/x.md")  # the root itself may be a link
+        link_root = os.path.join(self.tmp, "linkroot"); link(root, link_root)
+        self.assertEqual(safefs.ensure_inside([link_root], link_root + "/a/x.md"), n(link_root + "/a/x.md"))  # the root itself may be a link
 
 
 REAL_OPEN = server.open_path
@@ -116,9 +116,10 @@ class OpenEndpoint(Fixture):
         self.assertEqual(self.opened, [])
 
     def test_refuses_a_symlinked_project_folder(self):
-        os.symlink(self.tmp, os.path.join(self.tmp, "active", "ln"))
+        link(self.tmp, os.path.join(self.tmp, "active", "ln"))
         self.post("/api/open", {"name": "ln", "kind": "active"}, ok=False); self.assertEqual(self.opened, [])
 
+    @unittest.skipIf(WINDOWS, "xdg-open is the Linux opener; Windows uses os.startfile")
     def test_the_launcher_command_is_one_absolute_operand_without_a_shell(self):
         weird = "/tmp/x y;rm -rf $(id) -n"
         self.assertEqual(server.open_argv(weird), ["xdg-open", weird])
@@ -130,13 +131,25 @@ class OpenEndpoint(Fixture):
         args, kw = popen.call_args
         self.assertEqual(args[0], ["xdg-open", weird]); self.assertFalse(kw.get("shell"))
 
+    @unittest.skipIf(WINDOWS, "a #!/bin/sh stub can't run on Windows")
     def test_an_opener_that_fails_at_once_is_reported_not_swallowed(self):
         stub = os.path.join(self.tmp, "failing-opener"); fh = open(stub, "w"); fh.write("#!/bin/sh\necho 'no handler' >&2\nexit 3\n"); fh.close(); os.chmod(stub, 0o755)
         with mock.patch.object(server, "open_argv", return_value=[stub, "/tmp"]):
             with self.assertRaises(OSError) as cm: REAL_OPEN("/tmp")
         self.assertIn("status 3", str(cm.exception)); self.assertIn("no handler", str(cm.exception))
+
+    def test_a_failed_open_names_the_opener(self):
         with mock.patch.object(server, "open_path", side_effect=OSError("it exited with status 3")):
-            self.assertIn("couldn't launch xdg-open", self.post("/api/open", {"name": "demo", "kind": "active"}, ok=False)["error"])
+            self.assertIn(f"couldn't launch {server.OPENER}", self.post("/api/open", {"name": "demo", "kind": "active"}, ok=False)["error"])
+
+    @unittest.skipUnless(WINDOWS, "the Windows opener")
+    def test_windows_hands_one_absolute_path_to_the_shell_and_reports_a_failure(self):
+        with mock.patch.object(os, "startfile") as startfile: REAL_OPEN(self.tmp)
+        startfile.assert_called_once_with(self.tmp)
+        for bad in ("-n", "relative\\dir", ""):
+            with self.assertRaises(ValueError, msg=bad): REAL_OPEN(bad)
+        with mock.patch.object(os, "startfile", side_effect=OSError("No application is associated")):
+            with self.assertRaises(OSError): REAL_OPEN(self.tmp)
 
 
 @unittest.skipUnless(os.path.exists("/usr/bin/xdg-open"), "the installed xdg-open is the contract")
@@ -223,7 +236,7 @@ class Restart(Fixture):
 
     def test_stop_server_signals_a_real_triage_process_with_term_only(self):
         d = os.path.join(self.tmp, "app"); os.makedirs(d)
-        with open(os.path.join(d, "server.py"), "w") as fh: fh.write('"""rawnotes-triage — local website"""\nimport time; time.sleep(60)\n')
+        with open(os.path.join(d, "server.py"), "w", encoding="utf-8") as fh: fh.write('"""rawnotes-triage — local website"""\nimport time; time.sleep(60)\n')
         child = subprocess.Popen([sys.executable, "server.py"], cwd=d); self.addCleanup(child.kill)
         for _ in range(50):
             if server.is_triage_process(child.pid): break

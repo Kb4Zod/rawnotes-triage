@@ -33,13 +33,14 @@ import safefs
 from notemeta import (field, set_field, drop_field, title_of, append_outcome, question_of, question_summary, note_body,
                       eol_of, with_eol, to_lf, header_lines, title_index, HEAD_LINE)
 
-VERSION = "2.12"  # bump on every change; history in CHANGELOG.md
+VERSION = "2.13"  # bump on every change; history in CHANGELOG.md
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOG_PATH = os.path.join(HERE, "triage.log")
 FONT_RE = re.compile(r"^/static/fonts/[A-Za-z0-9-]+\.woff2$")
 APP_PATH = "/triage"  # --app opens the page here: the path gives the window its own class, for a Hyprland rule
 ICONS = {"/static/icons/icon-256.png": "icon-256.png", "/apple-touch-icon.png": "apple-touch-icon.png"}  # page favicon, phone home screen, app launcher
 DEFAULT_NOTES = os.path.expanduser("~/Projects/RawNotes")
+WINDOWS = os.name == "nt"
 NOTES = DEFAULT_NOTES
 NOTES_SOURCE = "default"  # where NOTES came from: "flag" (--notes), "config" (chosen in the first-run dialog) or "default"
 PROJECTS = None
@@ -72,6 +73,11 @@ def read_note(path):
 
 def _within(path, root): return path == root or path.startswith(root.rstrip(os.sep) + os.sep)
 
+def api_rel(path, root):
+    """`path` relative to `root` the way the page, the log and a note's Outcome spell it: always with `/`, also on
+    Windows (where os.path.relpath gives `\\` and the page's paths would never match the server's)."""
+    return os.path.relpath(path, root).replace(os.sep, "/")
+
 def _summary_core(path, sub):
     fname = os.path.basename(path)
     with open(path, "rb") as fh: text = to_lf(fh.read().decode("utf-8", "replace"))
@@ -92,7 +98,7 @@ def fate_of(text):
     """How a note in done/ ended up: promoted / reference / killed / merged, and where it went."""
     out = text.split("## Outcome", 1)[1] if "## Outcome" in text else ""
     dest = re.findall(r"->\s*`(?:\.\./)?([^`]+)`", out)
-    dest = dest[-1] if dest else ""
+    dest = dest[-1].replace("\\", "/") if dest else ""  # a note promoted on Windows before 2.13 recorded `\`
     status = field(text, "status")
     if status == "merged" or "**Merged" in out: fate = "merged"
     elif status == "dead": fate = "killed"
@@ -110,7 +116,7 @@ def _scan(d, sub):
     for f in names:
         p = os.path.join(d, f)
         try:
-            if os.path.islink(p) and not _within(os.path.realpath(p), root): continue
+            if safefs.is_link(p) and not _within(os.path.realpath(p), root): continue
             out.append(summarize(p, sub))
         except OSError: continue
     return out
@@ -150,8 +156,8 @@ def inflight():
                 if not due and not open_ended: continue
                 try: left = (dt.date.fromisoformat(due) - today()).days if due else None
                 except ValueError: left = None
-                rel = os.path.relpath(p, PROJECTS)
-                out.append({"path": rel, "title": m["title"], "project": rel.split(os.sep)[1] if rel.count(os.sep) >= 2 else "",
+                rel = api_rel(p, PROJECTS)
+                out.append({"path": rel, "title": m["title"], "project": rel.split("/")[1] if rel.count("/") >= 2 else "",
                             "dest": dest, "promoted": m["promoted"], "due": due,
                             "days_left": left, "open_ended": open_ended, "status": m["status"],
                             "done": m["status"] in CLOSED})
@@ -282,7 +288,7 @@ def project_folders():
             status, defined = project_facts(full)
             out.append({"name": name, "kind": kind, "path": f"{kind}/{name}", "abs_path": full,
                         "repo": os.path.exists(os.path.join(full, ".git")), "status": status, "done_defined": defined,
-                        "linked": os.path.islink(full) or os.path.islink(base)})
+                        "linked": safefs.is_link(full) or safefs.is_link(base)})
     return out
 
 def project_dir(name, kind=None, write=False):
@@ -353,7 +359,7 @@ def project_detail(name, kind=None):
     result = {"name": name, "kind": kind, "path": f"{kind}/{name}", "abs_path": path, "summary": "No README or project notes yet.",
               "summary_source": None, "commits": [], "features": [], "prs": [],
               "pr_status": "No Git repository in this project.", "branch": "", "remote": "", "repo": "", "gh": {"git": False, "repo": "", "pushed": False, "unpushed": 0},
-              "linked": os.path.islink(path), "done": definition_of_done(path)}
+              "linked": safefs.is_link(path), "done": definition_of_done(path)}
     files = {f.lower(): f for f in sorted(os.listdir(path))}
     for candidate in ("readme.md", "readme.rst", "readme.txt", "readme", "notes.md"):
         if candidate not in files: continue
@@ -1022,7 +1028,7 @@ def _act(req, tx):
             "- first step:\n" + ("- ship / stop check-in: on the due date, either ship it or kill it\n" if due else
                                  "- check-in: when done means is met, mark it shipped; if it stalls, kill it\n"))
     tx.write(target, copy, eol)
-    rel = os.path.relpath(target, PROJECTS)
+    rel = api_rel(target, PROJECTS)
     # original capture: mark promoted, record destination, move to done/
     text = set_field(text, "status", "promoted")
     text = append_outcome(text, f"**Promoted {t}** -> `../{rel}`" + (f" ({note})" if note and action == 'reference' else ""))
@@ -1246,10 +1252,16 @@ def in_own_scope(argv):
         return ["systemd-run", "--user", "--scope", "--quiet", "--collect", *argv]
     return argv
 
+OPENER = "Explorer" if WINDOWS else "xdg-open"  # named in the error when opening fails
+
 def open_path(path):
     """Hand a validated path to the desktop's opener. No shell, one absolute operand. If the opener fails at once
     (it can't parse its arguments, or finds no handler) that is reported instead of swallowed; one that keeps
-    running (it launched something) is left alone."""
+    running (it launched something) is left alone. On Windows the shell's own "open" (Explorer for a folder, the
+    app associated with .md for a note) does the job; no file association raises OSError, reported the same way."""
+    if WINDOWS:
+        if not os.path.isabs(path): raise ValueError("only an absolute path can be opened")
+        os.startfile(path); return
     with tempfile.TemporaryFile() as err:
         proc = subprocess.Popen(in_own_scope(open_argv(path)), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=err, start_new_session=True)
         try: code = proc.wait(timeout=1.5)
@@ -1355,7 +1367,7 @@ class H(BaseHTTPRequestHandler):
                 if self.client_address[0] not in ("127.0.0.1", "::1", "::ffff:127.0.0.1"): raise ValueError("Open only works from the machine running the server.")
                 target = open_target(req)
                 try: open_path(target)
-                except OSError as e: raise OSError(f"couldn't launch xdg-open: {e}")
+                except OSError as e: raise OSError(f"couldn't launch {OPENER}: {e}")
                 return self._send(200, {"ok": True})
             self._send(404, {"error": "not found"})
         except Exception as e: self._fail(e)
@@ -1381,13 +1393,37 @@ def running_server(port):
     except (OSError, ValueError): return None
 
 def port_pid(port):
+    if WINDOWS:  # netstat -ano: "TCP  127.0.0.1:8765  0.0.0.0:0  LISTENING  26948"
+        try: out = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True, timeout=10).stdout
+        except (OSError, subprocess.TimeoutExpired): return None
+        m = re.search(rf"^\s*TCP\s+\S+:{int(port)}\s+\S+\s+LISTENING\s+(\d+)\s*$", out, re.M); return int(m.group(1)) if m else None
     try: out = subprocess.run(["ss", "-ltnpH", f"sport = :{port}"], capture_output=True, text=True, timeout=5).stdout
     except (OSError, subprocess.TimeoutExpired): return None
     m = re.search(r"pid=(\d+)", out); return int(m.group(1)) if m else None
 
+def windows_cmdline(pid):
+    """The argv of `pid` on Windows (from CIM; there is no /proc), or None if it can't be read."""
+    try:
+        r = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+                            f"(Get-CimInstance Win32_Process -Filter 'ProcessId={int(pid)}').CommandLine"],
+                           capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired, ValueError, TypeError): return None
+    line = r.stdout.strip()
+    return [q or bare for q, bare in re.findall(r'"([^"]*)"|(\S+)', line)] if r.returncode == 0 and line else None
+
 def is_triage_process(pid):
     """Is `pid` a rawnotes-triage server? Looks at its command line (a server.py whose first lines name this app);
-    unreadable or anything else counts as no."""
+    unreadable or anything else counts as no. On Windows another process's working folder can't be read, so a
+    relative `server.py` (the usual `python server.py`) is taken on its name; an absolute one is still opened and checked."""
+    if WINDOWS:
+        args = windows_cmdline(pid) or []
+        for a in args[1:4]:
+            if os.path.basename(a) != "server.py": continue
+            if not os.path.isabs(a): return True
+            try:
+                with open(a, "rb") as fh: return b"rawnotes-triage" in fh.read(400)
+            except OSError: return False
+        return False
     try:
         with open(f"/proc/{int(pid)}/cmdline", "rb") as fh: args = [a.decode("utf-8", "replace") for a in fh.read().split(b"\0") if a]
         cwd = os.readlink(f"/proc/{int(pid)}/cwd")
@@ -1412,7 +1448,7 @@ def stop_server(info, port):
     for _ in range(50):
         if running_server(port) is None: return pid
         time.sleep(0.1)
-    raise SystemExit(f"rawtriage-web: pid {pid} didn't stop; try kill {pid}")
+    raise SystemExit(f"rawtriage-web: pid {pid} didn't stop; try " + (f"taskkill /PID {pid}" if WINDOWS else f"kill {pid}"))
 
 SERVICE = "rawtriage-web.service"  # the systemd user unit install-webapp.sh installs
 

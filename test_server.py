@@ -13,6 +13,7 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 
 import server
+import testkit
 
 
 class ApiTestCase(unittest.TestCase):
@@ -69,7 +70,7 @@ class ApiTestCase(unittest.TestCase):
         active_dir = os.path.join(self.tmp, "active")
         os.makedirs(active_dir)
         link = os.path.join(active_dir, "linked")
-        os.symlink(real_target, link)
+        testkit.link(real_target, link)
 
         projects = self.get("/api/projects")["projects"]
         p = next(x for x in projects if x["name"] == "linked")
@@ -333,7 +334,7 @@ class ApiTestCase(unittest.TestCase):
     def test_set_done_will_not_write_through_a_symlink_out_of_the_project(self):
         self.make_project("l"); outside = os.path.join(self.tmp, "outside.md")
         with open(outside, "w") as f: f.write("- definition of done: Safe\n")
-        os.symlink(outside, os.path.join(self.tmp, "active", "l", "NOTES.md"))
+        testkit.link(outside, os.path.join(self.tmp, "active", "l", "NOTES.md"))
         self.assertEqual(self.post_done("l", "Hacked", "Safe")[0], 400)
         self.assertEqual(open(outside).read(), "- definition of done: Safe\n")
 

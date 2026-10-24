@@ -8,6 +8,12 @@
 import contextlib, os, stat, threading, time
 
 
+def is_link(path):
+    """A symlink, or on Windows a junction: the link anyone can make there without admin rights, which
+    os.path.islink doesn't report. Both can point anywhere, so both count as links."""
+    return os.path.islink(path) or getattr(os.path, "isjunction", lambda p: False)(path)
+
+
 def ensure_inside(roots, path):
     """The normalised absolute `path`, if it lies under one of `roots` and neither it nor any folder between the
     root and it is a symlink. The root itself may be a symlink (that is the user's own choice).
@@ -22,7 +28,7 @@ def ensure_inside(roots, path):
     cur = best
     for part in [p for p in path[len(best):].split(os.sep) if p]:
         cur = os.path.join(cur, part)
-        if os.path.islink(cur): raise ValueError(f"refusing to write through a symlink ({os.path.basename(cur)})")
+        if is_link(cur): raise ValueError(f"refusing to write through a symlink ({os.path.basename(cur)})")
     return path
 
 
