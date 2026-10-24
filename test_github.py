@@ -44,6 +44,10 @@ class GithubSignIn(Fixture):
         self.assertEqual(self.get("/api/github?refresh=1")["state"], "unavailable")
         with mock.patch.object(server.shutil, "which", lambda n: None):
             self.assertEqual(self.get("/api/github?refresh=1")["state"], "no_gh")
+            os.makedirs(server.CONFIG_DIR, exist_ok=True); self.write_token()  # a saved token can still be removed
+            self.assertEqual(self.get("/api/github?refresh=1")["source"], "token")
+        with mock.patch.object(server, "_gh", lambda *a, **k: "[]"):  # a JSON answer that isn't an object
+            self.assertEqual(self.get("/api/github?refresh=1")["state"], "unavailable")
 
     def test_status_is_cached_until_refresh(self):
         calls = self.stub_gh({"": "me"})

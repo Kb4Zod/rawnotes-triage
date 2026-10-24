@@ -454,11 +454,11 @@ def github_status(refresh=False):
         if _gh_status["data"] and not refresh and time.time() - _gh_status["at"] < STATUS_TTL: return _gh_status["data"]
     source = "token" if saved_token() else "environment" if (os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")) else "gh"
     out = {"state": "signed_in", "login": "", "source": source}
-    if not shutil.which("gh"): out.update(state="no_gh", source="", error="The GitHub CLI (gh) is not installed.")
+    if not shutil.which("gh"): out.update(state="no_gh", source="token" if source == "token" else "", error="The GitHub CLI (gh) is not installed.")
     else:
         try:
             out["login"] = json.loads(_gh(["api", "user"], timeout=15))["login"]; _viewer["login"] = out["login"]
-        except (ValueError, KeyError): out.update(state="unavailable", error="unexpected answer from GitHub")
+        except (ValueError, KeyError, TypeError): out.update(state="unavailable", error="unexpected answer from GitHub")
         except RuntimeError as e:
             msg = str(e); low = msg.lower()
             bad = any(k in low for k in ("gh auth login", "not logged", "http 401", "bad credentials", "authentication", "gh_token"))
@@ -474,7 +474,7 @@ def set_github_token(req):
     token = token.strip()
     if not shutil.which("gh"): raise ValueError("The GitHub CLI (gh) is not installed; install it first.")
     try: login = json.loads(_gh(["api", "user"], timeout=15, token=token))["login"]
-    except (ValueError, KeyError): raise ValueError("unexpected answer from GitHub")
+    except (ValueError, KeyError, TypeError): raise ValueError("unexpected answer from GitHub")
     except RuntimeError as e:
         raise ValueError("GitHub rejected that token." if any(k in str(e).lower() for k in ("401", "bad credentials", "gh_token")) else str(e))
     os.makedirs(CONFIG_DIR, mode=0o700, exist_ok=True); os.chmod(CONFIG_DIR, 0o700)  # makedirs leaves an existing folder as it was

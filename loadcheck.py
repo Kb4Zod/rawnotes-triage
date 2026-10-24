@@ -13,7 +13,8 @@ HERE = pathlib.Path(__file__).resolve().parent
 
 
 def start(root, port):
-    env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "GH_CONFIG_DIR": str(root / "gh"), "GH_TOKEN": "", "GITHUB_TOKEN": ""}
+    env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "GH_CONFIG_DIR": str(root / "gh"), "GH_TOKEN": "", "GITHUB_TOKEN": "",
+           "RAWTRIAGE_CONFIG_DIR": str(root / "config")}  # nor a token saved through the page
     p = subprocess.Popen([sys.executable, str(HERE / "server.py"), "--notes", str(root / "RawNotes"), "--log", str(root / "actions.log"),
                           "--port", str(port), "--no-browser"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(100):
