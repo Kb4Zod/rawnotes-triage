@@ -368,7 +368,7 @@ def project_detail(name, kind=None):
     def run(args, timeout=5):
         try:
             proc = subprocess.run(args, cwd=path, capture_output=True, text=True, timeout=timeout,
-                                  env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "GH_PROMPT_DISABLED": "1"})
+                                  env={**(gh_env() if args[0] == "gh" else os.environ), "GIT_TERMINAL_PROMPT": "0", "GH_PROMPT_DISABLED": "1"})
             return proc.stdout.strip() if proc.returncode == 0 else None
         except (OSError, subprocess.TimeoutExpired): return None
     result["gh"] = github_state(path)
@@ -419,15 +419,19 @@ def saved_token():
     """The token saved through the page, or '' (none saved, or unreadable)."""
     try:
         with open(token_path(), encoding="utf-8") as fh: return fh.read().strip()
-    except OSError: return ""
+    except (OSError, ValueError): return ""  # ValueError: not UTF-8
+
+def gh_env(token=None):
+    """The environment every gh process gets: never prompts, and signed in as the saved token if there is one
+    (GH_TOKEN, never on the command line)."""
+    token = token or saved_token()
+    return {**os.environ, "GH_PROMPT_DISABLED": "1", **({"GH_TOKEN": token} if token else {})}
 
 def _gh(args, timeout=25, token=None):
     """Run the gh CLI and return stdout. Signed in as the token saved through the page if there is one (given to gh in
     its environment, never on the command line), otherwise as gh itself. Read-only use: callers only issue GETs and queries."""
-    token = token or saved_token()
     try:
-        proc = subprocess.run(["gh"] + args, capture_output=True, text=True, timeout=timeout,
-                              env={**os.environ, "GH_PROMPT_DISABLED": "1", **({"GH_TOKEN": token} if token else {})})
+        proc = subprocess.run(["gh"] + args, capture_output=True, text=True, timeout=timeout, env=gh_env(token))
     except FileNotFoundError: raise RuntimeError("gh is not installed")
     except subprocess.TimeoutExpired: raise RuntimeError("GitHub took too long to answer")
     if proc.returncode != 0:
@@ -473,7 +477,7 @@ def set_github_token(req):
     except (ValueError, KeyError): raise ValueError("unexpected answer from GitHub")
     except RuntimeError as e:
         raise ValueError("GitHub rejected that token." if any(k in str(e).lower() for k in ("401", "bad credentials", "gh_token")) else str(e))
-    os.makedirs(CONFIG_DIR, mode=0o700, exist_ok=True)
+    os.makedirs(CONFIG_DIR, mode=0o700, exist_ok=True); os.chmod(CONFIG_DIR, 0o700)  # makedirs leaves an existing folder as it was
     tmp = token_path() + ".new"
     with contextlib.suppress(FileNotFoundError): os.unlink(tmp)
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -1263,7 +1267,10 @@ class H(BaseHTTPRequestHandler):
             if path == "/api/restore": return self._send(200, restore(req))
             if path == "/api/project/status": return self._send(200, project_status(req))
             if path in ("/api/github/token", "/api/github/token/remove"):
-                if self.client_address[0] not in ("127.0.0.1", "::1", "::ffff:127.0.0.1"): raise ValueError("The GitHub sign-in can only be changed from the machine running the server.")
+                # the peer and the Host name: on a --host 0.0.0.0 bind a rebound DNS name would otherwise pass as this machine
+                if (self.client_address[0] not in ("127.0.0.1", "::1", "::ffff:127.0.0.1")
+                        or urlparse("//" + self.headers.get("Host", "")).hostname not in ("127.0.0.1", "localhost", "::1")):
+                    raise ValueError("The GitHub sign-in can only be changed from the machine running the server.")
                 return self._send(200, set_github_token(req) if path == "/api/github/token" else remove_github_token())
             if path == "/api/undo": return self._send(200, undo())
             if path == "/api/done": return self._send(200, set_done(req.get("name", ""), req.get("text", ""), req.get("expected", ""), req.get("kind")))

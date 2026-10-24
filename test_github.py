@@ -24,8 +24,7 @@ class GithubSignIn(Fixture):
             r = answers[token]
             if isinstance(r, Exception): raise r
             return json.dumps({"login": r})
-        for target, val in (("_gh", fake), ):
-            p = mock.patch.object(server, target, val); p.start(); self.addCleanup(p.stop)
+        p = mock.patch.object(server, "_gh", fake); p.start(); self.addCleanup(p.stop)
         p = mock.patch.object(server.shutil, "which", lambda n: "/usr/bin/gh"); p.start(); self.addCleanup(p.stop)
         for var in ("GH_TOKEN", "GITHUB_TOKEN"):
             p = mock.patch.dict(os.environ); p.start(); self.addCleanup(p.stop); os.environ.pop(var, None)
@@ -92,15 +91,48 @@ class GithubSignIn(Fixture):
         with mock.patch.object(server.subprocess, "run", run): server._gh(["api", "user"], token=TOKEN)
         self.assertEqual(seen["env"]["GH_TOKEN"], TOKEN); self.assertNotIn(TOKEN, " ".join(seen["cmd"]))
 
+    def remove_as(self, peer, host):
+        """POST /api/github/token/remove as if from peer with that Host header; returns (code, body)."""
+        h = server.H.__new__(server.H); h.client_address = (peer, 1)
+        sent = []; h._send = lambda code, body, *a: sent.append((code, body))
+        h.headers = {"Host": host, "Content-Type": "application/json", "Content-Length": "2"}
+        h.rfile = mock.Mock(read=lambda n: b'{}'); h.path = "/api/github/token/remove"
+        h.do_POST(); return sent[0]
+
     def test_only_this_machine_may_change_the_sign_in(self):
         self.stub_gh({"": "me", TOKEN: "t"})
-        h = server.H.__new__(server.H); h.client_address = ("192.168.1.9", 1)
-        sent = []; h._send = lambda code, body, *a: sent.append((code, body))
-        h.headers = {"Host": "127.0.0.1", "Content-Type": "application/json", "Content-Length": "2"}
-        h.rfile = mock.Mock(read=lambda n: b'{}'); h.path = "/api/github/token/remove"
         os.makedirs(server.CONFIG_DIR, exist_ok=True); self.write_token()
-        h.do_POST()
-        self.assertEqual(sent[0][0], 400); self.assertTrue(os.path.exists(server.token_path()))
+        p = mock.patch.object(server, "BIND_HOST", "0.0.0.0"); p.start(); self.addCleanup(p.stop)
+        for peer, host in (("192.168.1.9", "192.168.1.5:8765"),   # a phone on the network
+                           ("127.0.0.1", "evil.example:8765")):   # a page whose DNS name was rebound to this machine
+            code, body = self.remove_as(peer, host)
+            self.assertEqual(code, 400); self.assertIn("only be changed from the machine", body["error"])
+            self.assertTrue(os.path.exists(server.token_path()))
+        self.assertEqual(self.remove_as("127.0.0.1", "localhost:8765")[0], 200)  # the browser on this machine may
+        self.assertFalse(os.path.exists(server.token_path()))
+
+    def test_unreadable_token_file_falls_back_to_gh(self):
+        os.makedirs(server.CONFIG_DIR, exist_ok=True)
+        with open(server.token_path(), "wb") as fh: fh.write(b"\xff\xfe not utf-8")
+        self.assertEqual(server.saved_token(), "")
+
+    def test_an_existing_loose_config_folder_is_tightened(self):
+        self.stub_gh({"": "me", TOKEN: "tokenuser"})
+        os.makedirs(server.CONFIG_DIR); os.chmod(server.CONFIG_DIR, 0o755)
+        self.post("/api/github/token", {"token": TOKEN})
+        self.assertEqual(stat.S_IMODE(os.stat(server.CONFIG_DIR).st_mode), 0o700)
+
+    def test_project_pull_requests_use_the_saved_token(self):
+        os.makedirs(os.path.join(self.project("repo"), ".git"))
+        os.makedirs(server.CONFIG_DIR, exist_ok=True); self.write_token()
+        envs = {}
+        def run(cmd, **kw):
+            envs.setdefault(cmd[0], kw.get("env") or {})
+            out = "git@github.com:me/repo.git" if cmd[:3] == ["git", "remote", "get-url"] else "[]" if cmd[0] == "gh" else ""
+            return mock.Mock(returncode=0, stdout=out, stderr="")
+        with mock.patch.object(server.subprocess, "run", run): server.project_detail("repo", "active")
+        self.assertEqual(envs["gh"].get("GH_TOKEN"), TOKEN)
+        self.assertNotIn(TOKEN, envs["git"].values())  # git never sees it
 
 
 if __name__ == "__main__": unittest.main()

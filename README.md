@@ -298,7 +298,9 @@ localhost bind, requests whose `Host` is not localhost are refused; on any
 bind, a request from another origin and a non-JSON `POST` are refused.
 `/api/open` only answers a browser on the server's own machine and only for
 project folders or dated files the board lists. Saving or removing the GitHub
-token (`/api/github/token`) is likewise limited to the server's own machine.
+token (`/api/github/token`) is likewise limited to the server's own machine,
+and also needs a localhost `Host` on any bind (so a DNS-rebound page can't do it
+under `--host 0.0.0.0`).
 
 `triage.log` records every action after it has gone through, best-effort: if
 the log cannot be written, the change still happens and the Pulse decided

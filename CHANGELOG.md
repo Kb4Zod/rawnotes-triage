@@ -13,7 +13,10 @@ with every change. Versions 1.00-1.03 were numbered after the fact from git hist
   passed to `gh` as `GH_TOKEN` in the environment, never on a command line, takes precedence over `gh auth login`,
   and is never returned to the page. **Remove saved token** goes back to `gh`'s own login. Changing the sign-in
   drops the cached commit graph and repo-viewer results of the old account. `POST /api/github/token` and
-  `/api/github/token/remove` only answer a browser on the server's own machine.
+  `/api/github/token/remove` only answer a browser on the server's own machine: a loopback peer *and* a localhost
+  `Host`, on any bind, so a DNS-rebound page can't change the sign-in under `--host 0.0.0.0` either.
+- The saved token is used by every `gh` call, including the Projects page's pull-request list (one shared `gh_env`).
+  An existing config folder is tightened to `0700`; a token file that isn't UTF-8 is treated as no token.
 - README: new **GitHub sign-in** section saying plainly that `gh` is required for every GitHub feature and that
   `gh auth login` is how a person signs in; Pulse and Network sections point to it.
 - Tests: `test_github.py` (status states, token validation/permissions/environment-only, cache reset, local-only),
