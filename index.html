@@ -971,7 +971,7 @@ function openGithub(){
   $('#ghTok').focus()}
 // first run: the notes folder doesn't exist yet, so ask where it should go (the server creates it, with done/ and _template.md)
 function openSetup(st,then){
-  const parent=v=>{const t=v.trim().replace(/\/+$/,'');const i=t.lastIndexOf('/');return i>0?t.slice(0,i):''};
+  const parent=v=>{const t=v.trim().replace(/[\\/]+$/,'');const i=Math.max(t.lastIndexOf('/'),t.lastIndexOf('\\'));return i>0&&!/^[A-Za-z]:$/.test(t.slice(0,i))?t.slice(0,i):''};  // / or \ (Windows)
   const head=`<h2 id="setupH">Welcome to RawNotes Triage</h2><p>Your notes live in one folder of Markdown files. There is no folder at <code>${esc(st.notes_dir)}</code> yet.</p>`;
   showOverlay(`<div class="scrim" id="scrim"><div class="card keys" style="background:var(--solid)" role="dialog" aria-modal="true" aria-labelledby="setupH" tabindex="-1" data-sticky>${head}
   ${!isLocalPage()?`<p>Set it up on the machine running the server: open this page there (at <code>localhost</code>), then reload here.</p>

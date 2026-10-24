@@ -49,7 +49,7 @@ class FirstRun(Fixture):
 
     def test_bad_paths_are_refused_and_nothing_is_saved(self):
         afile = os.path.join(self.tmp, "afile"); open(afile, "w").close()
-        for bad in ("", "   ", "relative/notes", "/", "/top", afile, "/x\0y", 7, None):
+        for bad in ("", "   ", "relative/notes", "/", "/top", "/top/", afile, "/x\0y", 7, None):
             self.post("/api/setup", {"path": bad}, ok=False)
         self.assertFalse(os.path.exists(server.config_path()))
         self.assertEqual(server.NOTES, self.notes)

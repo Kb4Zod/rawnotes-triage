@@ -12,7 +12,8 @@ with every change. Versions 1.00-1.03 were numbered after the fact from git hist
   saved folder; `--notes` still overrides it. New `GET /api/setup` and `POST /api/setup`; the POST refuses relative
   paths, files, top-level folders (the parent becomes the projects root) and any request once a folder exists, and
   only answers a browser on the server's own machine (same check as the GitHub token routes, now shared as
-  `_this_machine`). The dialog can't be dismissed with Esc or a click outside.
+  `_this_machine`). The dialog can't be dismissed with Esc or a click outside. Windows paths (`C:\Users\you\RawNotes`)
+  work too; a folder directly under a drive or `/` is refused.
 - **The launcher installs from wherever you cloned the repo.** `install-webapp.sh` no longer assumes
   `~/Projects/active/rawnotes-triage`: it installs the checkout it is in, or, run from a linked git worktree, the main
   checkout of that repo (so the service never runs a feature branch). `systemd/rawtriage-web.service` is now a

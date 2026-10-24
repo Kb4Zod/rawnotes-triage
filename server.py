@@ -537,9 +537,9 @@ def _setup_target(raw):
     raw = raw.strip()
     if "\0" in raw or len(raw) > 4096: raise ValueError("That is not a usable folder path.")
     p = os.path.expanduser(raw)
-    if not os.path.isabs(p): raise ValueError("Use a full path, starting with / or ~ (for example ~/Projects/RawNotes).")
-    p = os.path.normpath(p)
-    if os.path.dirname(p) in ("/", p): raise ValueError("Pick a folder inside another folder (for example ~/Projects/RawNotes): "
+    if not os.path.isabs(p): raise ValueError("Use a full path, for example ~/Projects/RawNotes (or C:\\Users\\you\\RawNotes on Windows).")
+    p = os.path.normpath(p); parent = os.path.dirname(p)
+    if parent == p or os.path.dirname(parent) == parent: raise ValueError("Pick a folder inside another folder (for example ~/Projects/RawNotes): "
                                                        "projects are created next to the notes folder, so it can't sit at the top of the disk.")
     if os.path.exists(p) and not os.path.isdir(p): raise ValueError(f"{p} is a file, not a folder.")
     return p
