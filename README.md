@@ -24,6 +24,7 @@ python3 server.py --notes /tmp/copy/RawNotes --log /tmp/copy/triage.log --port 8
 python3 server.py --restart           # stop the server already on the port (e.g. an old version), start this one
 python3 server.py --app               # same, but in its own app window instead of a browser tab (Omarchy)
 python3 server.py --service           # for the systemd unit: no browser; exits with an error if the port is taken, so systemd retries
+python3 server.py --no-commit         # don't auto-commit the notes folder (see "Auto-commit" below)
 ```
 
 `bin/rawtriage-web` is a small wrapper around `python3 server.py`; every flag
@@ -233,9 +234,25 @@ after you chose the action on purpose (a click or `p` `r` `c` `x`).
 **Undo (Z):** the newest 20 changes made through the page (decisions, batch,
 merge, restore, project status, done means) can be undone, newest first,
 while the server runs. The list is in memory: a restart empties it, and there
-is no redo. Undo checks every file it would touch first and refuses, changing
+is no redo (each undo is committed like any other change; see Auto-commit). Undo checks every file it would touch first and refuses, changing
 nothing, if one has been edited since or now sits behind a symlink or outside
 the notes and projects folders.
+
+**Auto-commit:** if the notes folder is a git repo, every change made through
+the server (each decision, batch, merge, restore, and each undo) is committed
+right after it succeeds: only the notes-folder files that change touched
+(both sides of a move), with the message `triage: <what>` (e.g.
+`triage: kill “Chrome remove profiles”`, `triage: killed 3 notes`,
+`triage: undo kill “…”`) and the paths plus `via rawnotes-triage <version>` in
+the body. Anything else you have edited or staged is left as it was; hand
+edits already in a touched note go into the commit and the body names them.
+Undo is a commit of its own; history is never rewritten. Files in project
+folders (the promoted copy, project status) are not committed. If the commit
+can't happen (not a git repo, a merge or rebase in progress, `index.lock`
+present, no `user.email`, a pre-commit hook such as gitleaks refusing it) the
+change still stands and stays undoable, and the toast and stderr say why it
+wasn't committed. Hooks always run (never `--no-verify`). Turn it off with
+`--no-commit` or `"autocommit": false` in `~/.config/rawnotes-triage/config.json`.
 
 Changes are all-or-nothing: notes are checked before anything is written (a
 note listed twice, a missing one, a bad date), each file is replaced

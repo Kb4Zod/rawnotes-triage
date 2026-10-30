@@ -221,6 +221,7 @@ h1.title{font-size:38px;line-height:1.05;margin:16px 0 10px;overflow-wrap:anywhe
 #toast.bad{background:var(--toast-bad);color:#fff;border-color:transparent}
 #toast button{background:none;border:0;font-weight:900;color:var(--toast-acc);cursor:pointer;display:flex;gap:6px;align-items:center;white-space:nowrap;min-height:32px;padding:4px 8px;border-radius:8px}
 #toast.bad button{color:#fff}
+#toast .cwarn{display:block;margin-top:4px;font-size:12.5px;font-weight:700;color:var(--toast-acc)}
 #toast kbd{background:transparent;color:inherit;border-color:currentColor;opacity:.7}
 /* batch */
 .btable{width:100%;border-collapse:collapse;margin-top:6px;font-size:13.5px}
@@ -394,7 +395,14 @@ const I={
 async function api(path,body,signal){
   const r=await fetch(path,{...(body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}),signal});
   let j;try{j=await r.json()}catch(e){if(e.name==='AbortError')throw e;throw Error('The triage server sent something unexpected.')}
-  if(j&&j.error&&!j.weeks)throw Error(j.error);return j}
+  if(j&&j.error&&!j.weeks)throw Error(j.error);
+  if(j&&j.commit&&!j.commit.ok)noteCommit(j.commit);return j}
+/* A change that worked but couldn't be committed to git: the next toast carries a warning. "Not a git repo" is said
+   once per page load, not on every change. */
+let commitWarn=null,saidNoRepo=false;
+function noteCommit(c){const why=c.error||c.skipped||'unknown reason';
+  if(/not a git repo/.test(why)){if(saidNoRepo)return;saidNoRepo=true}
+  commitWarn='Not committed to git: '+why}
 /* A screen asks for its data through a scope. Starting a new scope of the same name cancels the old request, and
    scope.ok(el) is only true while that request is still the newest AND the element it will write into is still on the
    page. Every await in a loader is followed by that check, for the success path and the failure path alike, so a late
@@ -446,7 +454,8 @@ function md(src,min=2){ // small markdown renderer: headings, lists, code, bold/
 let toastTimer,toastClear;
 function toast(msg,{undo=false,bad=false}={}){
   const t=$('#toast');t.className=bad?'bad':'';clearTimeout(toastClear);
-  t.innerHTML=`<span>${bad?'':I.check} ${esc(msg)}</span>${undo?`<button type="button" id="tUndo">${I.undo}Undo ${kbh('Z')}</button>`:''}`;
+  const warn=bad?'':commitWarn;commitWarn=null;
+  t.innerHTML=`<span>${bad?'':I.check} ${esc(msg)}${warn?`<span class="cwarn">⚠ ${esc(warn)}</span>`:''}</span>${undo?`<button type="button" id="tUndo">${I.undo}Undo ${kbh('Z')}</button>`:''}`;
   if(undo)$('#tUndo').onclick=doUndo;
   requestAnimationFrame(()=>t.classList.add('show'));
   const hide=()=>{t.classList.remove('show');toastClear=setTimeout(()=>{if(!t.classList.contains('show'))t.innerHTML=''},300)};  // an invisible Undo must not stay tabbable
