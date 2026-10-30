@@ -212,7 +212,9 @@ One board for everything promoted. Cards come from two scans of the sibling
 folders:
 
 - every folder directly under `active/` and `experiments/` (hidden ones
-  skipped), whether or not it was promoted through this app;
+  skipped), whether or not it was promoted through this app. A linked git
+  worktree (its `.git` is a `gitdir:` file, i.e. a branch checkout) is not a
+  project: it is left off the board, and the project routes refuse it;
 - every `.md` file directly in, or one level below, `active/`, `experiments/`,
   `learning/`, `templates/` and `maintained/` whose header has a `due:` line
   (first 4,000 bytes are read), plus experiment files with a `promoted:` line

@@ -269,6 +269,16 @@ def folder_status(path):
     """The `- status:` line in the project's NOTES.md, if it has one."""
     return project_facts(path)[0]
 
+def is_worktree(path):
+    """A linked git worktree (its `.git` is a file saying `gitdir: ...`): a branch checkout, not a project of its own."""
+    try:
+        with open(os.path.join(path, ".git"), "rb") as fh: return fh.read(8) == b"gitdir: "
+    except OSError: return False  # no .git, or .git is a folder (a normal repo)
+
+def on_board(path):
+    """Whether a folder under a project kind counts as a project (shown on the board, reachable through the API)."""
+    return not is_worktree(path)
+
 def project_folders():
     """Every project folder under ../active and ../experiments; `kind` says which (experiments are labelled on the board).
     A symlinked folder is listed (read-only: `linked`) but Triage never writes into it."""
@@ -278,7 +288,7 @@ def project_folders():
         if not os.path.isdir(base): continue
         for name in sorted(os.listdir(base), key=str.casefold):
             full = os.path.join(base, name)
-            if name.startswith(".") or not os.path.isdir(full): continue
+            if name.startswith(".") or not os.path.isdir(full) or not on_board(full): continue
             status, defined = project_facts(full)
             out.append({"name": name, "kind": kind, "path": f"{kind}/{name}", "abs_path": full,
                         "repo": os.path.exists(os.path.join(full, ".git")), "status": status, "done_defined": defined,
@@ -293,7 +303,7 @@ def project_dir(name, kind=None, write=False):
     if kind not in PROJECT_KINDS or not isinstance(name, str) or not name or name.startswith(".") or "/" in name or os.sep in name or "\0" in name:
         raise ValueError("unknown project")
     path = os.path.join(PROJECTS, kind, name)
-    if not os.path.isdir(path): raise ValueError("unknown project")
+    if not os.path.isdir(path) or not on_board(path): raise ValueError("unknown project")
     if write:
         try: safefs.ensure_inside([PROJECTS], path)
         except ValueError: raise ValueError(f"“{name}” is a symlink: Triage only changes real folders inside Projects.")
