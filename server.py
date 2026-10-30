@@ -17,14 +17,15 @@ restarts the unit (systemctl) instead of stopping it.
 
 Decisions (all move real files, nothing is deleted; the words match the CLI and CLAUDE.md):
   promote             -> copy note into ../experiments|active|learning|templates,
-                         stamp promoted/due dates and "done means", move capture to done/
+                         stamp promoted/due dates and "done means", move capture to done/;
+                         a project folder gets the starter/skeletons files, git init and a first commit
   reference (durable) -> copy note into ../reference/<slug>.md (YAML frontmatter), move capture to done/
   kill (archive)      -> status: dead, reason in ## Outcome, move to done/
   keep                -> status open|cooking, optional next-step line
 Also: batch (one decision for many notes), merge (many notes -> one), restore (done/ -> Inbox),
 project status (mark shipped / push ship-by date), and undo of the last change made through this server.
 """
-import argparse, base64, contextlib, errno, json, os, re, shutil, subprocess, sys, tempfile, threading, time, urllib.parse, datetime as dt
+import argparse, base64, contextlib, errno, json, os, re, shlex, shutil, subprocess, sys, tempfile, threading, time, urllib.parse, datetime as dt
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -322,6 +323,39 @@ def git_out(path, args, timeout=5):
         proc = subprocess.run(["git"] + args, cwd=path, capture_output=True, text=True, timeout=timeout, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
         return proc.stdout.strip() if proc.returncode == 0 else None
     except (OSError, subprocess.TimeoutExpired): return None
+
+GIT_TIMEOUT = 30  # seconds for a git step that writes (init, add, commit: the commit runs your hooks, e.g. gitleaks)
+NOREPLY_SUFFIX = "@users.noreply.github.com"
+GIT_ENV_DROP = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR", "GIT_CEILING_DIRECTORIES")
+
+def _git(path, args, timeout=GIT_TIMEOUT):
+    """(returncode, stdout, stderr) of `git args` run in `path`. Never prompts; a GIT_DIR or similar inherited from
+    the environment is dropped, so the command always acts on the repo in `path`."""
+    env = {k: v for k, v in os.environ.items() if k not in GIT_ENV_DROP}
+    proc = subprocess.run(["git", *args], cwd=path, capture_output=True, text=True, timeout=timeout,
+                          env={**env, "GIT_TERMINAL_PROMPT": "0"})
+    return proc.returncode, proc.stdout.rstrip(), proc.stderr.strip()  # rstrip: porcelain lines start with a space
+
+def _last_line(text): return (text.strip().splitlines() or ["no output"])[-1][:300]
+
+def git_identity(path):
+    """[author email, committer email] git would use for a commit in `path` (config and GIT_* overrides included);
+    "" for one git can't work out."""
+    out = []
+    for var in ("GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"):
+        try: code, ident, _ = _git(path, ["var", var], timeout=5)
+        except (OSError, subprocess.TimeoutExpired): code, ident = 1, ""
+        m = re.search(r"<([^<>]*)>", ident) if not code else None
+        out.append(m[1] if m else "")
+    return out
+
+def noreply_suffix():
+    """The ending a first commit's email must have: `noreply_suffix` in config.json, else GitHub's noreply domain."""
+    try:
+        with open(config_path(), encoding="utf-8") as fh: d = json.load(fh)
+        v = d.get("noreply_suffix") if isinstance(d, dict) else None
+    except (OSError, ValueError): v = None
+    return v if isinstance(v, str) and v.startswith("@") and len(v) > 2 else NOREPLY_SUFFIX
 
 GIT_TTL = 20  # seconds a project's git facts are reused; Refresh on the Projects page asks for fresh ones
 _git_cache = {}  # path -> (fingerprint, taken, state)
@@ -838,6 +872,30 @@ class Tx:
         path = _stored(path); missing = []
         while not os.path.isdir(path): missing.append(path); path = os.path.dirname(path)
         for d in reversed(missing): self.mkdir(d)
+    def gitinit(self, path, message):
+        """`git init -b main` in `path` (a folder this change made), then one commit of everything in it, but only
+        if the identity git will use is a GitHub noreply address; the app never sets an identity. Recorded as
+        ("gitinit", path, sha or None): undo and rollback remove the `.git` only while it still holds just that.
+        Returns "" when the commit was made, else a warning for the page (no git, wrong identity, commit refused)."""
+        path = _stored(path); gitdir = os.path.join(path, ".git")
+        if os.path.lexists(gitdir): raise FileExistsError(f"{os.path.basename(path)}/.git already exists")
+        if not shutil.which("git"): return "git is not installed, so the folder has no repo yet."
+        try: code, _, err = _git(path, ["init", "-q", "-b", "main"])
+        except (OSError, subprocess.TimeoutExpired) as e: code, err = 1, str(e)
+        if os.path.isdir(gitdir) and not os.path.islink(gitdir): self.ops.append(("gitinit", path, None))
+        if code: raise OSError(f"git init failed: {_last_line(err)}")
+        i = len(self.ops) - 1; name = os.path.basename(path)
+        how = f"commit by hand: git -C {shlex.quote(path)} add -A && git -C {shlex.quote(path)} commit -m {shlex.quote(message)}"
+        suffix = noreply_suffix(); bad = [e or "(not set)" for e in git_identity(path) if not (e or "").endswith(suffix)]
+        if bad: return f"{name}: git repo made, but no commit: the email git would use is {bad[0]}, not a {suffix} address. Set it in git yourself, then {how}"
+        try:
+            code, _, err = _git(path, ["add", "-A"])
+            if not code: code, _, err = _git(path, ["commit", "-q", "-m", message])
+        except (OSError, subprocess.TimeoutExpired) as e: code, err = 1, str(e)
+        if code: return f"{name}: git repo made, but the first commit failed ({_last_line(err)}). The files are staged; {how}"
+        sha = _git(path, ["rev-parse", "HEAD"])[1]
+        self.ops[i] = ("gitinit", path, sha)
+        return ""
     def rollback(self):
         """Reverse every step, newest first. Returns the steps that could not be reversed (usually none)."""
         left = _revert(self.ops); self.ops = left; return left
@@ -882,7 +940,29 @@ def _plan_inverse(ops, vfs=None):
             if not os.path.isdir(path): raise ValueError(_changed(path + "/"))
             if [f for f in os.listdir(path) if vfs.get(os.path.join(path, f)) is not MISSING]: raise ValueError(_changed(path + "/"))
             vfs[path] = MISSING
+        elif op[0] == "gitinit":
+            _check_gitinit(op[1], op[2])
+            vfs[os.path.join(op[1], ".git")] = MISSING
     return vfs
+
+def _check_gitinit(path, sha):
+    """Raise ValueError unless `path`/.git is still exactly what promote made: HEAD at its one commit, every ref on
+    that commit, nothing modified or untracked (or, if no commit was made, still no commit at all)."""
+    gitdir = os.path.join(path, ".git")
+    bad = ValueError(f"Can't undo: {os.path.basename(path)}/.git changed since (a new commit, or files added or edited). Fix it by hand.")
+    if os.path.islink(gitdir) or not os.path.isdir(gitdir): raise bad
+    if not shutil.which("git"): raise ValueError(f"Can't undo: git is not installed, so {os.path.basename(path)}/.git can't be checked. Fix it by hand.")
+    try:
+        head = _git(path, ["rev-parse", "-q", "--verify", "HEAD"])
+        refs = _git(path, ["for-each-ref", "--format=%(objectname)"])
+        status = _git(path, ["status", "--porcelain", "--untracked-files=all"]) if sha else (0, "", "")
+    except (OSError, subprocess.TimeoutExpired): raise bad
+    if sha:
+        # " D": a committed skeleton file already removed from disk (an earlier rollback step got that far). Nothing is
+        # lost with it: its content is the skeleton commit. Anything else (modified, staged, untracked) refuses.
+        dirty = [l for l in status[1].splitlines() if not l.startswith(" D ")]
+        if head[0] or head[1] != sha or refs[0] or set(refs[1].split()) != {sha} or status[0] or dirty: raise bad
+    elif not head[0] or (not refs[0] and refs[1]): raise bad  # a commit (or any ref) appeared since
 
 def _apply_inverse(op):
     _recheck_contained(op)
@@ -891,12 +971,17 @@ def _apply_inverse(op):
         else: safefs.atomic_write(op[1], op[2], op[4])
     elif op[0] == "move": os.rename(op[2], op[1])
     elif op[0] == "mkdir": os.rmdir(op[1])
+    elif op[0] == "gitinit":
+        gitdir = _stored(os.path.join(op[1], ".git"))
+        if os.path.islink(gitdir) or not os.path.isdir(gitdir): raise OSError(f"{gitdir} is not a folder")
+        shutil.rmtree(gitdir)
 
 def _apply_forward(op):
     _recheck_contained(op)
     if op[0] == "write": safefs.atomic_write(op[1], op[3], op[4])
     elif op[0] == "move": os.rename(op[1], op[2])
     elif op[0] == "mkdir": os.mkdir(op[1])
+    elif op[0] == "gitinit": raise ValueError("a removed .git can't be put back")  # undo reports it; the files are intact
 
 def _revert(ops):
     """Reverse `ops` newest first, one at a time, each only if its own result is still as we left it.
@@ -1015,7 +1100,7 @@ def _act(req, tx):
     dest = "reference" if action == "reference" else req.get("dest")
     slug = re.sub(r"[^a-z0-9-]", "", (_text(req, "slug") or slug_of(fname)).lower()) or slug_of(fname)
     dest_dir = os.path.join(PROJECTS, dest)
-    tx.ensure_dir(dest_dir)
+    tx.ensure_dir(dest_dir); proj = None
     if action == "promote" and DESTS[dest] == "folder":
         proj = unique(os.path.join(dest_dir, slug)); tx.mkdir(proj)
         target = os.path.join(proj, "NOTES.md")
@@ -1031,7 +1116,13 @@ def _act(req, tx):
             f"- definition of done: {note}\n"
             "- first step:\n" + ("- ship / stop check-in: on the due date, either ship it or kill it\n" if due else
                                  "- check-in: when done means is met, mark it shipped; if it stalls, kill it\n"))
-    tx.write(target, copy, eol)
+    warning = ""
+    if proj:
+        copy = set_field(copy, "github", "private")  # intended visibility; going public is gopublic's job
+        pslug = os.path.basename(proj)
+        write_skeleton(tx, dest, proj, {"title": title, "slug": pslug, "done": note, "due": due or "", "today": t, "note": copy}, eol)
+        warning = tx.gitinit(proj, f"Start {pslug} (promoted from RawNotes)")
+    else: tx.write(target, copy, eol)
     rel = os.path.relpath(target, PROJECTS)
     # original capture: mark promoted, record destination, move to done/
     text = set_field(text, "status", "promoted")
@@ -1039,7 +1130,30 @@ def _act(req, tx):
     tx.write(src, text, eol)
     dst = to_done(src, tx); tx.log(f"{'durable' if action == 'reference' else action} {fname} -> {rel}; capture -> {dst}")
     verb = "Promoted" if action == "promote" else "Filed"
-    return {"ok": True, "msg": f"{verb} “{title}” → {rel}", "target": rel, "label": f"{action} “{title}”"}
+    if warning: tx.log(f"promote {fname}: {warning}")
+    return {"ok": True, "msg": f"{verb} “{title}” → {rel}", "target": rel, "label": f"{action} “{title}”", **({"warning": warning} if warning else {})}
+
+SKELETONS = os.path.join(HERE, "starter", "skeletons")  # starter/skeletons/<dest>/: the files Promote writes into a new project folder
+SKELETON_VAR = re.compile(r"\{\{(title|slug|done|due|today|note)\}\}")
+
+def skeleton_files(dest):
+    """[(relative path, template text)] of a destination's skeleton, folders before what they hold."""
+    base = os.path.join(SKELETONS, dest); out = []
+    for root, dirs, files in os.walk(base):
+        dirs.sort()
+        for f in sorted(files):
+            with open(os.path.join(root, f), encoding="utf-8") as fh: out.append((os.path.relpath(os.path.join(root, f), base), fh.read()))
+    if not out: raise ValueError(f"no project skeleton for {dest} (starter/skeletons/{dest} is missing)")
+    return out
+
+def write_skeleton(tx, dest, proj, values, eol="\n"):
+    """Write the skeleton into `proj` (already made by tx). {{title}} {{slug}} {{done}} {{due}} {{today}} {{note}} are
+    filled in one pass, so text that came from the note is never itself treated as a placeholder. NOTES.md keeps
+    the note's own line endings; every other file is LF."""
+    for rel, template in skeleton_files(dest):
+        if os.path.dirname(rel): tx.ensure_dir(os.path.join(proj, os.path.dirname(rel)))
+        text = SKELETON_VAR.sub(lambda m: values[m[1]], template)
+        tx.write(os.path.join(proj, rel), text, eol if rel == "NOTES.md" else "\n")
 
 def check_promote(req):
     """Validate a promotion before anything is written. Returns the ship-by date, or None for an experiment."""
@@ -1103,7 +1217,7 @@ def merge(req):
     then = req.get("then", "inbox")
     if then not in ("inbox", "promote", "reference"): raise ValueError("bad follow-up")
     if then == "promote": check_promote(req)  # fail before the merge writes anything
-    t = today().isoformat()
+    t = today().isoformat(); warning = ""
     with mutation(f"merge {len(files)} notes") as tx:
         srcs = _distinct_sources(files, _inbox_source)
         srcs.sort(key=os.path.basename, reverse=True)
@@ -1133,8 +1247,8 @@ def merge(req):
         if then != "inbox":
             res = _act({**req, "file": tname, "action": then, "slug": req.get("slug") or ""}, tx)
             msg += "; " + res["msg"][0].lower() + res["msg"][1:]
-            tx.select = None
-    return {"ok": True, "msg": msg, "file": tname if then == "inbox" else None}
+            tx.select = None; warning = res.get("warning", "")
+    return {"ok": True, "msg": msg, "file": tname if then == "inbox" else None, **({"warning": warning} if warning else {})}
 
 def note_body_for_merge(text):
     """A source's content for the merged note: everything but its title and date/status/type/promoted/due lines

@@ -240,6 +240,16 @@ class Flows(BrowserCase):
         self.focus("#note"); self.page.type("Works on my phone"); self.page.click("#go"); self.done_toast()
         notes = open(os.path.join(self.tmp, "active", "recent", "NOTES.md")).read()
         self.assertIn("- definition of done: Works on my phone", notes); self.assertIn("- due:", notes)
+        self.assertTrue(os.path.isdir(os.path.join(self.tmp, "active", "recent", ".git")))
+
+    def test_promote_with_a_personal_git_email_shows_the_warning(self):
+        with open(self.gitconfig, "w") as fh: fh.write("[user]\n\tname = Me\n\temail = me@example.com\n[core]\n\thooksPath = /dev/null\n")
+        self.page.click("#list .item[data-f='2026-10-15-recent.md']"); self.page.key("p"); self.page.wait("document.querySelector('#form.promote')")
+        self.assertIn("git repo on main", self.page.eval("document.querySelector('#pv').textContent"))
+        self.focus("#note"); self.page.type("Works on my phone"); self.page.click("#go"); self.done_toast()
+        text = self.page.eval("document.querySelector('#toast').textContent")
+        self.assertIn("Warning:", text); self.assertIn("me@example.com", text)
+        self.assertTrue(self.page.eval("document.querySelector('#toast').classList.contains('bad') && !!document.querySelector('#tUndo')"))
 
     def test_reference_files_the_note(self):
         self.page.click("#list .item[data-f='2026-10-15-recent.md']"); self.page.key("r"); self.page.wait("document.querySelector('#form.reference')")

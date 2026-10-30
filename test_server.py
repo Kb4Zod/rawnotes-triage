@@ -13,10 +13,12 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 
 import server
+from testkit import isolate_git
 
 
 class ApiTestCase(unittest.TestCase):
     def setUp(self):
+        isolate_git(self)  # promote runs git: never with the real global config or hooks
         self.tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self.notes = os.path.join(self.tmp, "RawNotes")

@@ -8,13 +8,32 @@ import unittest
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
+from unittest import mock
 
 import server
+
+
+TEST_EMAIL = "tester@users.noreply.github.com"
+
+
+def isolate_git(case, email=TEST_EMAIL):
+    """For the rest of `case`, git sees a throwaway HOME and global config (a fixture identity, hooks off), never the
+    real ~/.gitconfig, its hooks (gitleaks) or the system config. Returns the config file, for tests that change it."""
+    home = os.path.realpath(tempfile.mkdtemp(prefix="rt-githome-")); case.addCleanup(shutil.rmtree, home, ignore_errors=True)
+    cfg = os.path.join(home, ".gitconfig")
+    with open(cfg, "w", encoding="utf-8") as fh:
+        fh.write(f"[user]\n\tname = Test User\n\temail = {email}\n[core]\n\thooksPath = /dev/null\n")
+    p = mock.patch.dict(os.environ, {"HOME": home, "XDG_CONFIG_HOME": os.path.join(home, ".config"), "GIT_CONFIG_GLOBAL": cfg,
+                                     "GIT_CONFIG_NOSYSTEM": "1"})
+    p.start(); case.addCleanup(p.stop)
+    for var in ("GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL", "GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME", "EMAIL"): os.environ.pop(var, None)
+    return cfg
 
 
 class Fixture(unittest.TestCase):
     """HTTP server bound to a temporary RawNotes + projects root. Helpers read/write only inside it."""
     def setUp(self):
+        self.gitconfig = isolate_git(self)
         self.tmp = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self.notes = os.path.join(self.tmp, "RawNotes"); os.makedirs(self.notes)
