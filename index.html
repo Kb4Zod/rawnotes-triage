@@ -228,7 +228,7 @@ h1.title{font-size:38px;line-height:1.05;margin:16px 0 10px;overflow-wrap:anywhe
 .btable tr td:first-child{width:96px}
 /* projects */
 .scroll{overflow:auto;height:100vh;padding:0 28px 40px}
-.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:6px 0 22px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:6px 0 22px}
 .tile{padding:14px 16px;text-align:left;cursor:default}
 button.tile{cursor:pointer;font:inherit;color:inherit}
 .tile .num{font-size:38px;font-weight:700;line-height:1}
@@ -513,6 +513,7 @@ function passes(n){const f=S.f;
   if(f.status==='open'&&n.status!=='open')return false;
   if(f.status==='cooking'&&n.status!=='cooking')return false;
   if(f.status==='stale'&&!n.stale)return false;
+  if(f.status==='expired'&&!n.expired)return false;
   if(f.type&&n.type!==f.type)return false;
   if(f.q){const q=f.q.toLowerCase();if(!(n.title+' '+n.question+' '+n.file).toLowerCase().includes(q))return false}
   return true}
@@ -538,14 +539,15 @@ function renderInbox(){
   const ord=navOrder(m);
   if(!S.sel||!ord.includes(S.sel))S.sel=ord[0]||null;
   if(S.sel&&S.sel.startsWith('stack:'))S.expanded=S.sel.slice(6);
-  const cnt=s=>live.filter(n=>s==='stale'?n.stale:s==='stuck'?stuck(n):n.status===s).length,nstuck=cnt('stuck');
+  const cnt=s=>live.filter(n=>s==='stale'?n.stale:s==='expired'?n.expired:s==='stuck'?stuck(n):n.status===s).length,nstuck=cnt('stuck');
   if(S.f.status==='stuck'&&!nstuck)S.f.status='all';
+  const nexp=cnt('expired');if(S.f.status==='expired'&&!nexp)S.f.status='all';
   const chip=(v,label,n,cls='')=>`<button class="chip ${cls} ${S.f.status===v?'on':''}" data-st="${v}" aria-pressed="${S.f.status===v}">${label} <b>${n}</b></button>`;
   const tchip=v=>`<button class="chip ${(S.f.type||'')===v?'on':''}" data-ty="${v}" aria-pressed="${(S.f.type||'')===v}">${v?v[0].toUpperCase()+v.slice(1):'Any type'}</button>`;
   $('#main').innerHTML=`<div class="split"><div class="listpane"><div class="pane-h"><h1>Inbox</h1>
     <div class="sub">${live.length} note${live.length===1?'':'s'} waiting on a decision · oldest first</div>
     <div class="search">${I.search}<input id="q" type="search" aria-label="Search notes" placeholder="Search notes…" value="${esc(S.f.q)}" autocomplete="off" aria-keyshortcuts="/">${kbh('/')}</div>
-    <div class="chips" role="group" aria-label="Status">${chip('all','All',live.length)}${chip('open','Open',cnt('open'))}${chip('cooking','Cooking',cnt('cooking'))}${chip('stale','Stale',cnt('stale'))}${nstuck?chip('stuck','Stuck',nstuck,'warn'):''}</div>
+    <div class="chips" role="group" aria-label="Status">${chip('all','All',live.length)}${chip('open','Open',cnt('open'))}${chip('cooking','Cooking',cnt('cooking'))}${chip('stale','Stale',cnt('stale'))}${nexp?chip('expired','Expired',nexp,'warn'):''}${nstuck?chip('stuck','Stuck',nstuck,'warn'):''}</div>
     <div class="chips sm" role="group" aria-label="Type">${tchip('')}${tchip('question')}${tchip('research')}${tchip('issue')}</div></div>
     <div class="list" id="list"></div></div><div class="reader" id="reader"></div></div>`;
   $('#q').oninput=e=>{S.f.q=e.target.value;renderInboxList(true)};
@@ -555,7 +557,7 @@ function renderInbox(){
 function renderInboxList(fromSearch){
   const m=inboxModel(),el=$('#list');if(!el)return;
   const row=n=>{const a=n.age??0,c=ageCls(a);return `<div class="item ${n.file===S.sel?'sel':''}" data-f="${esc(n.file)}" role="button" tabindex="0"${n.file===S.sel?' aria-current="true"':''}>
-    <span class="bar ${c?'h'+c:''}"></span><div><div class="t">${esc(n.title)}</div><div class="m">${st(n.status)}<span>${esc(n.type)}</span>${n.stale?'<span class="err">stale</span>':''}${stuck(n)?'<span class="err" title="Its status says it was decided, but it is still in the Inbox">not moved</span>':''}</div></div><span class="age ${c?'a'+c:''}" title="waiting ${a} days"><span class="sr">waiting </span>${a}d</span></div>`};
+    <span class="bar ${c?'h'+c:''}"></span><div><div class="t">${esc(n.title)}</div><div class="m">${st(n.status)}<span>${esc(n.type)}</span>${n.keeps?`<span title="Kept ${n.keeps} time${n.keeps===1?'':'s'}">kept ${n.keeps}×</span>`:''}${n.expired?'<span class="err" title="Over the Inbox limit: promote, file, merge or kill it">expired</span>':n.stale?'<span class="err">stale</span>':''}${!n.expired&&n.expires_in!=null?`<span title="Days until the Inbox limit">expires in ${n.expires_in}d</span>`:''}${stuck(n)?'<span class="err" title="Its status says it was decided, but it is still in the Inbox">not moved</span>':''}</div></div><span class="age ${c?'a'+c:''}" title="waiting ${a} days"><span class="sr">waiting </span>${a}d</span></div>`};
   // A stack member is a row with TWO real controls (the tick box and the open button), so the row itself is not a button.
   const member=n=>`<div class="item member ${n.file===S.sel?'sel':''}" data-f="${esc(n.file)}"><span class="bar"></span>
     <input type="checkbox" class="cb" data-cb="${esc(n.file)}" ${S.batch.has(n.file)?'checked':''} aria-label="Select ${esc(n.title)}, ${esc(n.file)}">
@@ -587,8 +589,9 @@ function selectNote(f,nav){
   if(inList){const r=[...$$('#list [data-f]')].find(x=>x.dataset.f===f);if(r)(r.matches('[role=button]')?r:r.querySelector('.rowmain')).focus({preventScroll:true})}  // the row you were on survives the re-render
   if(nav&&narrow()){document.body.classList.add('note');scrollTo(0,0)}}
 
-function optCards(on){const o=(id,ic,v,d,k)=>`<button type="button" class="opt ${id} ${on===id?'on':on?'dim':''}" data-m="${id}" aria-pressed="${on===id}" aria-keyshortcuts="${k}"><span class="k">${kbh(k)}</span><div class="v"><i>${I[ic]}</i>${v}</div><div class="d">${d}</div></button>`;
-  return `<div class="opts">${o('promote','up','Promote','Make it a project with a ship-by date','P')}${o('reference','ref','Reference','File it in reference/ for lookup','R')}${o('keep','pot','Keep','Still cooking: stays in the Inbox','C')}${o('kill','x','Kill','Not worth it: off to the Archive','X')}</div>`}
+function expiredMsg(n){const L=S.notes.limits||{};return n.keeps>=(L.max_keeps||3)&&n.expires_in>=0?`Used all ${L.max_keeps||3} Keeps: promote, file, merge or kill`:`Over the ${L.inbox_limit_days||30}-day limit: promote, file, merge or kill`}
+function optCards(on,n){const o=(id,ic,v,d,k)=>`<button type="button" class="opt ${id} ${on===id?'on':on?'dim':''}" data-m="${id}" aria-pressed="${on===id}" aria-keyshortcuts="${k}"><span class="k">${kbh(k)}</span><div class="v"><i>${I[ic]}</i>${v}</div><div class="d">${d}</div></button>`;
+  return `<div class="opts">${o('promote','up','Promote','Make it a project with a ship-by date','P')}${o('reference','ref','Reference','File it in reference/ for lookup','R')}${n&&n.expired?`<div class="opt keep dim" role="note" aria-label="Keep is not available"><div class="v"><i>${I.pot}</i>No more Keeps</div><div class="d err">${expiredMsg(n)}</div></div>`:o('keep','pot','Keep','Still cooking: stays in the Inbox','C')}${o('kill','x','Kill','Not worth it: off to the Archive','X')}</div>`}
 function seg(name,items,on){return `<div class="seg" data-seg="${name}">${items.map(([v,l,s])=>`<button type="button" data-v="${v}" class="${v===on?'on':''}">${l}${s?`<small>${s}</small>`:''}</button>`).join('')}</div>`}
 const segVal=name=>{const b=document.querySelector(`[data-seg="${name}"] .on`);return b?b.dataset.v:null};
 function wireSegs(root,onChange){root.querySelectorAll('[data-seg]').forEach(s=>s.querySelectorAll('button').forEach(b=>b.onclick=()=>{s.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b));onChange&&onChange()}))}
@@ -637,7 +640,7 @@ function renderReader(){const r=$('#reader');if(!r)return;r.scrollTop=0;
   r.innerHTML=`<h1 class="sr rh1">Inbox</h1><button class="back" onclick="backToList()">‹ Inbox</button>
    <div class="card decide ${S.mode?'open':''}" id="decide"><div class="q"><h2>What happens to this note?</h2><span class="muted">waiting ${n.age} day${n.age===1?'':'s'}</span><span class="muted kh" style="margin-left:auto">${kbh('J')} ${kbh('K')} next / prev</span></div>
    ${stuck(n)?`<div class="flag"><b>Stuck:</b> this note says <span class="mono">status: ${esc(n.status)}</span> but never left the Inbox. Check that its destination exists, then move it to <span class="mono">done/</span> yourself, or Keep it to put it back in play.</div>`:''}
-   ${optCards(S.mode)}${S.mode?formHtml(S.mode,n):''}</div><div id="doc" class="card doc"><div class="muted">Loading…</div></div>`;
+   ${optCards(S.mode,n)}${S.mode?formHtml(S.mode,n):''}</div><div id="doc" class="card doc"><div class="muted">Loading…</div></div>`;
   wireDecide(n);loadDoc(n)}
 // What was typed into a decision form is kept per note and decision, so a refresh or a trip to another note doesn't lose it.
 function formState(f){const o={};f.querySelectorAll('input.input,textarea.input').forEach(i=>{if(i.id)o[i.id]=i.value});f.querySelectorAll('[data-seg]').forEach(s=>{const b=s.querySelector('.on');if(b)o['seg:'+s.dataset.seg]=b.dataset.v});return o}
@@ -651,9 +654,9 @@ function wireDecide(n){
   const save=()=>{S.forms[key]=formState(f)};f.addEventListener('input',save);f.addEventListener('click',e=>{if(e.target.closest('[data-seg]'))save()});
   f.onsubmit=e=>{e.preventDefault();apply()};$('#cancel').onclick=()=>{delete S.forms[key];setMode(null)};
   const first=f.querySelector('textarea,input#note')||f.querySelector('input');if(first&&!narrow())first.focus()}
-function setMode(m){if(!S.sel||S.sel.startsWith('stack:'))return;S.mode=m;const n=S.notes.live.find(x=>x.file===S.sel);
+function setMode(m){if(!S.sel||S.sel.startsWith('stack:'))return;S.mode=m;const n=S.notes.live.find(x=>x.file===S.sel);if(m==='keep'&&n&&n.expired){toast(expiredMsg(n));return}
   const d=$('#decide');d.classList.toggle('open',!!m);
-  d.innerHTML=d.innerHTML.split('<div class="opts">')[0]+optCards(m)+(m?formHtml(m,n):'');wireDecide(n);
+  d.innerHTML=d.innerHTML.split('<div class="opts">')[0]+optCards(m,n)+(m?formHtml(m,n):'');wireDecide(n);
   if(m&&!narrow())d.scrollIntoView({block:'nearest'})}
 async function loadDoc(n){
   const sc=scope('doc'),el=$('#doc'),mine=()=>sc.ok(el)&&S.route==='inbox'&&S.sel===n.file;  // still the newest request, still on this note, element still on the page
@@ -720,7 +723,7 @@ function batchPreview(){const pv=$('#pv');if(!pv)return;const n=S.batch.size,m=S
   if(m==='merge'){const title=($('#mtitle')?.value||'merged').trim(),slug=title.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,60),then=segVal('then');
     const kb_=S.notes.live.filter(x=>S.batch.has(x.file)).reduce((a,x)=>a+x.size,0)/1024,size=kb_>=1024?(kb_/1024).toFixed(1)+' MB':Math.round(kb_)+' KB';
     pv.innerHTML=`<div class="label">What will happen</div><ol><li>Writes <span class="mono">RawNotes/${t}-${esc(slug)}.md</span> with ${n} sections, newest first · <b ${kb_>200?'class="err" title="A big note: consider merging smaller groups (untick some)"':''}>about ${size}</b></li><li>Moves the ${n} sources to <span class="mono">done/</span>, each pointing at the merge</li>${then==='promote'?`<li>Promotes the merged note → <b>Projects</b>, ${segVal('dest')==='experiments'?'as an open-ended experiment':'ship by '+fmtDate(shipDate())}</li>`:then==='reference'?'<li>Files the merged note in <span class="mono">reference/</span></li>':'<li>The merged note waits in the Inbox</li>'}</ol>`}
-  else pv.innerHTML=`<div class="label">What will happen</div><ol><li>${m==='kill'?`Kills ${n} notes and moves them to the Archive`:m==='keep'?`Sets ${n} notes to ${segVal('status')}`:`Copies ${n} notes into <span class="mono">reference/</span>, captures to done/`}</li><li>One undo step for all of them</li></ol>`}
+  else pv.innerHTML=`<div class="label">What will happen</div><ol><li>${m==='kill'?`Kills ${n} notes and moves them to the Archive`:m==='keep'?`Sets ${n} notes to ${segVal('status')}`+(S.notes.live.some(x=>S.batch.has(x.file)&&x.expired)?` <b class="err">· ${S.notes.live.filter(x=>S.batch.has(x.file)&&x.expired).length} expired: Keep will be refused for the whole batch</b>`:''):`Copies ${n} notes into <span class="mono">reference/</span>, captures to done/`}</li><li>One undo step for all of them</li></ol>`}
 function renderBatchSummary(){if(!S.sel||!S.sel.startsWith('stack:'))return;const k=S.sel.slice(6),stk=inboxModel().stacks[k];if(!stk||!$('#btable'))return;
   const n=S.batch.size;$('#bcount').textContent=`${n} of ${stk.members.length} ${stk.name} notes selected`;
   $('#bleft').textContent=n<stk.members.length?`${stk.members.length-n} unticked stay in the Inbox`:'';
@@ -924,6 +927,7 @@ function renderPulse(){
   <div class="tiles"><div class="card tile"><div class="num">${a&&a.total!==undefined?a.total:'–'}</div><div class="lab">commits on GitHub this year</div></div>
    <div class="card tile"><div class="num">${a&&a.active_days!==undefined?a.active_days:'–'}</div><div class="lab">active days</div></div>
    <div class="card tile"><div class="num">${a&&a.streak!==undefined?a.streak:'–'}<span style="font-size:20px;color:var(--mute)">d</span></div><div class="lab">current streak</div></div>
+   <div class="card tile"><div class="num" style="color:${s.expired?'var(--rust)':'inherit'}">${s.expired==null?'–':s.expired}</div><div class="lab">expired in the Inbox${s.stale!=null?` · ${s.stale} stale`:''} · decide or kill</div></div>
    <div class="card tile"><div class="num" style="color:${s.median_wait>7?'var(--rust)':'inherit'}">${s.median_wait==null?'–':s.median_wait}${s.median_wait==null?'':'<span style="font-size:20px;color:var(--mute)">d</span>'}</div><div class="lab">${s.error?`couldn't load: ${esc(s.error)}`:s.median_wait==null?'median wait in the Inbox (goal ≤ 7) · Inbox is empty':`median wait in the Inbox (goal ≤ 7) · oldest ${s.oldest}d · ${s.live} notes`}</div></div></div>
   <div class="card panel" style="margin-bottom:16px"><h2>Commits on GitHub</h2><div class="cap">Your commits on default branches, counted by commit date (not by when they were pushed), last 52 weeks · private repos included · local-only repos never show</div>${a&&a.notice?`<div class="flag" role="note">${esc(a.notice)} The graph may be missing some commits.</div>`:''}${heat}</div>
   <div class="pgrid"><div class="card panel"><h2>Inbox flow</h2><div class="cap">Notes captured vs. notes decided, per week (decisions from triage.log)</div>

@@ -223,6 +223,15 @@ class Flows(BrowserCase):
         text = self.read("2026-10-15-recent.md"); self.assertIn("- status: cooking", text); self.assertIn("next step", text); self.assertIn("call the vendor", text)
         self.page.click("#tUndo"); self.settle(0.5); self.assertIn("- status: open", self.read("2026-10-15-recent.md"))
 
+    def test_expired_note_has_a_chip_a_badge_and_no_keep(self):
+        with unittest.mock.patch.dict(server.LIMIT_DEFAULTS, {"inbox_limit_days": 30}):
+            self.open(); self.page.wait("document.querySelector('[data-st=expired]')")
+            self.page.click("[data-st=expired]"); self.settle(0.2)
+            self.assertIn("expired", self.text("#list")); self.assertNotIn("Recent note", self.text("#list"))
+            self.page.click("#list .item[data-f='2026-08-01-lone.md']"); self.settle(0.2)
+            self.assertIn("30-day limit", self.text("#reader")); self.assertIsNone(self.page.eval("document.querySelector('[data-m=keep]')"))
+            self.page.key("c"); self.settle(0.2); self.assertIsNone(self.page.eval("document.querySelector('#form.keep')"))
+
     def test_kill_then_undo_with_the_z_key(self):
         self.page.click("#list .item[data-f='2026-10-15-recent.md']"); self.page.key("x"); self.page.wait("document.querySelector('#form.kill')")
         self.page.type("dupe"); self.page.key("Enter"); self.done_toast()
