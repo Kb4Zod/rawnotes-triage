@@ -3,17 +3,23 @@
 
   rawtriage                          AI-assisted triage: starts a Claude session that uses the rawnotes skill
   rawtriage -l [status] [--json]     print the Inbox: status, type, age, date, title, stale/expired flags
+  rawtriage -l --summary             one line: "N open, N cooking (N stale, N expired)" (the weekly nudge prints it)
   rawtriage where                    the notes folder and the projects root
   rawtriage check                    notes whose header is missing or invalid
   rawtriage new <slug> [thought]     create today's note from _template.md
-  rawtriage keep <file> [--status open|cooking] [--next TEXT]
+  rawtriage keep <file> [--status open|cooking] [--next TEXT]      refused once the note is expired
   rawtriage kill <file> --reason TEXT
-  rawtriage reference <file> [--why TEXT]
+  rawtriage reference <file> [--why TEXT] [--section NAME [--blurb TEXT]]
+                                     file as reference; --section also adds its line to reference/README.md's index
+  rawtriage reference --unindexed    reference notes the index doesn't link yet, and the index's sections
+  rawtriage index <name.md> --section NAME [--blurb TEXT]   add an already-filed reference note to the index
   rawtriage promote <file> --dest active|experiments|learning|templates --done TEXT
                     [--due-days N | --due YYYY-MM-DD] [--slug S]
   rawtriage merge <file> <file>... --title TEXT [--then inbox|promote|reference] [promote options]
   rawtriage undo                     reverse the newest change (the page's undo list is the same one)
-  rawtriage project ship|extend|kill <name> [--kind active|experiments] [--note TEXT] [--days N]
+  rawtriage project ship <name> [--kind KIND]
+  rawtriage project extend <name> --reason TEXT [--days N] [--kind KIND]   at most twice; the reason is required
+  rawtriage project kill <name> --reason TEXT [--kind KIND]
 
 Every command goes through the running server, so a decision made here is logged, undoable in the page and counted
 in Pulse exactly like one made in the page. If the server is down it is started (the systemd unit if installed, else
@@ -142,7 +148,12 @@ def make_parser():
     add("keep", "keep a note in the Inbox", (("file",), {}), (("--status",), {"choices": ["open", "cooking"], "default": "cooking"}),
         (("--next",), {"default": "", "help": "a next-step line to add"}))
     add("kill", "kill a note (to the Archive)", (("file",), {}), (("--reason",), {"required": True}))
-    add("reference", "file a note as reference", (("file",), {}), (("--why",), {"default": ""}))
+    add("reference", "file a note as reference (or list unindexed reference notes)", (("file",), {"nargs": "?"}), (("--why",), {"default": ""}),
+        (("--section",), {"default": "", "help": "an index section (### heading) in reference/README.md; a new name adds one"}),
+        (("--blurb",), {"default": "", "help": "the index line's summary (default: the why, else the question's first sentence)"}),
+        (("--unindexed",), {"action": "store_true", "help": "list reference notes the index doesn't link"}))
+    add("index", "add an already-filed reference note to reference/README.md's index", (("file",), {}),
+        (("--section",), {"required": True}), (("--blurb",), {"default": ""}))
     promo = [(("--dest",), {"choices": ["active", "experiments", "learning", "templates"]}), (("--done",), {"default": "", "help": "what done means"}),
              (("--due-days",), {"type": int}), (("--due",), {"help": "ship-by date YYYY-MM-DD"}), (("--slug",), {"default": ""})]
     add("promote", "promote a note to a project", (("file",), {}), *promo)
@@ -150,7 +161,8 @@ def make_parser():
         (("--then",), {"choices": ["inbox", "promote", "reference"], "default": "inbox"}), (("--question",), {"default": ""}), *promo)
     add("undo", "undo the newest change")
     pr = add("project", "ship, push or kill a project", (("action",), {"choices": ["ship", "extend", "kill"]}), (("name",), {}),
-             (("--kind",), {"choices": ["active", "experiments"]}), (("--note",), {"default": ""}), (("--days",), {"type": int}))
+             (("--kind",), {"choices": ["active", "experiments", "learning", "templates"]}),
+             (("--reason", "--note"), {"dest": "reason", "default": "", "help": "why: required to extend or kill"}), (("--days",), {"type": int}))
     return p
 
 
@@ -181,9 +193,15 @@ def promote_body(args):
     return body
 
 
+def check_project(args):
+    if args.action in ("extend", "kill") and not args.reason.strip():
+        raise Refused(f"Say why: rawtriage project {args.action} {args.name} --reason \"...\"" +
+                      (" (at least 10 characters; a ship-by date can be pushed twice)" if args.action == "extend" else ""))
+
+
 def project_body(args):
     action = {"ship": "shipped"}.get(args.action, args.action)
-    body = {"action": action, "note": args.note}
+    body = {"action": action, "note": args.reason}
     if args.days is not None: body["days"] = args.days
     flights = [x for x in api("/api/notes").get("inflight", [])
                if not x["done"] and (x["project"] or os.path.basename(x["path"])[:-3]) == args.name and (not args.kind or x["dest"] == args.kind)]
@@ -208,6 +226,16 @@ def run(args):
     if c == "new":
         r = api("/api/new", {"slug": args.slug, "thought": " ".join(args.thought)})
         return out(args, r, f"{r['msg']}\n{r['path']}")
+    if c == "reference" and args.unindexed:
+        r = api("/api/reference/unindexed")
+        if not r["has_index"]: return out(args, r, "reference/README.md has no ## Index section (or there is no README.md).")
+        text = (f"{len(r['files'])} reference note(s) aren't in the index" + (":" if r["files"] else ".") +
+                "".join(f"\n- {f['file']}  {f['title']}: {f['blurb']}" for f in r["files"]) +
+                "\nSections: " + (", ".join(r["sections"]) or "(none yet)") +
+                ("\nAdd one with: rawtriage index <name.md> --section NAME [--blurb TEXT]" if r["files"] else ""))
+        return out(args, r, text)
+    if c == "index":
+        r = api("/api/reference/index", {"file": os.path.basename(args.file), "section": args.section, "blurb": args.blurb}); return out(args, r, r["msg"])
     if c == "undo":
         r = api("/api/undo", {}); return out(args, r, r["msg"])
     if c == "project":
@@ -220,16 +248,21 @@ def run(args):
     body = {"file": note_name(args.file)}
     if c == "keep": body.update(action="keep", status=args.status, note=args.next)
     elif c == "kill": body.update(action="kill", note=args.reason)
-    elif c == "reference": body.update(action="reference", note=args.why)
+    elif c == "reference":
+        body.update(action="reference", note=args.why)
+        if args.section: body.update(section=args.section, blurb=args.blurb)
     elif c == "promote": body.update(action="promote", **promote_body(args))
     r = api("/api/action", body); out(args, r, r["msg"])
 
 
 def list_notes(argv):
     lp = Parser(prog="rawtriage -l"); lp.add_argument("status", nargs="?"); lp.add_argument("--json", action="store_true")
+    lp.add_argument("--summary", action="store_true", help="one line of counts: N open, N cooking (N stale, N expired)")
     a = lp.parse_args(argv)
     ensure_server()
-    live = [n for n in api("/api/notes")["live"] if not a.status or n["status"] == a.status]
+    data = api("/api/notes")
+    if a.summary: return say(json.dumps({"summary": data["summary"]}) if a.json else data["summary"])
+    live = [n for n in data["live"] if not a.status or n["status"] == a.status]
     if a.json: return say(json.dumps(live, indent=2, ensure_ascii=False))
     say("%-8s %-9s %-4s %-10s %s" % ("STATUS", "TYPE", "AGE", "DATE", "TITLE"))
     if not live and not a.status: say("(no notes)")
@@ -254,7 +287,9 @@ def main(argv):
     if argv[0] in ("-l", "--list"): return list_notes(argv[1:])
     args = make_parser().parse_args(argv)
     if not args.cmd: make_parser().error("give a command (or -l); see --help")
-    if args.cmd == "promote": promote_body(args)  # refuse a missing ship-by before even looking for the server
+    if args.cmd == "promote": promote_body(args)  # refuse a missing ship-by or reason before even looking for the server
+    if args.cmd == "project": check_project(args)
+    if args.cmd == "reference" and not args.unindexed and not args.file: make_parser().error("give a note to file, or --unindexed")
     ensure_server()
     run(args)
 

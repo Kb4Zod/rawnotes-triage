@@ -172,7 +172,8 @@ def inbox_summary(live=None):
 def list_notes(with_inflight=True):
     with _lock.read():
         out = scan_notes()
-        return {**out, "inflight": inflight() if with_inflight else [], "limits": limits(), "today": today().isoformat(), "notes_dir": NOTES,
+        return {**out, "inflight": inflight() if with_inflight else [], "limits": limits(), "summary": inbox_summary(out["live"]),
+                "today": today().isoformat(), "notes_dir": NOTES,
                 "closed_window_days": config_int("closed_window_days", CLOSED_WINDOW_DAYS)}
 
 def _count(v):

@@ -141,22 +141,30 @@ same rules, lock, undo list and `triage.log` line as one made in the page (and s
 ```
 rawtriage                          # a Claude triage session (uses the rawnotes skill)
 rawtriage -l [status] [--json]     # the Inbox: status, type, age, date, title, [stale] / [expired] flags
+rawtriage -l --summary             # one line: "N open, N cooking (N stale, N expired)" (see Inbox limits)
 rawtriage where                    # the notes folder and the projects root
 rawtriage check                    # notes with a missing or invalid header (same rules as check-frontmatter.sh)
 rawtriage new <slug> [thought...]  # create today's note from _template.md; refuses a name that exists
-rawtriage keep <file> [--status open|cooking] [--next "step"]
+rawtriage keep <file> [--status open|cooking] [--next "step"]   # refused once the note is expired
 rawtriage kill <file> --reason "why"
-rawtriage reference <file> [--why "..."]
+rawtriage reference <file> [--why "..."] [--section "Index section" [--blurb "one line"]]
+rawtriage reference --unindexed    # reference notes reference/README.md's index doesn't link, and its sections
+rawtriage index <name.md> --section "Index section" [--blurb "one line"]   # index an already-filed reference note
 rawtriage promote <file> --dest active|experiments|learning|templates --done "done means" \
                   [--due-days 7 | --due YYYY-MM-DD] [--slug name]
 rawtriage merge <file> <file>... --title "..." [--then inbox|promote|reference] [promote options]
 rawtriage undo                     # the newest change, whoever made it (the page's undo list is the same list)
-rawtriage project ship|extend|kill <name> [--kind active|experiments] [--note "..."] [--days N]
+rawtriage project ship <name> [--kind active|experiments|learning|templates]
+rawtriage project extend <name> --reason "why more time" [--days N] [--kind ...]   # at most twice
+rawtriage project kill <name> --reason "why" [--kind ...]
 ```
 
 - `<file>` is a name in the Inbox, an absolute path, or any part of a name that matches one note (`rawtriage kill dns-slow --reason ...`).
 - `promote` needs `--done`, and a ship-by (`--due-days` or `--due`) for everything except `experiments`; without them
-  it exits 1 and changes nothing.
+  it exits 1 and changes nothing. `project extend` and `project kill` need `--reason` (`--note` is the old name);
+  an extension's reason must be at least 10 characters, and a third extension is refused (see **Projects page**).
+- `reference --section` adds the index line in the same undoable step as the page's Reference form (see Reference
+  under **Decisions per note**); without it the note is filed but not indexed, and `reference --unindexed` lists it.
 - `--json` prints the server's answer instead of a sentence. `RAWTRIAGE_PORT` picks another port (default 8765).
 - **Exit codes:** 0 done; 1 refused (the reason is printed; bad usage too); 2 no usable server.
 - **Server down:** `systemctl --user start rawtriage-web` if the unit is installed, otherwise `server.py --no-browser`
@@ -289,7 +297,7 @@ nothing, if one has been edited since or now sits behind a symlink or outside
 the notes and projects folders.
 
 **Auto-commit:** if the notes folder is a git repo, every change made through
-the server (each decision, batch, merge, restore, and each undo) is committed
+the server (each decision, batch, merge, restore, new note, and each undo) is committed
 right after it succeeds: only the notes-folder files that change touched
 (both sides of a move), with the message `triage: <what>` (e.g.
 `triage: kill “Chrome remove profiles”`, `triage: killed 3 notes`,
@@ -297,7 +305,9 @@ right after it succeeds: only the notes-folder files that change touched
 the body. Anything else you have edited or staged is left as it was; hand
 edits already in a touched note go into the commit and the body names them.
 Undo is a commit of its own; history is never rewritten. Files in project
-folders (the promoted copy, project status) are not committed. If the commit
+folders (the promoted copy, project status) and in `../reference` (the filed
+note, its index line) are not committed; a promoted project's own first commit
+is made in its own repo (see **Project skeleton**). If the commit
 can't happen (not a git repo, a merge or rebase in progress, `index.lock`
 present, no `user.email`, a pre-commit hook such as gitleaks refusing it) the
 change still stands and stays undoable, and the toast and stderr say why it
@@ -388,7 +398,9 @@ of its `NOTES.md`. The save is refused if the definition on disk no longer
 matches the one you were shown.
 
 **Note headers.** A note's metadata (`- date:`, `- status:`, `- type:`,
-`- promoted:`, `- due:`, `- shipped:`) is the first run of `- key: value`
+`- promoted:`, `- due:`, `- shipped:`, and the app's own `- kept:`, `- keeps:`,
+`- restored:`, `- extensions:`, `- closed:`, `- github:`, which the reader
+hides) is the first run of `- key: value`
 lines under the title (after at most three lines of subtitle, before the
 first `##` heading; a leading YAML frontmatter block is skipped over). Only
 that block is read or edited: a `- status:` line in the body, a quote or a

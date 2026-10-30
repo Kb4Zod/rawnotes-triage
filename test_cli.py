@@ -47,20 +47,27 @@ class CliBase(Fixture):
 
 class Reading(CliBase):
     def test_list_has_the_old_columns_and_the_stale_flag(self):
-        self.note("2020-01-02-old-one.md", "Old one"); self.note("2026-10-02-newer.md", "Newer", status="cooking")
+        t = server.today().isoformat()
+        self.note("2020-01-02-old-one.md", "Old one"); self.note(f"{t}-newer.md", "Newer", status="cooking")
         r = self.ok("-l").stdout.splitlines()
         self.assertEqual(r[0].split(), ["STATUS", "TYPE", "AGE", "DATE", "TITLE"])
         self.assertRegex(r[1], r"^open\s+research\s+\d+d 2020-01-02 Old one  \(2020-01-02-old-one\.md\)  \[stale\]$")
-        self.assertRegex(r[2], r"^cooking\s+research\s+\d+d 2026-10-02 Newer  \(2026-10-02-newer\.md\)$")
+        self.assertRegex(r[2], rf"^cooking\s+research\s+0d {t} Newer  \({t}-newer\.md\)$")
         only = self.ok("-l", "cooking").stdout.splitlines(); self.assertEqual(len(only), 2); self.assertIn("Newer", only[1])
 
-    def test_list_shows_the_expired_flag_the_server_sends(self):
-        self.note("2026-10-02-a.md", "A")
-        real = server.list_notes
-        def with_expired(*a, **k):
-            d = real(*a, **k); d["live"][0]["expired"] = True; return d
-        with mock.patch.object(server, "list_notes", with_expired):
-            self.assertIn("[expired]", self.ok("-l").stdout)
+    def test_list_shows_the_real_expired_flag_and_the_summary(self):
+        t = server.today()
+        with mock.patch.dict(server.LIMIT_DEFAULTS, {"inbox_limit_days": 30, "max_keeps": 3}):  # the real defaults
+            self.note((t - dt.timedelta(days=31)).isoformat() + "-old.md", "Old")
+            self.note(t.isoformat() + "-fresh.md", "Fresh", status="cooking")
+            rows = {n["file"][11:]: n for n in self.get("/api/notes")["live"]}
+            self.assertTrue(rows["old.md"]["expired"]); self.assertFalse(rows["fresh.md"]["expired"])
+            out = self.ok("-l").stdout
+            self.assertRegex(out, r"Old  \(\S+-old\.md\)  \[stale\]  \[expired\]\n"); self.assertNotIn("expired", out.split("Fresh")[1])
+            self.assertEqual(self.ok("-l", "--summary").stdout.strip(), "1 open, 1 cooking (1 stale, 1 expired)")
+            self.assertEqual(self.ok("-l", "--summary").stdout.strip(), server.inbox_summary())
+            self.assertEqual(json.loads(self.ok("-l", "--summary", "--json").stdout), {"summary": server.inbox_summary()})
+            self.assertIn("30-day limit", self.refused("keep", "old"))  # Keep is refused once expired
 
     def test_list_json_is_the_api_data(self):
         self.note("2026-10-02-a.md", "A"); self.note("2026-10-03-b.md", "B", status="cooking")
@@ -185,6 +192,20 @@ class Deciding(CliBase):
         self.assertIn("Filed “Alpha” → reference/", r.stdout)
         self.assertTrue(os.path.exists(os.path.join(self.tmp, "reference", "a.md")))
 
+    def test_reference_section_unindexed_and_index(self):
+        readme = os.path.join(self.tmp, "reference", "README.md"); os.makedirs(os.path.dirname(readme))
+        with open(readme, "w") as fh: fh.write("# reference\n\n## Index\n\n### Tools\n- [x](x.md): x\n")
+        self.ok("reference", "2026-10-01-a.md", "--why", "worth keeping", "--section", "Tools", "--blurb", "the alpha one")
+        self.ok("reference", "2026-10-02-b.md")  # no --section: filed, not indexed
+        with open(readme) as fh: text = fh.read()
+        self.assertIn("- [Alpha](a.md): the alpha one", text); self.assertNotIn("b.md", text)
+        out = self.ok("reference", "--unindexed").stdout
+        self.assertIn("1 reference note(s) aren't in the index", out); self.assertIn("- b.md  Bravo", out); self.assertIn("Sections: Tools", out)
+        self.assertEqual([f["file"] for f in json.loads(self.ok("reference", "--unindexed", "--json").stdout)["files"]], ["b.md"])
+        self.assertIn("Added “Bravo” to the index under Tools", self.ok("index", "b.md", "--section", "Tools").stdout)
+        self.assertIn("0 reference note(s)", self.ok("reference", "--unindexed").stdout)
+        self.assertEqual(self.rt("reference").returncode, 1)  # neither a note nor --unindexed
+
     def test_promote(self):
         r = self.ok("promote", "2026-10-01-a.md", "--dest", "active", "--done", "it ships", "--due-days", "5", "--slug", "alpha")
         self.assertIn("Promoted “Alpha” → active/alpha/NOTES.md", r.stdout)
@@ -235,15 +256,19 @@ class Projects(CliBase):
         self.project("alpha", notes="# Alpha\n\n- status: promoted\n- promoted: 2026-10-01\n- due: 2099-01-01\n")
         self.project("beta", notes="# Beta\n\n- status: promoted\n")
         self.assertIn("Shipped alpha", self.ok("project", "ship", "alpha").stdout)
-        self.assertIn("Killed beta", self.ok("project", "kill", "beta", "--note", "no time").stdout)
+        self.assertIn("--reason", self.refused("project", "kill", "beta"))
+        self.assertIn("Killed beta", self.ok("project", "kill", "beta", "--reason", "no time").stdout)
         with open(os.path.join(self.tmp, "active", "beta", "NOTES.md")) as fh: self.assertIn("no time", fh.read())
         self.assertIn("unknown project", self.refused("project", "ship", "ghost"))
 
     def test_extend_needs_a_ship_by(self):
         self.project("alpha", notes="# Alpha\n\n- status: promoted\n- promoted: 2026-10-01\n- due: 2099-01-01\n")
         self.project("beta", notes="# Beta\n\n- status: promoted\n")
-        self.assertIn("ship by", self.ok("project", "extend", "alpha", "--days", "3").stdout)
-        self.assertIn("no ship-by", self.refused("project", "extend", "beta"))
+        self.assertIn("--reason", self.refused("project", "extend", "alpha", "--days", "3"))
+        self.assertIn("at least 10", self.refused("project", "extend", "alpha", "--reason", "busy"))
+        for _ in range(2): self.assertIn("ship by", self.ok("project", "extend", "alpha", "--days", "3", "--reason", "waiting on parts").stdout)
+        self.assertIn("ship it or kill it", self.refused("project", "extend", "alpha", "--reason", "waiting on parts"))
+        self.assertIn("no ship-by", self.refused("project", "extend", "beta", "--reason", "waiting on parts"))
 
 
 class Usage(CliBase):
