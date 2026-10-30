@@ -240,6 +240,16 @@ class Flows(BrowserCase):
         self.focus("#note"); self.page.type("Works on my phone"); self.page.click("#go"); self.done_toast()
         notes = open(os.path.join(self.tmp, "active", "recent", "NOTES.md")).read()
         self.assertIn("- definition of done: Works on my phone", notes); self.assertIn("- due:", notes)
+        self.assertTrue(os.path.isdir(os.path.join(self.tmp, "active", "recent", ".git")))
+
+    def test_promote_with_a_personal_git_email_shows_the_warning(self):
+        with open(self.gitconfig, "w") as fh: fh.write("[user]\n\tname = Me\n\temail = me@example.com\n[core]\n\thooksPath = /dev/null\n")
+        self.page.click("#list .item[data-f='2026-10-15-recent.md']"); self.page.key("p"); self.page.wait("document.querySelector('#form.promote')")
+        self.assertIn("git repo on main", self.page.eval("document.querySelector('#pv').textContent"))
+        self.focus("#note"); self.page.type("Works on my phone"); self.page.click("#go"); self.done_toast()
+        text = self.page.eval("document.querySelector('#toast').textContent")
+        self.assertIn("Warning:", text); self.assertIn("me@example.com", text)
+        self.assertTrue(self.page.eval("document.querySelector('#toast').classList.contains('bad') && !!document.querySelector('#tUndo')"))
 
     def test_reference_files_the_note(self):
         self.page.click("#list .item[data-f='2026-10-15-recent.md']"); self.page.key("r"); self.page.wait("document.querySelector('#form.reference')")
@@ -265,6 +275,15 @@ class Flows(BrowserCase):
         self.assertIn("- status: shipped", open(os.path.join(self.tmp, "active", "demo", "NOTES.md")).read())
         self.page.click("#tUndo"); self.settle(0.6)
         self.assertIn("- status: promoted", open(os.path.join(self.tmp, "active", "demo", "NOTES.md")).read())
+
+    def test_promoted_learning_and_template_folders_are_labelled_cards(self):
+        for kind, name in (("learning", "study"), ("templates", "kit")):
+            self.project(name, kind=kind, notes=f"# {name}\n\n- date: 2026-10-01\n- status: promoted\n- promoted: 2026-10-01\n- due: 2026-12-01\n\n## Plan\n\n- definition of done: Done.\n")
+        self.project("handmade", kind="learning")
+        self.open("projects"); self.page.wait("document.querySelector('[data-pid=\"templates/kit/NOTES.md\"]')")
+        label = lambda pid: self.page.eval(f"document.querySelector('[data-pid=\"{pid}\"] .row').textContent")
+        self.assertIn("Learning", label("learning/study/NOTES.md")); self.assertIn("Template", label("templates/kit/NOTES.md"))
+        self.assertFalse(self.page.eval("!!document.querySelector('[data-pid^=\"learning/handmade\"]')"))
 
     def test_an_open_ended_experiment_is_only_under_experiments(self):
         self.project("spike", kind="experiments", notes="# Spike\n\n- date: 2026-10-01\n- status: promoted\n- promoted: 2026-10-01\n\n## Plan\n\n- definition of done: We know.\n")

@@ -166,15 +166,41 @@ ticks all members and shows the batch form. Untick what should stay.
 
 | Button (key) | What happens |
 |--------------|--------------|
-| Promote (P)   | Copies the note to `../active/<slug>/NOTES.md` or `../experiments/<slug>/NOTES.md` (`learning/` and `templates/` get a flat `<slug>.md`). Stamps `status: promoted`, `promoted: <today>` and a `## Plan` block with your **done means** (required for every destination). Active / Learning / Template also get `due:` (3, 7, 14 or 30 days, or an exact date; default 7). **Experiments are open-ended:** no `due:`, and any old one is removed. The capture is marked promoted, gets the destination under `## Outcome`, and moves to `done/`. |
+| Promote (P)   | Creates `../<dest>/<slug>/` (`active`, `experiments`, `learning` or `templates`) from the skeleton in `starter/skeletons/<dest>/` (see **Project skeleton** below), with the note as its `NOTES.md`. Stamps `status: promoted`, `promoted: <today>` and a `## Plan` block with your **done means** (required for every destination). Active / Learning / Template also get `due:` (3, 7, 14 or 30 days, or an exact date; default 7). **Experiments are open-ended:** no `due:`, and any old one is removed. The capture is marked promoted, gets the destination under `## Outcome`, and moves to `done/`. |
 | Reference (R) | Copies the note to `../reference/<slug>.md` with YAML frontmatter (created, promoted, status, type, source, optional why, tag `reference`) so Obsidian shows it as properties. Capture marked promoted and moved to `done/`. **Does not** touch `reference/README.md`; the form reminds you to add it by hand if it belongs in the index. |
 | Keep (C)      | Sets `open` or `cooking` (the form defaults to the note's current one) and optionally adds a dated `next step` line under `## Notes`. Stays in the Inbox. |
 | Kill (X)      | `status: dead`, your reason (optional; "no longer useful." if blank) under `## Outcome`, moved to `done/`. |
 
 If the destination name is taken, a `-2`, `-3`… suffix is added; nothing is
 overwritten. The API also accepts the 1.x names `durable` (Reference) and
-`archive` (Kill). Promote creates files and folders only: no `git init`, no
-GitHub repo.
+`archive` (Kill).
+
+**Project skeleton.** A project folder made by Promote gets `README.md` (title,
+then `- **Status:**`, `- **Stack:**`, `- **Run it:**`, `- **Repo:**` lines and
+`## Why it exists` with the done means), `NOTES.md` (the promoted note, plus
+`- github: private` in its header), `AGENTS.md` (the `.scratch/` issue-tracker
+convention and a **First build round** checklist with the exact `gh repo create
+<slug> --private …` and `ALLOW_PUSH_MAIN=1 git push -u origin main` commands),
+`CLAUDE.md` (`@AGENTS.md`), `.gitignore`, and an empty `.scratch/` (active),
+`notes/` for study notes (learning) or `template/` for the files to copy
+(templates, whose README says what it scaffolds and how to copy it).
+Learning and templates used to get a flat `<slug>.md`; those files stay where
+they are and still show on the board. `{{title}}`, `{{slug}}`, `{{done}}`, `{{due}}` and `{{today}}` in
+the skeleton files are filled in one pass (text from the note is never
+expanded). Then, in the same undoable step, it runs `git init -b main` and
+makes one commit, `Start <slug> (promoted from RawNotes)`, with your normal
+git hooks. The app never sets a git identity: if the email git would use
+(config or `GIT_AUTHOR_EMAIL`/`GIT_COMMITTER_EMAIL`) does not end in
+`@users.noreply.github.com` (change it with `"noreply_suffix"` in
+`config.json`), the repo is made with **no commit** and the page shows a
+warning with the command to commit by hand. A refused commit (a hook said no)
+is a warning too, with the files staged. No `git` on the PATH: the folder and
+files are made, with a warning. Promote never creates a GitHub repo or
+pushes. **Undo** removes the folder including `.git` only while the repo
+still holds just that commit (every ref on it) and nothing is modified,
+staged or untracked; after a second commit, an amend, a new branch or an
+added or edited file it refuses, changing nothing. If a step after `git init`
+fails, the whole promote is rolled back, `.git` included.
 
 **Batch:** with a stack open, tick notes and **Keep all**, **Kill all** or
 **Reference all** as one undoable step (batch Promote is not offered), or
@@ -212,7 +238,12 @@ One board for everything promoted. Cards come from two scans of the sibling
 folders:
 
 - every folder directly under `active/` and `experiments/` (hidden ones
-  skipped), whether or not it was promoted through this app;
+  skipped), whether or not it was promoted through this app. A linked git
+  worktree (its `.git` is a `gitdir:` file, i.e. a branch checkout) is not a
+  project: it is left off the board, and the project routes refuse it;
+- every folder directly under `learning/` and `templates/` whose `NOTES.md`
+  has a `promoted:` line (made by Promote). Hand-made folders there, such as a
+  study folder or a template kit, stay off the board;
 - every `.md` file directly in, or one level below, `active/`, `experiments/`,
   `learning/`, `templates/` and `maintained/` whose header has a `due:` line
   (first 4,000 bytes are read), plus experiment files with a `promoted:` line

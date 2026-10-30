@@ -454,6 +454,7 @@ function toast(msg,{undo=false,bad=false}={}){
   // on a phone, float above whatever is fixed to the bottom (tab bar or decision sheet) instead of covering it
   t.style.bottom=narrow()?(Math.max(0,...['#decide','#tabbar'].map(s=>{const el=$(s);return el&&getComputedStyle(el).position==='fixed'&&getComputedStyle(el).display!=='none'?innerHeight-el.getBoundingClientRect().top:0}))+12)+'px':'';
   t.onfocusin=t.onmouseenter=()=>clearTimeout(toastTimer);t.onfocusout=t.onmouseleave=()=>{clearTimeout(toastTimer);toastTimer=setTimeout(hide,3000)}}
+const withWarning=r=>r.warning?r.msg+'. Warning: '+r.warning:r.msg;  // e.g. promote made the repo but no commit
 async function doUndo(){
   try{const r=await api('/api/undo',{});S.undoCount=r.left;
     await changed();
@@ -624,9 +625,9 @@ function formHtml(mode,n){const s=slugOf(n.file);
     <div class="field"><label class="label" for="note">Why not</label><input class="input" id="note" placeholder="one line: why this died (optional)"></div></div>
     <div class="preview"><div class="label">What will happen</div><ol><li>Sets <b>status: dead</b> and writes your reason under ## Outcome</li><li>Moves the note to <span class="mono">RawNotes/done/</span>; it shows up in the <b>Archive</b></li></ol></div>${foot(I.x+'Kill &amp; next','danger','Restore it from the Archive any time')}</form>`}
 function updatePreview(){const pv=$('#pv');if(!pv||!S.mode)return;const slug=($('#slug')?.value||'').toLowerCase().replace(/[^a-z0-9-]/g,'')||'…';
-  if(S.mode==='promote'){const d=segVal('dest'),folder=d==='active'||d==='experiments',exp=d==='experiments',due=shipDate();syncShipBy(d);
+  if(S.mode==='promote'){const d=segVal('dest'),folder=true,exp=d==='experiments',due=shipDate();syncShipBy(d);  // every destination is a project folder
     const days=Math.round((new Date(due+'T00:00')-new Date(addDays(0)+'T00:00'))/864e5);
-    pv.innerHTML=`<div class="label">What will happen</div><ol><li>Creates <span class="mono">~/Projects/${d}/${slug}${folder?'/NOTES.md':'.md'}</span></li>
+    pv.innerHTML=`<div class="label">What will happen</div><ol><li>Creates <span class="mono">~/Projects/${d}/${slug}${folder?'/':'.md'}</span>${folder?' with README, NOTES.md (this note), AGENTS.md and CLAUDE.md, as a git repo on <b>main</b> with a first commit (private; push it in the first build round)':''}</li>
       <li>Stamps <b>promoted</b> today · ${exp?'<b>no ship-by date</b> (open-ended)':`<b>ship by ${fmtDate(due)}</b>`}</li><li>Writes your <b>done means</b> into its ## Plan</li><li>Moves the capture to <span class="mono">RawNotes/done/</span></li><li>Shows up in <b>Projects</b> ${exp?'under Experiments, no clock':`with a ${days}-day clock`}</li></ol>`}
   if(S.mode==='reference')pv.innerHTML=`<div class="label">What will happen</div><ol><li>Copies to <span class="mono">~/Projects/reference/${slug}.md</span> with Obsidian properties</li><li>Moves the capture to <span class="mono">RawNotes/done/</span></li><li>Add it to <span class="mono">reference/README.md</span> if it belongs in the index</li></ol>`}
 
@@ -687,7 +688,7 @@ async function apply(){
     const r=await api('/api/action',body);S.undoCount++;
     const next=ord.slice(i+1).find(f=>!f.startsWith('stack:'))||ord.slice(0,i).reverse().find(f=>!f.startsWith('stack:'));
     delete S.forms[S.sel+'|'+S.mode];await changed();S.sel=next&&S.notes.live.some(n=>n.file===next)?next:null;S.mode=null;
-    render();toast(r.msg,{undo:true})}
+    render();toast(withWarning(r),{undo:true,bad:!!r.warning})}
   catch(e){go.disabled=false;err.textContent=e.message}
   finally{submitting=false}}
 
@@ -733,7 +734,7 @@ async function applyBatch(){const files=[...S.batch],m=S.batchMode,go=$('#go'),e
   go.disabled=true;err.textContent='';submitting=true;
   try{const r=m==='merge'?await api('/api/merge',{files,title:val('mtitle'),then:segVal('then'),dest:segVal('dest'),...shipBody(segVal('dest')),slug:val('slug'),note:val('note')})
       :await api('/api/batch',{files,action:m,note:val('note'),status:segVal('status')});
-    S.undoCount++;await changed();S.expanded=null;S.armed=null;S.batch=new Set();S.sel=r.file||null;render();toast(r.msg,{undo:true})}
+    S.undoCount++;await changed();S.expanded=null;S.armed=null;S.batch=new Set();S.sel=r.file||null;render();toast(withWarning(r),{undo:true,bad:!!r.warning})}
   catch(e){go.disabled=false;err.textContent=e.message}
   finally{submitting=false}}
 
@@ -774,7 +775,8 @@ function projectCards(){
   ps.filter(p=>!used.has(p.path)).forEach(p=>cards.push(card(p.path,p.name,null,p)));
   return cards}
 const CLOSED=['done','shipped','dead'];
-const expChip=c=>c.exp?st('exp','Experiment'):'';
+const KIND_LABEL={learning:'Learning',templates:'Template'};
+const expChip=c=>c.exp?st('exp','Experiment'):c.p&&KIND_LABEL[c.p.kind]?st('plain',KIND_LABEL[c.p.kind]):'';
 const pq=p=>'name='+enc(p.name)+'&kind='+enc(p.kind);
 function ring(f){if(!f||f.days_left===null)return'';const l=f.days_left;
   let total=7;if(f.promoted&&f.due){const t=(new Date(f.due)-new Date(f.promoted))/864e5;if(t>0)total=t}

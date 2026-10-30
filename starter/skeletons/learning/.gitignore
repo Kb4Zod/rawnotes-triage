@@ -1,0 +1,19 @@
+# secrets and machine-local files
+.env
+.env.*
+*.pem
+*.key
+
+# build and tool output
+__pycache__/
+*.pyc
+node_modules/
+dist/
+build/
+*.log
+
+# editors and OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
