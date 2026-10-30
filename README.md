@@ -266,12 +266,22 @@ Select a card to open its panel in a column beside it (select it again, or
 README or NOTES. Excerpts and commit titles are quoted from the source, not
 summarised. Buttons: **Mark shipped** (`status: shipped` + `shipped:` date),
 **+7 days** (pushes `due:` from today or the current due date, whichever is
-later; not offered for experiments or undated folders), **Browse repo** when
-the project has a GitHub origin, otherwise **Open folder** (launches
+later; not offered for experiments or undated folders; asks why, at least 10
+characters, and records `- extensions: N` plus a `- pushed <old> → <new>
+(<date>): <reason>` line under `## Plan`; after two pushes (`max_extensions` in
+`config.json`) the button reads "No more extensions", and an overdue project
+with none left shows a **Decide** badge: ship it or kill it), **Browse repo**
+when the project has a GitHub origin, otherwise **Open folder** (launches
 `xdg-open` on the server's machine; only for a browser on that machine, and
-hidden on the phone layout), and **Kill** (asks for a second click). Shipping
-or killing a folder that has no dated file writes into its `NOTES.md`,
-creating it if needed. All these writes can be undone. Git facts are cached
+hidden on the phone layout), and **Kill** (asks why; the reason goes under
+`## Outcome`). Shipping or killing a folder that has no dated file writes into its `NOTES.md`,
+creating it if needed. Shipping or killing also writes `- closed: <date>`.
+The **Closed** column shows only projects closed in the last 7 days
+(`closed_window_days` in `config.json`), counting folders and dated files that
+have since moved to `maintained/` or `archive/`; **Show all (N)** lists every
+closed project still under `active/` or `experiments/`. A project's closed date
+is its `closed:` line, else `shipped:`, else the date in `**Killed
+YYYY-MM-DD:**` under `## Outcome`. All these writes can be undone. Git facts are cached
 for 20 seconds; **Refresh** re-reads them.
 
 **Symlinked project folders** are listed read-only with a note. Every write

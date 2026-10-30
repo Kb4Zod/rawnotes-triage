@@ -380,7 +380,7 @@ class LearningAndTemplates(PromoteBase):
         server._undo.clear()
         lp, tp = os.path.join(self.tmp, "learning", "a"), os.path.join(self.tmp, "templates", "b")
         old_due = server.field(self.read(lp, "NOTES.md"), "due")
-        self.post("/api/project/status", {"path": "learning/a/NOTES.md", "action": "extend", "days": 7})
+        self.post("/api/project/status", {"path": "learning/a/NOTES.md", "action": "extend", "days": 7, "note": "Waiting on the exam date"})
         self.assertNotEqual(server.field(self.read(lp, "NOTES.md"), "due"), old_due)
         self.post("/api/project/status", {"path": "templates/b/NOTES.md", "action": "shipped"})
         self.assertEqual(server.field(self.read(tp, "NOTES.md"), "status"), "shipped")

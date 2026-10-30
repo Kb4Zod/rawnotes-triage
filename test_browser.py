@@ -285,6 +285,34 @@ class Flows(BrowserCase):
         self.assertIn("Learning", label("learning/study/NOTES.md")); self.assertIn("Template", label("templates/kit/NOTES.md"))
         self.assertFalse(self.page.eval("!!document.querySelector('[data-pid^=\"learning/handmade\"]')"))
 
+    def read_file(self, path):
+        with open(path, encoding="utf-8") as fh: return fh.read()
+
+    def test_extending_asks_why_and_stops_after_two(self):
+        demo = os.path.join(self.tmp, "active", "demo", "NOTES.md")
+        self.open("projects"); self.page.click("[data-pid='active/demo/NOTES.md']"); self.page.wait("document.querySelector('[data-pa=extend]')")
+        self.page.click("[data-pa=extend]"); self.page.wait("document.querySelector('#pwhy')")
+        self.page.click("#pf button[type=submit]"); self.page.wait("document.querySelector('#perr').textContent.includes('why')")
+        self.assertNotIn("extensions", self.read_file(demo))
+        for n in (1, 2):
+            if n == 2: self.page.click("[data-pa=extend]"); self.page.wait("document.querySelector('#pwhy')")
+            self.focus("#pwhy"); self.page.type("Waiting on the parts"); self.page.click("#pf button[type=submit]"); self.done_toast(); self.settle(0.4)
+            self.page.eval("document.querySelector('#toast').classList.remove('show')")
+        self.assertIn("- extensions: 2", self.read_file(demo))
+        self.page.wait("document.querySelector('#drawer .acts .btn[disabled]')")
+        self.assertIn("No more extensions", self.text("#drawer .acts"))
+
+    def test_closed_column_shows_the_window_with_a_show_all_toggle(self):
+        old = (server.today() - server.dt.timedelta(days=30)).isoformat()
+        self.project("ancient", notes=f"# Ancient\n\n- status: shipped\n- closed: {old}\n")
+        self.project("fresh", notes=f"# Fresh\n\n- status: shipped\n- closed: {server.today().isoformat()}\n")
+        self.open("projects"); self.page.wait("document.querySelector('#closedAll')")
+        col = lambda: self.page.eval("(()=>{const c=[...document.querySelectorAll('#pscroll .col')].find(c=>c.querySelector('h2').textContent.startsWith('Closed'));return [c.querySelector('h2').textContent.trim(),[...c.querySelectorAll('[data-pid]')].map(b=>b.dataset.pid)]})()")
+        h, pids = col(); self.assertIn("last 7 days", h); self.assertEqual(pids, ["active/fresh"])
+        self.assertIn("Show all (2)", self.text("#closedAll"))
+        self.page.click("#closedAll"); self.page.wait("document.querySelector('#closedAll').textContent.includes('Last 7')")
+        self.assertEqual(sorted(col()[1]), ["active/ancient", "active/fresh"])
+
     def test_an_open_ended_experiment_is_only_under_experiments(self):
         self.project("spike", kind="experiments", notes="# Spike\n\n- date: 2026-10-01\n- status: promoted\n- promoted: 2026-10-01\n\n## Plan\n\n- definition of done: We know.\n")
         self.open("projects"); self.page.wait("document.querySelector('[data-pid^=\"experiments/spike\"]')")
