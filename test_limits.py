@@ -99,6 +99,19 @@ class InboxLimits(Fixture):
         self.assertTrue(self.row(self.make(11, slug="e"))["expired"])
         self.assertEqual(self.get("/api/notes")["limits"]["inbox_limit_days"], 10)
 
+    def test_one_config_reader_falls_back_to_every_default(self):
+        os.makedirs(server.CONFIG_DIR, exist_ok=True)
+        for junk in ("[1, 2]", "not json", '{"max_extensions": true, "closed_window_days": -1, "autocommit": "no", "max_keeps": 0, "noreply_suffix": "x"}'):
+            with open(server.config_path(), "w") as fh: fh.write(junk)
+            self.assertEqual(server.limits(), server.LIMIT_DEFAULTS, junk)
+            self.assertEqual(server.config_int("max_extensions", server.MAX_EXTENSIONS), server.MAX_EXTENSIONS)
+            self.assertEqual(server.config_int("closed_window_days", server.CLOSED_WINDOW_DAYS), server.CLOSED_WINDOW_DAYS)
+            self.assertTrue(server.saved_autocommit()); self.assertEqual(server.noreply_suffix(), server.NOREPLY_SUFFIX)
+            self.assertIsNone(server.saved_notes_dir())
+        server.save_config(autocommit=False, max_extensions=0, notes=self.notes)  # save_config merges into the same file
+        self.assertFalse(server.saved_autocommit()); self.assertEqual(server.config_int("max_extensions", 2), 0)
+        self.assertEqual(server.saved_notes_dir(), self.notes)
+
     def test_summary_line_and_pulse_count(self):
         self.make(1, slug="a"); self.make(40, "cooking", slug="b"); self.make(20, slug="c")
         self.assertEqual(server.inbox_summary(), "2 open, 1 cooking (2 stale, 1 expired)")

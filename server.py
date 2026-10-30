@@ -93,14 +93,8 @@ def _summary_core(path, sub):
 
 def limits():
     """The four Inbox numbers: LIMIT_DEFAULTS, overridden by whole-number values >= 1 in config.json."""
-    out = dict(LIMIT_DEFAULTS)
-    try:
-        with open(config_path(), encoding="utf-8") as fh: d = json.load(fh)
-    except (OSError, ValueError): return out
-    for k in out:
-        v = d.get(k) if isinstance(d, dict) else None
-        if isinstance(v, int) and not isinstance(v, bool) and v >= 1: out[k] = v
-    return out
+    d = read_config()
+    return {k: config_int(k, v, minimum=1, conf=d) for k, v in LIMIT_DEFAULTS.items()}
 
 def _day(s):
     try: return dt.date.fromisoformat(s)
@@ -179,7 +173,7 @@ def list_notes(with_inflight=True):
     with _lock.read():
         out = scan_notes()
         return {**out, "inflight": inflight() if with_inflight else [], "limits": limits(), "today": today().isoformat(), "notes_dir": NOTES,
-                "closed_window_days": tunable("closed_window_days", CLOSED_WINDOW_DAYS)}
+                "closed_window_days": config_int("closed_window_days", CLOSED_WINDOW_DAYS)}
 
 def _count(v):
     """A header count (extensions: 2) as an int; missing or junk counts as 0."""
@@ -197,7 +191,7 @@ def _meta_of(path, f):
 
 def in_closed_window(day):
     """Was `day` (YYYY-MM-DD) within the last closed_window_days days?"""
-    try: return (today() - dt.date.fromisoformat(day)).days <= tunable("closed_window_days", CLOSED_WINDOW_DAYS)
+    try: return (today() - dt.date.fromisoformat(day)).days <= config_int("closed_window_days", CLOSED_WINDOW_DAYS)
     except ValueError: return False
 
 def inflight():
@@ -230,7 +224,7 @@ def inflight():
                 out.append({"path": rel, "title": m["title"], "project": rel.split(os.sep)[1] if rel.count(os.sep) >= 2 else "",
                             "dest": dest, "promoted": m["promoted"], "due": due,
                             "days_left": left, "open_ended": open_ended, "status": m["status"],
-                            "extensions": m["extensions"], "max_extensions": tunable("max_extensions", MAX_EXTENSIONS),
+                            "extensions": m["extensions"], "max_extensions": config_int("max_extensions", MAX_EXTENSIONS),
                             "done": m["status"] in CLOSED or (dest in ("maintained", "archive") and bool(m["closed"])), "closed": m["closed"]})
     out.sort(key=lambda x: (x["done"], x["days_left"] if x["days_left"] is not None else 999))
     return out
@@ -446,11 +440,7 @@ def git_identity(path):
 
 def noreply_suffix():
     """The ending a first commit's email must have: `noreply_suffix` in config.json, else GitHub's noreply domain."""
-    try:
-        with open(config_path(), encoding="utf-8") as fh: d = json.load(fh)
-        v = d.get("noreply_suffix") if isinstance(d, dict) else None
-    except (OSError, ValueError): v = None
-    return v if isinstance(v, str) and v.startswith("@") and len(v) > 2 else NOREPLY_SUFFIX
+    return config_value("noreply_suffix", NOREPLY_SUFFIX, lambda v: isinstance(v, str) and v.startswith("@") and len(v) > 2)
 
 GIT_TTL = 20  # seconds a project's git facts are reused; Refresh on the Projects page asks for fresh ones
 _git_cache = {}  # path -> (fingerprint, taken, state)
@@ -640,27 +630,33 @@ TEMPLATE = os.path.join(HERE, "starter", "_template.md")  # copied into a new no
 
 def config_path(): return os.path.join(CONFIG_DIR, "config.json")
 
-def saved_notes_dir():
-    """The notes folder chosen in the first-run dialog, or None (nothing saved, or the file is unreadable)."""
+# config.json is read in exactly one place (read_config); every setting goes through config_value / config_int, so a
+# missing, unreadable or malformed file, or a value of the wrong kind, always means "use the default". Keys:
+#   notes, autocommit, noreply_suffix, max_extensions, closed_window_days, stale_open_days, stale_cooking_days,
+#   inbox_limit_days, max_keeps.
+def read_config():
+    """config.json as a dict; {} when it is missing, unreadable, not JSON or not an object."""
     try:
         with open(config_path(), encoding="utf-8") as fh: d = json.load(fh)
-    except (OSError, ValueError): return None
-    p = d.get("notes") if isinstance(d, dict) else None
-    return p if isinstance(p, str) and os.path.isabs(p) else None
+    except (OSError, ValueError): return {}
+    return d if isinstance(d, dict) else {}
 
-def tunable(key, default):
-    """A whole-number setting from config.json (`default` if missing, unreadable or not a positive/zero integer)."""
-    try:
-        with open(config_path(), encoding="utf-8") as fh: v = json.load(fh).get(key)
-    except (OSError, ValueError, AttributeError): return default
-    return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else default
+def config_value(key, default, valid=lambda v: True, conf=None):
+    """config.json's `key` if it is set and passes `valid`, else `default`. `conf`: an already-read config."""
+    v = (read_config() if conf is None else conf).get(key)
+    return v if v is not None and valid(v) else default
+
+def config_int(key, default, minimum=0, conf=None):
+    """A whole-number setting (not a bool) of at least `minimum`, else `default`."""
+    return config_value(key, default, lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= minimum, conf)
+
+def saved_notes_dir():
+    """The notes folder chosen in the first-run dialog, or None (nothing saved, or the file is unreadable)."""
+    return config_value("notes", None, lambda p: isinstance(p, str) and os.path.isabs(p))
 
 def save_config(**changes):
     """Merge `changes` into config.json (folder 0700, written through a private temp file and renamed into place)."""
-    try:
-        with open(config_path(), encoding="utf-8") as fh: d = json.load(fh)
-        if not isinstance(d, dict): d = {}
-    except (OSError, ValueError): d = {}
+    d = read_config()
     d.update(changes)
     os.makedirs(CONFIG_DIR, mode=0o700, exist_ok=True); os.chmod(CONFIG_DIR, 0o700)
     fd, tmp = tempfile.mkstemp(dir=CONFIG_DIR, prefix=".config.json.")
@@ -1268,10 +1264,7 @@ _commit_result = threading.local()  # the commit of the change this request thre
 
 def saved_autocommit():
     """False only when config.json says "autocommit": false."""
-    try:
-        with open(config_path(), encoding="utf-8") as fh: d = json.load(fh)
-    except (OSError, ValueError): return True
-    return not (isinstance(d, dict) and d.get("autocommit") is False)
+    return config_value("autocommit", True) is not False
 
 def _note_commit(res):
     if res is not None: _commit_result.value = res
@@ -1609,7 +1602,7 @@ def _status_edit(text, req, name):
         why = _text(req, "note")
         if len(why) < REASON_MIN: raise ValueError(f"Say why you need more time (at least {REASON_MIN} characters).")
         done = _count(field(text, "extensions"))
-        if done >= tunable("max_extensions", MAX_EXTENSIONS): raise ValueError("Pushed twice already: ship it or kill it.")
+        if done >= config_int("max_extensions", MAX_EXTENSIONS): raise ValueError("Pushed twice already: ship it or kill it.")
         try: days = int(7 if req.get("days") is None else req.get("days"))
         except (TypeError, ValueError): raise ValueError("days must be a number")
         if not 1 <= days <= EXTEND_MAX_DAYS: raise ValueError(f"days must be 1 to {EXTEND_MAX_DAYS}")
