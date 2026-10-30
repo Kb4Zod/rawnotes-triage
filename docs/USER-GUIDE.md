@@ -82,7 +82,7 @@ Everything in `done/`, newest first, filtered by Promoted, Reference, Killed or 
 - Choose a destination: Active, Experiment, Learning or Template.
 - Write the **done means** (required for every destination).
 - Active, Learning and Template also get a **due** date: 3, 7, 14 or 30 days, or an exact date (default 7). Experiments are open-ended and get no due date.
-- Result: a project folder `active/<slug>/` or `experiments/<slug>/` is created from the standard skeleton (README, AGENTS.md, CLAUDE.md, .gitignore) with the note as its `NOTES.md` (Learning and Template get a flat `<slug>.md`) with `status: promoted` and a `## Plan` block. The original is marked promoted, records the destination under `## Outcome`, and moves to `done/`.
+- Result: a project folder `active/<slug>/`, `experiments/<slug>/`, `learning/<slug>/` or `templates/<slug>/` is created from the standard skeleton (README, AGENTS.md, CLAUDE.md, .gitignore; plus `notes/` for Learning and `template/` for Template) with the note as its `NOTES.md` with `status: promoted` and a `## Plan` block. The original is marked promoted, records the destination under `## Outcome`, and moves to `done/`.
 - The project folder is a git repo on `main` with one commit, `Start <slug> (promoted from RawNotes)`. If the email git would use is not a `@users.noreply.github.com` address, the repo gets no commit and the page warns you; the app never changes your git identity. Promote never creates a GitHub repo: that is the first build round (the commands are in the project's `AGENTS.md`).
 - Undo removes the folder and its `.git`, but only while the repo still has just that first commit and no other changes.
 

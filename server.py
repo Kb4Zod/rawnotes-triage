@@ -54,9 +54,9 @@ ACTIVITY_TTL = 600  # seconds; GitHub contribution data barely changes minute to
 ACTIVITY_REPO_DAYS = 30
 STALE_DAYS = 60
 NOTE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-.+\.md$")
-DESTS = {  # promote targets: folder -> (layout)
+DESTS = {  # promote targets: folder -> (layout). "file" (a flat <slug>.md) is no longer used; old flat files still show
     "experiments": "folder", "active": "folder",
-    "learning": "file", "templates": "file",
+    "learning": "folder", "templates": "folder",
 }
 
 def today(): return dt.date.today()
@@ -246,7 +246,8 @@ def set_done(name, text, expected, kind=None):
     _log(f"done {kind}/{name} -> {os.path.basename(target)}: {text[:80]}")
     return {"ok": True, "file": os.path.basename(target), "msg": f"Saved to {os.path.basename(target)}"}
 
-PROJECT_KINDS = ("active", "experiments")  # folders whose subfolders are projects on the board
+PROJECT_KINDS = ("active", "experiments", "learning", "templates")  # folders whose subfolders are projects on the board
+PROMOTED_ONLY = ("learning", "templates")  # here a folder is a project only if Promote made it (its NOTES.md says promoted:)
 
 def notes_file(path):
     """The project's NOTES.md (whatever its case), or where a new one would go."""
@@ -276,12 +277,19 @@ def is_worktree(path):
         with open(os.path.join(path, ".git"), "rb") as fh: return fh.read(8) == b"gitdir: "
     except OSError: return False  # no .git, or .git is a folder (a normal repo)
 
-def on_board(path):
-    """Whether a folder under a project kind counts as a project (shown on the board, reachable through the API)."""
-    return not is_worktree(path)
+def on_board(path, kind):
+    """Whether a folder under a project kind counts as a project (shown on the board, reachable through the API):
+    never a linked worktree; in learning/ and templates/ only a folder whose NOTES.md has a `promoted:` line, so
+    hand-made study folders and template kits stay off the board."""
+    if is_worktree(path): return False
+    if kind not in PROMOTED_ONLY: return True
+    try:
+        with open(notes_file(path), "rb") as fh: return bool(field(to_lf(fh.read(4000).decode("utf-8", "replace")), "promoted"))
+    except OSError: return False
 
 def project_folders():
-    """Every project folder under ../active and ../experiments; `kind` says which (experiments are labelled on the board).
+    """Every project folder under ../active and ../experiments, plus promoted ones under ../learning and ../templates;
+    `kind` says which (experiments, learning and templates are labelled on the board).
     A symlinked folder is listed (read-only: `linked`) but Triage never writes into it."""
     out = []
     for kind in PROJECT_KINDS:
@@ -289,7 +297,7 @@ def project_folders():
         if not os.path.isdir(base): continue
         for name in sorted(os.listdir(base), key=str.casefold):
             full = os.path.join(base, name)
-            if name.startswith(".") or not os.path.isdir(full) or not on_board(full): continue
+            if name.startswith(".") or not os.path.isdir(full) or not on_board(full, kind): continue
             status, defined = project_facts(full)
             out.append({"name": name, "kind": kind, "path": f"{kind}/{name}", "abs_path": full,
                         "repo": os.path.exists(os.path.join(full, ".git")), "status": status, "done_defined": defined,
@@ -304,7 +312,7 @@ def project_dir(name, kind=None, write=False):
     if kind not in PROJECT_KINDS or not isinstance(name, str) or not name or name.startswith(".") or "/" in name or os.sep in name or "\0" in name:
         raise ValueError("unknown project")
     path = os.path.join(PROJECTS, kind, name)
-    if not os.path.isdir(path) or not on_board(path): raise ValueError("unknown project")
+    if not os.path.isdir(path) or not on_board(path, kind): raise ValueError("unknown project")
     if write:
         try: safefs.ensure_inside([PROJECTS], path)
         except ValueError: raise ValueError(f"“{name}” is a symlink: Triage only changes real folders inside Projects.")

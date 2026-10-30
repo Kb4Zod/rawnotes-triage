@@ -625,7 +625,7 @@ function formHtml(mode,n){const s=slugOf(n.file);
     <div class="field"><label class="label" for="note">Why not</label><input class="input" id="note" placeholder="one line: why this died (optional)"></div></div>
     <div class="preview"><div class="label">What will happen</div><ol><li>Sets <b>status: dead</b> and writes your reason under ## Outcome</li><li>Moves the note to <span class="mono">RawNotes/done/</span>; it shows up in the <b>Archive</b></li></ol></div>${foot(I.x+'Kill &amp; next','danger','Restore it from the Archive any time')}</form>`}
 function updatePreview(){const pv=$('#pv');if(!pv||!S.mode)return;const slug=($('#slug')?.value||'').toLowerCase().replace(/[^a-z0-9-]/g,'')||'…';
-  if(S.mode==='promote'){const d=segVal('dest'),folder=d==='active'||d==='experiments',exp=d==='experiments',due=shipDate();syncShipBy(d);
+  if(S.mode==='promote'){const d=segVal('dest'),folder=true,exp=d==='experiments',due=shipDate();syncShipBy(d);  // every destination is a project folder
     const days=Math.round((new Date(due+'T00:00')-new Date(addDays(0)+'T00:00'))/864e5);
     pv.innerHTML=`<div class="label">What will happen</div><ol><li>Creates <span class="mono">~/Projects/${d}/${slug}${folder?'/':'.md'}</span>${folder?' with README, NOTES.md (this note), AGENTS.md and CLAUDE.md, as a git repo on <b>main</b> with a first commit (private; push it in the first build round)':''}</li>
       <li>Stamps <b>promoted</b> today · ${exp?'<b>no ship-by date</b> (open-ended)':`<b>ship by ${fmtDate(due)}</b>`}</li><li>Writes your <b>done means</b> into its ## Plan</li><li>Moves the capture to <span class="mono">RawNotes/done/</span></li><li>Shows up in <b>Projects</b> ${exp?'under Experiments, no clock':`with a ${days}-day clock`}</li></ol>`}
@@ -775,7 +775,8 @@ function projectCards(){
   ps.filter(p=>!used.has(p.path)).forEach(p=>cards.push(card(p.path,p.name,null,p)));
   return cards}
 const CLOSED=['done','shipped','dead'];
-const expChip=c=>c.exp?st('exp','Experiment'):'';
+const KIND_LABEL={learning:'Learning',templates:'Template'};
+const expChip=c=>c.exp?st('exp','Experiment'):c.p&&KIND_LABEL[c.p.kind]?st('plain',KIND_LABEL[c.p.kind]):'';
 const pq=p=>'name='+enc(p.name)+'&kind='+enc(p.kind);
 function ring(f){if(!f||f.days_left===null)return'';const l=f.days_left;
   let total=7;if(f.promoted&&f.due){const t=(new Date(f.due)-new Date(f.promoted))/864e5;if(t>0)total=t}

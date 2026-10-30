@@ -12,6 +12,8 @@ from testkit import Fixture, TEST_EMAIL
 
 ACTIVE_FILES = {".gitignore", ".scratch/.gitkeep", "AGENTS.md", "CLAUDE.md", "NOTES.md", "README.md"}
 EXPERIMENT_FILES = {".gitignore", "AGENTS.md", "CLAUDE.md", "NOTES.md", "README.md"}
+LEARNING_FILES = EXPERIMENT_FILES | {"notes/.gitkeep"}
+TEMPLATE_FILES = EXPERIMENT_FILES | {"template/.gitkeep"}
 
 
 class Worktrees(Fixture):
@@ -53,8 +55,8 @@ class Worktrees(Fixture):
 
 
 
-class PromoteSkeleton(Fixture):
-    """07: Promote to active/experiments writes the skeleton, git init -b main and one commit, as one undo step."""
+class PromoteBase(Fixture):
+    """Three Inbox notes and helpers to promote them and look inside the result."""
     def setUp(self):
         super().setUp()
         self.a = self.note("2026-10-01-a.md", "Note A", question="Can it ship?")
@@ -82,6 +84,9 @@ class PromoteSkeleton(Fixture):
     def set_email(self, email):
         with open(self.gitconfig, "w") as fh: fh.write(f"[user]\n\tname = Someone\n\temail = {email}\n[core]\n\thooksPath = /dev/null\n")
 
+
+class PromoteSkeleton(PromoteBase):
+    """07: Promote to active/experiments writes the skeleton, git init -b main and one commit, as one undo step."""
     def test_active_gets_the_skeleton_and_one_commit_on_main(self):
         r = self.promote(); proj = os.path.join(self.tmp, "active", "a")
         self.assertNotIn("warning", r); self.assertEqual(r["target"], "active/a/NOTES.md")
@@ -308,6 +313,78 @@ class PromoteSkeleton(Fixture):
         with mock.patch.dict(os.environ, {"GIT_DIR": os.path.join(other, ".git"), "GIT_WORK_TREE": other}): self.promote()
         self.assertEqual(self.git(os.path.join(self.tmp, "active", "a"), "log", "--format=%s"), "Start a (promoted from RawNotes)")
         self.assertEqual(self.git(other, "rev-parse", "-q", "--verify", "HEAD"), "")
+
+
+
+class LearningAndTemplates(PromoteBase):
+    """08: learning and templates promote to git-initialised folders too; only promoted ones join the board."""
+    def test_learning_promotes_to_a_folder_with_a_repo(self):
+        r = self.promote(dest="learning"); proj = os.path.join(self.tmp, "learning", "a")
+        self.assertNotIn("warning", r); self.assertEqual(r["target"], "learning/a/NOTES.md")
+        self.assertEqual(self.files(proj), LEARNING_FILES)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "learning", "a.md")))
+        self.assertEqual(set(self.git(proj, "ls-tree", "-r", "--name-only", "HEAD").splitlines()), LEARNING_FILES)
+        self.assertEqual(self.git(proj, "log", "--format=%s"), "Start a (promoted from RawNotes)")
+        for rel in LEARNING_FILES - {"NOTES.md"}: self.assertNotIn("{{", self.read(proj, rel), rel)
+        self.assertIn("gh repo create a --private", self.read(proj, "AGENTS.md"))
+        self.assertEqual(server.field(self.read(proj, "NOTES.md"), "github"), "private")
+        self.post("/api/undo", {}); self.assertEqual(self.snapshot(), self.before)
+
+    def test_templates_promote_to_a_folder_that_says_how_to_copy_it(self):
+        self.promote(dest="templates"); proj = os.path.join(self.tmp, "templates", "a")
+        self.assertEqual(self.files(proj), TEMPLATE_FILES)
+        readme = self.read(proj, "README.md")
+        self.assertEqual(readme.splitlines()[0], "# Note A"); self.assertIn("## What it scaffolds", readme)
+        self.assertIn("cp -r template/. ", readme)
+        self.assertEqual(set(self.git(proj, "ls-tree", "-r", "--name-only", "HEAD").splitlines()), TEMPLATE_FILES)
+
+    def test_promoted_folders_show_on_the_board_hand_made_ones_do_not(self):
+        self.promote(dest="learning"); self.promote("2026-10-02-b.md", dest="templates")
+        self.project("cert-study", kind="learning")  # hand-made, no NOTES.md
+        self.project("review-kit", kind="templates", notes="# Review kit\n\n- status: maintained\n")  # NOTES.md, never promoted
+        self.project("half", kind="learning", notes="# Half\n\nNotes, but promoted: only in prose.\n")
+        ps = {p["path"]: p for p in self.get("/api/projects")["projects"]}
+        self.assertEqual(set(ps), {"learning/a", "templates/b"})
+        self.assertEqual((ps["learning/a"]["kind"], ps["templates/b"]["kind"]), ("learning", "templates"))
+        self.assertTrue(ps["learning/a"]["gh"]["git"]); self.assertTrue(ps["learning/a"]["done_defined"])
+        inflight = {f["path"]: f for f in self.get("/api/notes")["inflight"]}
+        self.assertEqual(set(inflight), {"learning/a/NOTES.md", "templates/b/NOTES.md"})
+        self.assertEqual((inflight["learning/a/NOTES.md"]["project"], inflight["learning/a/NOTES.md"]["dest"]), ("a", "learning"))
+        self.assertEqual(self.get("/api/project?name=a&kind=learning")["path"], "learning/a")
+        self.assertEqual(self.get("/api/project?name=b&kind=templates")["summary_source"], "README.md")
+        for name, kind in (("cert-study", "learning"), ("review-kit", "templates"), ("half", "learning"), ("a", "templates")):
+            self.assertEqual(self.call(f"/api/project?name={name}&kind={kind}")[0], 400, name)
+            self.post("/api/project/status", {"name": name, "kind": kind, "action": "shipped"}, ok=False)
+
+    def test_old_flat_files_still_show_and_can_be_shipped(self):
+        due = (server.today() + server.dt.timedelta(days=4)).isoformat()
+        for kind in ("learning", "templates"):
+            os.makedirs(os.path.join(self.tmp, kind), exist_ok=True)
+            with open(os.path.join(self.tmp, kind, "old.md"), "w") as fh: fh.write(f"# Old {kind}\n\n- status: promoted\n- promoted: 2026-09-01\n- due: {due}\n")
+        inflight = {f["path"]: f for f in self.get("/api/notes")["inflight"]}
+        self.assertEqual(set(inflight), {"learning/old.md", "templates/old.md"})
+        self.assertEqual(inflight["learning/old.md"]["days_left"], 4)
+        self.assertEqual(self.get("/api/projects")["projects"], [])  # a flat file is a card from inflight, not a folder
+        self.post("/api/project/status", {"path": "templates/old.md", "action": "shipped"})
+        self.assertIn("- status: shipped", self.read(self.tmp, "templates/old.md"))
+
+    def test_ship_extend_kill_and_done_means_work_on_the_new_folders(self):
+        self.promote(dest="learning"); self.promote("2026-10-02-b.md", dest="templates"); self.promote("2026-10-03-c.md", dest="learning")
+        server._undo.clear()
+        lp, tp = os.path.join(self.tmp, "learning", "a"), os.path.join(self.tmp, "templates", "b")
+        old_due = server.field(self.read(lp, "NOTES.md"), "due")
+        self.post("/api/project/status", {"path": "learning/a/NOTES.md", "action": "extend", "days": 7})
+        self.assertNotEqual(server.field(self.read(lp, "NOTES.md"), "due"), old_due)
+        self.post("/api/project/status", {"path": "templates/b/NOTES.md", "action": "shipped"})
+        self.assertEqual(server.field(self.read(tp, "NOTES.md"), "status"), "shipped")
+        self.post("/api/project/status", {"name": "c", "kind": "learning", "action": "kill", "note": "lost interest"})
+        self.assertIn("**Killed", self.read(self.tmp, "learning/c/NOTES.md"))
+        self.post("/api/done", {"name": "a", "kind": "learning", "text": "I can pass the exam.", "expected": "It runs on the phone."})
+        self.assertIn("- definition of done: I can pass the exam.", self.read(lp, "NOTES.md"))
+        ps = {p["path"]: p["status"] for p in self.get("/api/projects")["projects"]}
+        self.assertEqual((ps["templates/b"], ps["learning/c"]), ("shipped", "dead"))
+        for _ in range(4): self.post("/api/undo", {})
+        self.assertEqual(server.field(self.read(lp, "NOTES.md"), "due"), old_due)
 
 
 if __name__ == "__main__":

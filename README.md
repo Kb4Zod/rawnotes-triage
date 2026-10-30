@@ -166,7 +166,7 @@ ticks all members and shows the batch form. Untick what should stay.
 
 | Button (key) | What happens |
 |--------------|--------------|
-| Promote (P)   | Creates `../active/<slug>/` or `../experiments/<slug>/` from the skeleton in `starter/skeletons/<dest>/` (see **Project skeleton** below), with the note as its `NOTES.md` (`learning/` and `templates/` get a flat `<slug>.md`). Stamps `status: promoted`, `promoted: <today>` and a `## Plan` block with your **done means** (required for every destination). Active / Learning / Template also get `due:` (3, 7, 14 or 30 days, or an exact date; default 7). **Experiments are open-ended:** no `due:`, and any old one is removed. The capture is marked promoted, gets the destination under `## Outcome`, and moves to `done/`. |
+| Promote (P)   | Creates `../<dest>/<slug>/` (`active`, `experiments`, `learning` or `templates`) from the skeleton in `starter/skeletons/<dest>/` (see **Project skeleton** below), with the note as its `NOTES.md`. Stamps `status: promoted`, `promoted: <today>` and a `## Plan` block with your **done means** (required for every destination). Active / Learning / Template also get `due:` (3, 7, 14 or 30 days, or an exact date; default 7). **Experiments are open-ended:** no `due:`, and any old one is removed. The capture is marked promoted, gets the destination under `## Outcome`, and moves to `done/`. |
 | Reference (R) | Copies the note to `../reference/<slug>.md` with YAML frontmatter (created, promoted, status, type, source, optional why, tag `reference`) so Obsidian shows it as properties. Capture marked promoted and moved to `done/`. **Does not** touch `reference/README.md`; the form reminds you to add it by hand if it belongs in the index. |
 | Keep (C)      | Sets `open` or `cooking` (the form defaults to the note's current one) and optionally adds a dated `next step` line under `## Notes`. Stays in the Inbox. |
 | Kill (X)      | `status: dead`, your reason (optional; "no longer useful." if blank) under `## Outcome`, moved to `done/`. |
@@ -181,8 +181,11 @@ then `- **Status:**`, `- **Stack:**`, `- **Run it:**`, `- **Repo:**` lines and
 `- github: private` in its header), `AGENTS.md` (the `.scratch/` issue-tracker
 convention and a **First build round** checklist with the exact `gh repo create
 <slug> --private …` and `ALLOW_PUSH_MAIN=1 git push -u origin main` commands),
-`CLAUDE.md` (`@AGENTS.md`), `.gitignore`, and for `active/` an empty
-`.scratch/`. `{{title}}`, `{{slug}}`, `{{done}}`, `{{due}}` and `{{today}}` in
+`CLAUDE.md` (`@AGENTS.md`), `.gitignore`, and an empty `.scratch/` (active),
+`notes/` for study notes (learning) or `template/` for the files to copy
+(templates, whose README says what it scaffolds and how to copy it).
+Learning and templates used to get a flat `<slug>.md`; those files stay where
+they are and still show on the board. `{{title}}`, `{{slug}}`, `{{done}}`, `{{due}}` and `{{today}}` in
 the skeleton files are filled in one pass (text from the note is never
 expanded). Then, in the same undoable step, it runs `git init -b main` and
 makes one commit, `Start <slug> (promoted from RawNotes)`, with your normal
@@ -238,6 +241,9 @@ folders:
   skipped), whether or not it was promoted through this app. A linked git
   worktree (its `.git` is a `gitdir:` file, i.e. a branch checkout) is not a
   project: it is left off the board, and the project routes refuse it;
+- every folder directly under `learning/` and `templates/` whose `NOTES.md`
+  has a `promoted:` line (made by Promote). Hand-made folders there, such as a
+  study folder or a template kit, stay off the board;
 - every `.md` file directly in, or one level below, `active/`, `experiments/`,
   `learning/`, `templates/` and `maintained/` whose header has a `due:` line
   (first 4,000 bytes are read), plus experiment files with a `promoted:` line

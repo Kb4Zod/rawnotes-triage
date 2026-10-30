@@ -276,6 +276,15 @@ class Flows(BrowserCase):
         self.page.click("#tUndo"); self.settle(0.6)
         self.assertIn("- status: promoted", open(os.path.join(self.tmp, "active", "demo", "NOTES.md")).read())
 
+    def test_promoted_learning_and_template_folders_are_labelled_cards(self):
+        for kind, name in (("learning", "study"), ("templates", "kit")):
+            self.project(name, kind=kind, notes=f"# {name}\n\n- date: 2026-10-01\n- status: promoted\n- promoted: 2026-10-01\n- due: 2026-12-01\n\n## Plan\n\n- definition of done: Done.\n")
+        self.project("handmade", kind="learning")
+        self.open("projects"); self.page.wait("document.querySelector('[data-pid=\"templates/kit/NOTES.md\"]')")
+        label = lambda pid: self.page.eval(f"document.querySelector('[data-pid=\"{pid}\"] .row').textContent")
+        self.assertIn("Learning", label("learning/study/NOTES.md")); self.assertIn("Template", label("templates/kit/NOTES.md"))
+        self.assertFalse(self.page.eval("!!document.querySelector('[data-pid^=\"learning/handmade\"]')"))
+
     def test_an_open_ended_experiment_is_only_under_experiments(self):
         self.project("spike", kind="experiments", notes="# Spike\n\n- date: 2026-10-01\n- status: promoted\n- promoted: 2026-10-01\n\n## Plan\n\n- definition of done: We know.\n")
         self.open("projects"); self.page.wait("document.querySelector('[data-pid^=\"experiments/spike\"]')")
