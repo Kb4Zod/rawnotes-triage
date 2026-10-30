@@ -745,7 +745,111 @@ def repo_path(name, path):
     return {**out, "binary": True} if text is None else {**out, "text": text}
 
 
-def reference_copy(text, fname, why=""):
+INDEX_HEAD = re.compile(r"^##[ \t]+Index[ \t]*$", re.M)
+INDEX_LINK = re.compile(r"\]\(([^)\s]+\.md)\)")
+
+def index_clean(s):
+    """Text for a markdown link label or summary: no brackets, no line breaks, single spaces."""
+    return re.sub(r"\s+", " ", re.sub(r"[\[\]]", "", str(s or ""))).strip()
+
+def index_section_name(s): return index_clean(s).lstrip("#").strip()
+
+def index_region(lines):
+    """(start, end) line numbers of what sits between `## Index` and the next `## ` heading (or the end), or None."""
+    start = next((i for i, l in enumerate(lines) if INDEX_HEAD.match(l)), None)
+    if start is None: return None
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+    return start + 1, end
+
+def index_sections(text):
+    """The `### ` headings under `## Index`, in order (empty if there is no index)."""
+    lines = text.split("\n"); r = index_region(lines)
+    return [l[4:].strip() for l in lines[r[0]:r[1]] if l.startswith("### ")] if r else []
+
+def index_links(text):
+    """Every file named as `(file.md)` inside the index."""
+    lines = text.split("\n"); r = index_region(lines)
+    return set(INDEX_LINK.findall("\n".join(lines[r[0]:r[1]]))) if r else set()
+
+def index_insert(text, section, line):
+    """Add `line` (a '- [Title](slug.md): summary' list item) at the end of `### section` under `## Index`, adding the
+    section at the end of the index if it is new. Touches nothing outside the index. None if there is no `## Index`,
+    or the index already links that file."""
+    lines = text.split("\n"); r = index_region(lines)
+    m = INDEX_LINK.search(line); section = index_section_name(section)
+    if not r or not section or (m and m.group(1) in index_links(text)): return None
+    start, end = r
+    head = next((i for i in range(start, end) if lines[i].startswith("### ") and lines[i][4:].strip() == section), None)
+    if head is None:
+        last = max((i for i in range(start, end) if lines[i].strip()), default=start - 1)
+        lines[last + 1:last + 1] = [""] * (last >= start) + ["### " + section, line]
+    else:
+        stop = next((i for i in range(head + 1, end) if lines[i].startswith("### ")), end)
+        last = max(i for i in range(head, stop) if i == head or lines[i].strip())
+        lines.insert(last + 1, line)
+    return "\n".join(lines)
+
+def index_line(title, fname, blurb):
+    b = index_clean(blurb)
+    return f"- [{index_clean(title) or fname}]({fname})" + (f": {b}" if b else "")
+
+def index_blurb(text, why=""):
+    """A default one-line summary: the 'why', else the first sentence of the question."""
+    if index_clean(why): return index_clean(why)[:200]
+    q = index_clean(question_summary(text))
+    return re.split(r"(?<=[.?!])\s", q, 1)[0][:200]
+
+def _frontmatter_free(text): return re.sub(r"\A---\n.*?\n---\n", "", text, flags=re.S)
+
+def _readme_ok():
+    p = os.path.join(PROJECTS, "reference", "README.md")
+    return p if os.path.isfile(p) and not os.path.islink(p) else None
+
+def reference_index(tx, fname, title, text, section, blurb, why=""):
+    """Add the index line for reference/<fname> through `tx`. Returns (done, warning); on a warning nothing was changed."""
+    p = _readme_ok()
+    if not p: return False, "No reference/README.md, so the note was filed but not indexed."
+    body, eol = read_note(p)
+    new = index_insert(body, section, index_line(title, fname, blurb or index_blurb(text, why)))
+    if new is None:
+        return False, (f"reference/README.md already links {fname}" if index_region(body.split("\n")) else "reference/README.md has no ## Index") + ", so it was not indexed."
+    tx.write(p, new, eol)
+    return True, None
+
+def reference_unindexed():
+    """Reference notes the index doesn't link, plus the index's section headings."""
+    d = os.path.join(PROJECTS, "reference")
+    with _lock.read():
+        p = _readme_ok(); text = read_note(p)[0] if p else ""
+        has = bool(p and index_region(text.split("\n"))); linked = index_links(text); out = []
+        for f in sorted(os.listdir(d)) if os.path.isdir(d) else []:
+            fp = os.path.join(d, f)
+            if not f.endswith(".md") or f == "README.md" or f in linked or os.path.islink(fp) or not os.path.isfile(fp): continue
+            body = read_note(fp)[0]; m = re.search(r"^why:[ \t]*(.+)$", body, re.M); why = ""
+            if m:
+                try: why = json.loads(m.group(1))
+                except ValueError: why = m.group(1)
+            out.append({"file": f, "title": title_of(_frontmatter_free(body), f), "blurb": index_blurb(body, why if isinstance(why, str) else "")})
+    return {"has_index": has, "sections": index_sections(text), "files": out if has else []}
+
+def reference_index_add(req):
+    """Index an already-filed reference note: one undoable step."""
+    f = req.get("file"); section = index_section_name(_text(req, "section"))
+    if not isinstance(f, str) or "/" in f or "\0" in f or not f.endswith(".md") or f == "README.md": raise ValueError("bad file name")
+    if not section: raise ValueError("pick a section")
+    fp = os.path.join(PROJECTS, "reference", f)
+    if not os.path.isfile(fp) or os.path.islink(fp): raise ValueError("no such reference note")
+    with mutation() as tx:
+        text, eol = read_note(fp); title = title_of(_frontmatter_free(text), f)
+        ok, warn = reference_index(tx, f, title, text, section, _text(req, "blurb"))
+        if not ok: raise ValueError(warn)
+        if text.startswith("---\n") and "\n---\n" in text:
+            fm, rest = text.split("\n---\n", 1)
+            if not re.search(r"^section:", fm, re.M): tx.write(fp, f"{fm}\nsection: {json.dumps(section)}\n---\n{rest}", eol)
+        tx.label = f"index “{title}”"; tx.log(f"index {f} in {section}")
+    return {"ok": True, "msg": f"Added “{title}” to the index under {section}"}
+
+def reference_copy(text, fname, why="", section=""):
     """Turn the '- key: value' header into YAML frontmatter, so Obsidian shows it as Properties."""
     lines = text.split("\n"); head = header_lines(lines); meta = {}
     for i in head:
@@ -759,6 +863,7 @@ def reference_copy(text, fname, why=""):
     fm = ["---", f"created: {meta.get('date', '')}", f"promoted: {meta.get('promoted', '')}",
           "status: promoted", f"type: {meta.get('type', 'research')}", f"source: RawNotes/done/{fname}"]
     if why: fm.append("why: " + json.dumps(why))
+    if section: fm.append("section: " + json.dumps(section))
     fm += ["tags:", "  - reference", "---", ""]
     return "\n".join(fm + [lines[t] if t is not None else "# " + title_of(text, fname), ""] + rest)
 
@@ -1013,7 +1118,13 @@ def _act(req, tx):
         target = unique(os.path.join(dest_dir, slug + ".md"))
     copy = set_field(text, "status", "promoted")
     copy = set_field(copy, "promoted", t)
-    if action == "reference": copy = reference_copy(copy, fname, note)
+    warning = None
+    if action == "reference":
+        section = index_section_name(_text(req, "section"))
+        if section:
+            done_idx, warning = reference_index(tx, os.path.basename(target), title, text, section, _text(req, "blurb"), note)
+            if not done_idx: section = ""
+        copy = reference_copy(copy, fname, note, section)
     if action == "promote":
         copy = set_field(copy, "due", due) if due else drop_field(copy, "due")  # open-ended: drop any old ship-by
         copy = copy.rstrip("\n") + (
@@ -1029,7 +1140,9 @@ def _act(req, tx):
     tx.write(src, text, eol)
     dst = to_done(src, tx); tx.log(f"{'durable' if action == 'reference' else action} {fname} -> {rel}; capture -> {dst}")
     verb = "Promoted" if action == "promote" else "Filed"
-    return {"ok": True, "msg": f"{verb} “{title}” → {rel}", "target": rel, "label": f"{action} “{title}”"}
+    res = {"ok": True, "msg": f"{verb} “{title}” → {rel}", "target": rel, "label": f"{action} “{title}”"}
+    if warning: res["warning"] = warning
+    return res
 
 def check_promote(req):
     """Validate a promotion before anything is written. Returns the ship-by date, or None for an experiment."""
@@ -1079,10 +1192,10 @@ def batch(req):
     if ALIASES.get(req.get("action"), req.get("action")) not in ("keep", "kill", "reference"): raise ValueError("batch can keep, kill or file as reference")
     with mutation() as tx:
         _distinct_sources(files, lambda f: _plan({**req, "file": f, "slug": ""})[0])
-        for f in files: _act({**req, "file": f, "slug": ""}, tx)
+        warns = [w for w in (_act({**req, "file": f, "slug": ""}, tx).get("warning") for f in files) if w]
         verb = {"keep": "Kept", "kill": "Killed", "reference": "Filed"}[ALIASES.get(req["action"], req["action"])]
         tx.label = f"{verb.lower()} {len(files)} notes"; tx.select = files[0]
-    return {"ok": True, "msg": f"{verb} {len(files)} notes"}
+    return {"ok": True, "msg": f"{verb} {len(files)} notes", **({"warning": warns[0]} if warns else {})}
 
 def merge(req):
     """Combine several Inbox notes into one new note (newest first), move the sources to done/ pointing at it,
@@ -1319,6 +1432,7 @@ class H(BaseHTTPRequestHandler):
             if u.path == "/api/repo/path": return self._send(200, repo_path(q.get("name", [""])[0], q.get("path", [""])[0]))
             if u.path == "/api/setup": return self._send(200, setup_state())
             if u.path == "/api/notes": return self._send(200, list_notes())
+            if u.path == "/api/reference/unindexed": return self._send(200, reference_unindexed())
             if u.path == "/api/stats": return self._send(200, stats())
             if FONT_RE.match(u.path):
                 p = os.path.join(HERE, u.path.lstrip("/"))
@@ -1340,6 +1454,7 @@ class H(BaseHTTPRequestHandler):
             path = urlparse(self.path).path
             if path == "/api/action": return self._send(200, act(req))
             if path == "/api/batch": return self._send(200, batch(req))
+            if path == "/api/reference/index": return self._send(200, reference_index_add(req))
             if path == "/api/merge": return self._send(200, merge(req))
             if path == "/api/restore": return self._send(200, restore(req))
             if path == "/api/project/status": return self._send(200, project_status(req))
