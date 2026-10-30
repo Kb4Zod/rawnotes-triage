@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """rawnotes-triage — local website for reviewing ~/Projects/RawNotes.
 
-Usage: python3 server.py [--port 8765] [--host 127.0.0.1] [--notes DIR (else the saved folder, else ~/Projects/RawNotes)] [--log triage.log] [--restart] [--app]
+Usage: python3 server.py [--port 8765] [--host 127.0.0.1] [--notes DIR (else the saved folder, else ~/Projects/RawNotes)] [--log triage.log] [--restart] [--app] [--no-commit]
 
 --host 0.0.0.0 listens on every interface (phone on home Wi-Fi / Tailscale).
 There is no login: only do that on a network you trust. Firewall still applies.
@@ -23,6 +23,8 @@ Decisions (all move real files, nothing is deleted; the words match the CLI and 
   keep                -> status open|cooking, optional next-step line
 Also: batch (one decision for many notes), merge (many notes -> one), restore (done/ -> Inbox),
 project status (mark shipped / push ship-by date), and undo of the last change made through this server.
+After each change (undo included) the notes-folder files it touched are committed, if the notes folder is a git
+repo: only those paths, message "triage: <what>". A commit that can't happen warns; the change stands (--no-commit).
 """
 import argparse, base64, contextlib, errno, json, os, re, shutil, subprocess, sys, tempfile, threading, time, urllib.parse, datetime as dt
 from concurrent.futures import ThreadPoolExecutor
@@ -913,6 +915,7 @@ def mutation(label=""):
             raise MutationFailed(f"{e}. {len(left)} change(s) could not be rolled back; press Undo to finish putting them back.") from e
         tx.commit()
     for line in tx.logs: _log(line)  # after the undo entry exists and the lock is released: a log failure can't matter
+    _note_commit(autocommit(tx.label or label, tx.ops))  # likewise: a commit that can't happen never fails the change
 
 def undo():
     """Reverse the newest change. Checked on a dry run first: refuses (and changes nothing) if any file it
@@ -936,7 +939,9 @@ def undo():
                 raise MutationFailed(f"Undo stopped half-way ({e}) and {len(stuck)} step(s) could not be put back; check {os.path.basename(stuck[0][1])}.") from e
             raise MutationFailed(f"Undo failed ({e}); nothing was changed.") from e
         _undo.pop(); _log(f"undo {entry['label']}")
-        return {"ok": True, "msg": f"Undone: {entry['label']}", "select": entry["select"], "left": len(_undo)}
+        res = {"ok": True, "msg": f"Undone: {entry['label']}", "select": entry["select"], "left": len(_undo)}
+    _note_commit(autocommit(f"undo {entry['label']}", ops))  # undo is a new change with its own commit; history is never rewritten
+    return res
 
 def to_done(src, tx):
     done_dir = os.path.join(NOTES, "done"); tx.ensure_dir(done_dir)
@@ -953,6 +958,110 @@ def _log(msg):
     try: log(msg)
     except Exception as e:
         if not _log_warned: _log_warned.append(1); print(f"rawtriage-web: can't write the log ({e}); changes still work", file=sys.stderr)
+
+# ---- auto-commit: after a change succeeds, commit exactly the notes-folder paths it touched (never anything else) ----
+AUTOCOMMIT = True  # --no-commit turns it off; so does "autocommit": false in config.json
+COMMIT_TIMEOUT = 20  # seconds, for the commit lock and for each git command
+_commit_lock = threading.Lock()  # one commit at a time: two changes fired at once never meet on index.lock
+_commit_warned = set()  # skip reasons already printed to stderr
+_commit_result = threading.local()  # the commit of the change this request thread just made, for the API response
+
+def saved_autocommit():
+    """False only when config.json says "autocommit": false."""
+    try:
+        with open(config_path(), encoding="utf-8") as fh: d = json.load(fh)
+    except (OSError, ValueError): return True
+    return not (isinstance(d, dict) and d.get("autocommit") is False)
+
+def _note_commit(res):
+    if res is not None: _commit_result.value = res
+
+def _git(args, timeout=COMMIT_TIMEOUT, stdin=None):
+    """Run git in the notes folder (literal pathspecs, no prompts, never another repo's GIT_DIR). CompletedProcess."""
+    env = {k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")}
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    return subprocess.run(["git", "--literal-pathspecs"] + args, cwd=NOTES, capture_output=True, timeout=timeout, env=env,
+                          input=stdin, stdin=None if stdin is not None else subprocess.DEVNULL)
+
+def _commit_paths(ops):
+    """Paths inside the notes folder that `ops` wrote or moved (both sides of a move), relative to it, in order.
+    Folders it made are left out: git tracks files, and adding done/ would sweep in everything else there."""
+    root = os.path.realpath(NOTES); out = []; first = {}
+    for op in ops:
+        if op[0] == "mkdir": continue
+        for p in (op[1], op[2]) if op[0] == "move" else (op[1],):
+            if not _within(p, root) or p == root: continue
+            rel = os.path.relpath(p, root)
+            if rel not in out: out.append(rel); first[rel] = op if op[0] == "write" else None
+    return out, first
+
+def _hand_edited(rel, op):
+    """True if a tracked note already differed from its last commit before this change wrote it."""
+    if op is None or op[2] is None: return False
+    head = _git(["rev-parse", "-q", "--verify", f"HEAD:{rel}"])
+    if head.returncode != 0: return False
+    mine = _git(["hash-object", "--stdin"], stdin=op[2])
+    return mine.returncode == 0 and mine.stdout.strip() != head.stdout.strip()
+
+def _hook_name():
+    """The pre-commit hook git will run here (honours core.hooksPath), or ''."""
+    r = _git(["rev-parse", "--git-path", "hooks/pre-commit"])
+    if r.returncode != 0: return ""
+    p = r.stdout.decode(errors="replace").strip()
+    p = p if os.path.isabs(p) else os.path.join(NOTES, p)
+    return p if os.path.isfile(p) and os.access(p, os.X_OK) else ""
+
+def autocommit(label, ops):
+    """Commit the notes-folder paths `ops` touched, with message "triage: <label>". Returns None when the change
+    touched nothing in the notes folder, else {"ok", "sha"?, "skipped"?, "error"?}. Never raises: the change has
+    already happened and stays, whatever git says (and it stays undoable). Never --no-verify, never amends."""
+    paths, first = _commit_paths(ops)
+    if not paths: return None
+    if not AUTOCOMMIT or not saved_autocommit(): return {"ok": True, "skipped": "auto-commit is off"}
+    try: res = _autocommit(label, paths, first)
+    except subprocess.TimeoutExpired: res = {"ok": False, "error": f"git took longer than {COMMIT_TIMEOUT} s"}
+    except FileNotFoundError: res = {"ok": False, "skipped": "git is not installed"}
+    except Exception as e: res = {"ok": False, "error": str(e) or type(e).__name__}
+    if not res["ok"] and (res.get("error") or res["skipped"] not in _commit_warned):  # a skip reason is said once per run
+        _commit_warned.add(res.get("skipped"))
+        print(f"rawtriage-web: not committed ({res.get('error') or res.get('skipped')}); the change itself stands", file=sys.stderr)
+    return res
+
+def _autocommit(label, paths, first):
+    if not _commit_lock.acquire(timeout=COMMIT_TIMEOUT): return {"ok": False, "skipped": "another commit is still running"}
+    try:
+        r = _git(["rev-parse", "--absolute-git-dir"])
+        if r.returncode != 0: return {"ok": False, "skipped": "the notes folder is not a git repo"}
+        gd = r.stdout.decode(errors="replace").strip()
+        for name, why in (("MERGE_HEAD", "a merge is in progress"), ("rebase-merge", "a rebase is in progress"),
+                          ("rebase-apply", "a rebase is in progress"), ("CHERRY_PICK_HEAD", "a cherry-pick is in progress"),
+                          ("index.lock", "git's index.lock is present (another git command running, or a stale lock)")):
+            if os.path.exists(os.path.join(gd, name)): return {"ok": False, "skipped": why}
+        if not _git(["config", "user.email"]).stdout.strip(): return {"ok": False, "skipped": "git user.email is not set"}
+        # a path that is gone from disk and was never tracked (an untracked note moved to done/) has nothing to record
+        tracked = set(_git(["ls-files", "-z", "--"] + paths).stdout.decode(errors="surrogateescape").split("\0"))
+        paths = [p for p in paths if p in tracked or os.path.lexists(os.path.join(NOTES, p))]
+        if not paths: return {"ok": True, "skipped": "nothing to commit"}
+        edited = [p for p in paths if _hand_edited(p, first.get(p))]
+        r = _git(["add", "-A", "--"] + paths)
+        if r.returncode != 0: return {"ok": False, "error": "git add failed: " + _tail(r.stderr)}
+        if _git(["rev-parse", "-q", "--verify", "HEAD"]).returncode == 0 and _git(["diff", "--cached", "--quiet", "HEAD", "--"] + paths).returncode == 0:
+            return {"ok": True, "skipped": "nothing to commit"}
+        body = "\n".join(paths)
+        if edited: body += "\n\nAlso includes edits made by hand before this change: " + ", ".join(edited)
+        body += f"\n\nvia rawnotes-triage {VERSION}"
+        r = _git(["commit", "-q", "-m", f"triage: {label}", "-m", body, "--"] + paths)
+        if r.returncode != 0:
+            _git(["reset", "-q", "--"] + paths)  # leave the index as it was; the files keep the change
+            hook = _hook_name(); out = _tail(r.stderr + r.stdout)
+            return {"ok": False, "error": (f"the pre-commit hook ({hook}) refused the commit" if hook else "git commit failed") + (f": {out}" if out else "")}
+        sha = _git(["rev-parse", "--short", "HEAD"]).stdout.decode().strip()
+        return {"ok": True, "sha": sha}
+    finally: _commit_lock.release()
+
+def _tail(b, n=300):
+    s = " ".join((b.decode("utf-8", "replace") if isinstance(b, bytes) else b or "").split())
+    return s if len(s) <= n else "…" + s[-n:]
 
 ALIASES = {"archive": "kill", "durable": "reference"}  # 1.x names still accepted
 
@@ -1273,6 +1382,8 @@ class Server(ThreadingHTTPServer):
 
 class H(BaseHTTPRequestHandler):
     def _send(self, code, body, ctype="application/json"):
+        made = _commit_result.__dict__.pop("value", None)  # the auto-commit of the change this request just made
+        if made is not None and code == 200 and isinstance(body, dict): body = {**body, "commit": made}
         data = body if isinstance(body, bytes) else json.dumps(body).encode()
         self.send_response(code); self.send_header("Content-Type", ctype if ctype.startswith(("font/", "image/")) else ctype + "; charset=utf-8")
         if ctype.startswith(("font/", "image/")): self.send_header("Cache-Control", "max-age=604800")
@@ -1330,6 +1441,7 @@ class H(BaseHTTPRequestHandler):
             self._send(404, {"error": "not found"})
         except Exception as e: self._fail(e)
     def do_POST(self):
+        _commit_result.__dict__.pop("value", None)
         bad = self._refuse(True)
         if bad: return self._send(403, {"error": bad})
         try:
@@ -1459,9 +1571,11 @@ if __name__ == "__main__":
     ap.add_argument("--app", action="store_true", help="open the page in its own app window (Omarchy web app), not a browser tab")
     ap.add_argument("--service", action="store_true", help="run under systemd: no browser; exit with an error if the port is taken, so systemd retries")
     ap.add_argument("--log", default=LOG_PATH, help="where actions are logged (and Pulse reads decisions from)")
+    ap.add_argument("--no-commit", action="store_true", help="don't commit the notes folder after each change (also: \"autocommit\": false in config.json)")
     a = ap.parse_args(); a.no_browser = a.no_browser or a.service; BIND_HOST = a.host; NOTES_SOURCE = "flag" if a.notes else "config" if saved_notes_dir() else "default"
     NOTES = os.path.abspath(os.path.expanduser(a.notes or saved_notes_dir() or DEFAULT_NOTES)); PROJECTS = os.path.dirname(NOTES)
     LOG_PATH = os.path.abspath(os.path.expanduser(a.log))
+    AUTOCOMMIT = not a.no_commit
     url = f"http://127.0.0.1:{a.port}/"
     info = running_server(a.port)
     if info and info["foreign"]:
