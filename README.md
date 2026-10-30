@@ -148,11 +148,31 @@ Lists `YYYY-MM-DD-<topic>.md` files directly in `RawNotes/` (not in
 subfolders), oldest first, split into **Waiting 2+ weeks** and **This
 fortnight**. A note's date and age come from its filename.
 
-Filters: All / Open / Cooking / **Stale** (older than 60 days and still `open`
-or without a status) / **Stuck** (the status says decided, e.g. `promoted`,
+Filters: All / Open / Cooking / **Stale** (open and cooking, see below) / red
+**Expired** (past the limit below; the chip appears only when there is one) /
+**Stuck** (the status says decided, e.g. `promoted`,
 but the file never left the Inbox; the chip appears only when there is one),
 plus a type filter (question / research / issue). Search matches title,
 filename and the first paragraph of the question.
+
+**Inbox limits.** A note should not sit in the Inbox for ever:
+
+| Rule | Default | Clock starts at |
+|------|---------|-----------------|
+| `open` (or no status) is **stale** | 14 days | capture date, or the last Keep |
+| `cooking` is **stale** | 7 days | the last Keep (capture date if never kept) |
+| **Expired**: Keep is refused | 30 days | capture date (Restore date for a restored note) |
+| **Expired**: Keep is refused | 3 Keeps | counted in the header |
+
+Keep writes `- kept: <today>` and `- keeps: N` into the note's header; Restore
+writes `- restored: <today>`. An expired note cannot be kept, on the page, in a
+batch (one expired note refuses the whole batch and names it) or through the
+API (400, "...30-day limit: promote, file, merge or kill it"). Promote,
+Reference, Merge and Kill still work. Rows show `kept 2×` and `expires in 3d`;
+Pulse shows the expired count. Change the four numbers in `config.json`
+(`stale_open_days`, `stale_cooking_days`, `inbox_limit_days`, `max_keeps`;
+whole numbers of 1 or more) and restart. The weekly nudge should print the
+same numbers (`server.inbox_summary()`: "N open, N cooking (N stale, N expired)").
 
 The reader shows the whole "What's the question / problem?" section, then
 the rest of the note with the title and header lines removed.
@@ -168,7 +188,7 @@ ticks all members and shows the batch form. Untick what should stay.
 |--------------|--------------|
 | Promote (P)   | Creates `../<dest>/<slug>/` (`active`, `experiments`, `learning` or `templates`) from the skeleton in `starter/skeletons/<dest>/` (see **Project skeleton** below), with the note as its `NOTES.md`. Stamps `status: promoted`, `promoted: <today>` and a `## Plan` block with your **done means** (required for every destination). Active / Learning / Template also get `due:` (3, 7, 14 or 30 days, or an exact date; default 7). **Experiments are open-ended:** no `due:`, and any old one is removed. The capture is marked promoted, gets the destination under `## Outcome`, and moves to `done/`. |
 | Reference (R) | Copies the note to `../reference/<slug>.md` with YAML frontmatter (created, promoted, status, type, source, optional why, tag `reference`) so Obsidian shows it as properties. Capture marked promoted and moved to `done/`. **Does not** touch `reference/README.md`; the form reminds you to add it by hand if it belongs in the index. |
-| Keep (C)      | Sets `open` or `cooking` (the form defaults to the note's current one) and optionally adds a dated `next step` line under `## Notes`. Stays in the Inbox. |
+| Keep (C)      | Sets `open` or `cooking` (the form defaults to the note's current one), stamps `kept:` / `keeps:` in the header and optionally adds a dated `next step` line under `## Notes`. Stays in the Inbox. Refused once the note is expired (see Inbox limits). |
 | Kill (X)      | `status: dead`, your reason (optional; "no longer useful." if blank) under `## Outcome`, moved to `done/`. |
 
 If the destination name is taken, a `-2`, `-3`… suffix is added; nothing is

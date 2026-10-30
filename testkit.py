@@ -5,6 +5,7 @@ import shutil
 import tempfile
 import threading
 import unittest
+import unittest.mock
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
@@ -32,6 +33,8 @@ def isolate_git(case, email=TEST_EMAIL):
 
 class Fixture(unittest.TestCase):
     """HTTP server bound to a temporary RawNotes + projects root. Helpers read/write only inside it."""
+    relax_limits = True
+
     def setUp(self):
         self.gitconfig = isolate_git(self)
         self.tmp = os.path.realpath(tempfile.mkdtemp())
@@ -40,6 +43,8 @@ class Fixture(unittest.TestCase):
         self.saved = (server.NOTES, server.PROJECTS, server.log, server.LOG_PATH, server.CONFIG_DIR)
         server.CONFIG_DIR = os.path.join(self.tmp, "config")  # never read or write the real saved GitHub token
         server.forget_github()
+        if self.relax_limits:  # fixtures use fixed 2026-10 dates: keep the Inbox limits from expiring them as the real date moves on
+            p = unittest.mock.patch.dict(server.LIMIT_DEFAULTS, {"inbox_limit_days": 36500, "max_keeps": 1000}); p.start(); self.addCleanup(p.stop)
         server.NOTES, server.PROJECTS = self.notes, self.tmp
         server.log = lambda msg: None  # never write test actions into the real triage.log
         server.LOG_PATH = os.path.join(self.tmp, "triage.log")

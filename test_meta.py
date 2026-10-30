@@ -107,7 +107,7 @@ class HeaderThroughTheApp(Fixture):
         path = os.path.join(self.notes, "2026-10-01-blank.md")
         with open(path, "w") as fh: fh.write("# X\n- status:\n- type: research\n")
         self.post("/api/action", {"file": "2026-10-01-blank.md", "action": "keep"})
-        self.assertEqual(open(path).read(), "# X\n- status: cooking\n- type: research\n")
+        self.assertEqual(open(path).read(), "# X\n- status: cooking\n- type: research\n- kept: %s\n- keeps: 1\n" % server.today().isoformat())
 
     def test_note_without_a_header_gets_one(self):
         path = os.path.join(self.notes, "2026-10-01-bare.md")

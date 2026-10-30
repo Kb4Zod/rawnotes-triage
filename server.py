@@ -57,7 +57,7 @@ EXTEND_MAX_DAYS = 7
 REASON_MIN = 10  # characters a reason for pushing the ship-by date has to have
 ACTIVITY_TTL = 600  # seconds; GitHub contribution data barely changes minute to minute
 ACTIVITY_REPO_DAYS = 30
-STALE_DAYS = 60
+LIMIT_DEFAULTS = {"stale_open_days": 14, "stale_cooking_days": 7, "inbox_limit_days": 30, "max_keeps": 3}  # config.json can override each
 NOTE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-.+\.md$")
 DESTS = {  # promote targets: folder -> (layout). "file" (a flat <slug>.md) is no longer used; old flat files still show
     "experiments": "folder", "active": "folder",
@@ -85,14 +85,55 @@ def _summary_core(path, sub):
         "file": (sub + "/" if sub else "") + fname, "abs_path": path, "title": title_of(text, fname),
         "date": fname[:10], "status": field(text, "status") or "?", "type": field(text, "type") or "?",
         "question": question_summary(text), "size": len(text),
+        "_kept": field(text, "kept"), "_restored": field(text, "restored"), "_keeps": field(text, "keeps"),
         **(fate_of(text) if sub == "done" else {}),
     }
+
+def limits():
+    """The four Inbox numbers: LIMIT_DEFAULTS, overridden by whole-number values >= 1 in config.json."""
+    out = dict(LIMIT_DEFAULTS)
+    try:
+        with open(config_path(), encoding="utf-8") as fh: d = json.load(fh)
+    except (OSError, ValueError): return out
+    for k in out:
+        v = d.get(k) if isinstance(d, dict) else None
+        if isinstance(v, int) and not isinstance(v, bool) and v >= 1: out[k] = v
+    return out
+
+def _day(s):
+    try: return dt.date.fromisoformat(s)
+    except (TypeError, ValueError): return None
+
+def inbox_state(date, status, kept="", restored="", keeps="", lim=None):
+    """Where an Inbox note stands against the limits (all arguments are header text): keeps, stale, expired,
+    expires_in, why. Stale runs from the last Keep (else the Restore date, else the capture date); the Inbox
+    limit runs from the capture date, or the Restore date for a restored note."""
+    lim = lim or limits(); t = today()
+    start = max([d for d in (_day(date), _day(restored)) if d], default=None); k = _day(kept)
+    try: n = max(0, int(keeps or 0))
+    except ValueError: n = 0
+    out = {"keeps": n, "stale": False, "expired": False, "expires_in": None, "why": ""}
+    if start is None: return out
+    if status in ("open", "cooking", "?"):
+        since = (t - max(start, k or start)).days
+        out["stale"] = since > lim["stale_cooking_days" if status == "cooking" else "stale_open_days"]
+    out["expires_in"] = lim["inbox_limit_days"] - (t - start).days
+    if out["expires_in"] < 0: out["expired"], out["why"] = True, "days"
+    elif n >= lim["max_keeps"]: out["expired"], out["why"] = True, "keeps"
+    return out
+
+def expired_message(title, state, lim):
+    if state["why"] == "keeps": return f"“{title}” has used all {lim['max_keeps']} Keeps: promote, file, merge or kill it"
+    return f"“{title}” is over the {lim['inbox_limit_days']}-day limit: promote, file, merge or kill it"
 
 def summarize(path, sub=""):
     core = _notes_cache.get(("note", path), [path], lambda _: _summary_core(path, sub))
     try: age = (today() - dt.date.fromisoformat(core["date"])).days
     except ValueError: age = None
-    return {**core, "age": age, "stale": age is not None and age > STALE_DAYS and core["status"] in ("open", "?")}
+    pub = {k: v for k, v in core.items() if not k.startswith("_")}
+    if sub: return {**pub, "age": age, "stale": False}
+    st = inbox_state(core["date"], core["status"], core["_kept"], core["_restored"], core["_keeps"])
+    return {**pub, "age": age, "stale": st["stale"], "expired": st["expired"], "expires_in": st["expires_in"], "keeps": st["keeps"]}
 
 def fate_of(text):
     """How a note in done/ ended up: promoted / reference / killed / merged, and where it went."""
@@ -126,11 +167,17 @@ def scan_notes():
     with _lock.read():
         return {"live": _scan(NOTES, ""), "done": _scan(os.path.join(NOTES, "done"), "done")[::-1]}
 
+def inbox_summary(live=None):
+    """The one-line Inbox count the weekly nudge prints: "N open, N cooking (N stale, N expired)"."""
+    live = scan_notes()["live"] if live is None else live
+    n = lambda s: sum(1 for x in live if x["status"] == s)
+    return f"{n('open')} open, {n('cooking')} cooking ({sum(1 for x in live if x['stale'])} stale, {sum(1 for x in live if x['expired'])} expired)"
+
 def list_notes(with_inflight=True):
     with _lock.read():
         out = scan_notes()
-        return {**out, "inflight": inflight() if with_inflight else [], "today": today().isoformat(), "notes_dir": NOTES,
-                **{"closed_window_days": tunable("closed_window_days", CLOSED_WINDOW_DAYS)}}
+        return {**out, "inflight": inflight() if with_inflight else [], "limits": limits(), "today": today().isoformat(), "notes_dir": NOTES,
+                "closed_window_days": tunable("closed_window_days", CLOSED_WINDOW_DAYS)}
 
 def _count(v):
     """A header count (extensions: 2) as an int; missing or junk counts as 0."""
@@ -850,7 +897,7 @@ def reference_copy(text, fname, why=""):
         if m.group(1) in ("date", "status", "type", "promoted", "due") and m.group(3).strip() and not m.group(3).startswith("<"):
             meta[m.group(1)] = m.group(3).split()[0]
     t = title_index(lines)
-    drop = {i for i in head if HEAD_LINE.match(lines[i]).group(1) in ("date", "status", "type", "promoted", "due")} | ({t} if t is not None else set())
+    drop = {i for i in head if HEAD_LINE.match(lines[i]).group(1) in ("date", "status", "type", "promoted", "due", "kept", "keeps", "restored")} | ({t} if t is not None else set())
     rest = [l for i, l in enumerate(lines) if i not in drop]
     while rest and not rest[0].strip(): rest.pop(0)
     fm = ["---", f"created: {meta.get('date', '')}", f"promoted: {meta.get('promoted', '')}",
@@ -1134,7 +1181,9 @@ def _act(req, tx):
 
     if action == "keep":
         status = req.get("status", "cooking")
-        text = set_field(text, "status", status)
+        lim = limits(); st = inbox_state(fname[:10], field(text, "status") or "?", field(text, "kept"), field(text, "restored"), field(text, "keeps"), lim)
+        if st["expired"]: raise ValueError(expired_message(title, st, lim))
+        text = set_field(set_field(set_field(text, "status", status), "kept", t), "keeps", str(st["keeps"] + 1))
         if note:
             if not text.endswith("\n"): text += "\n"
             if re.search(r"^## Notes[ \t]*$", text, re.M):
@@ -1255,7 +1304,14 @@ def batch(req):
     files = _file_list(req, 1)
     if ALIASES.get(req.get("action"), req.get("action")) not in ("keep", "kill", "reference"): raise ValueError("batch can keep, kill or file as reference")
     with mutation() as tx:
-        _distinct_sources(files, lambda f: _plan({**req, "file": f, "slug": ""})[0])
+        srcs = _distinct_sources(files, lambda f: _plan({**req, "file": f, "slug": ""})[0])
+        if ALIASES.get(req["action"], req["action"]) == "keep":  # one expired note refuses the whole batch, and names it
+            lim = limits(); bad = []
+            for p in srcs:
+                text, _ = read_note(p); name = os.path.basename(p)
+                st = inbox_state(name[:10], field(text, "status") or "?", field(text, "kept"), field(text, "restored"), field(text, "keeps"), lim)
+                if st["expired"]: bad.append(expired_message(title_of(text, name), st, lim))
+            if bad: raise ValueError("Nothing was kept. " + "; ".join(bad))
         for f in files: _act({**req, "file": f, "slug": ""}, tx)
         verb = {"keep": "Kept", "kill": "Killed", "reference": "Filed"}[ALIASES.get(req["action"], req["action"])]
         tx.label = f"{verb.lower()} {len(files)} notes"; tx.select = files[0]
@@ -1318,7 +1374,7 @@ def restore(req):
         dst = os.path.join(NOTES, os.path.basename(src))
         if os.path.lexists(dst): raise ValueError("a note with that name is already in the Inbox")
         text, eol = read_note(src); title = title_of(text, os.path.basename(src))
-        text = append_outcome(set_field(text, "status", "cooking"), f"**Restored {today().isoformat()}** to the Inbox")
+        text = append_outcome(set_field(set_field(text, "status", "cooking"), "restored", today().isoformat()), f"**Restored {today().isoformat()}** to the Inbox")
         tx.write(src, text, eol); tx.move(src, dst)
         tx.label = f"restore “{title}”"; tx.select = "done/" + os.path.basename(src)
     _log(f"restore {os.path.basename(src)}")
@@ -1404,6 +1460,7 @@ def stats(weeks=8):
     mid = len(ages) // 2
     median = (ages[mid] if len(ages) % 2 else (ages[mid - 1] + ages[mid]) / 2) if ages else None
     return {"weeks": bins, "median_wait": median, "oldest": ages[-1] if ages else None, "live": len(notes["live"]),
+            "expired": sum(1 for n in notes["live"] if n["expired"]), "stale": sum(1 for n in notes["live"] if n["stale"]),
             "undo": [u["label"] for u in reversed(list(_undo))]}
 
 
