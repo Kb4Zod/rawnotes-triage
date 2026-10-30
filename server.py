@@ -1727,6 +1727,65 @@ def note_view(rel):
         with open(p, "rb") as fh: text = to_lf(fh.read().decode("utf-8", "replace"))
     return {"text": text, "question": question_of(text), "body": note_body(text)}
 
+# ---- for the rawtriage command (bin/rawtriage): header check and "new note" ----
+HEADER_SKIP = ("README.md", "SETUP.md", "CLAUDE.md", "AGENTS.md", "TRIAGE.md", "_template.md")  # same list as RawNotes/.claude/hooks/check-frontmatter.sh
+KEBAB_NOTE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9-]+\.md")
+SLUG_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+
+def header_issues(fname, text):
+    """What is missing or invalid in one Inbox note's header: the same rules, in the same words, as check-frontmatter.sh
+    (which reads the first line that looks like each field, anywhere in the file; so does this)."""
+    def first(pattern):
+        m = re.search(pattern, text, re.M)
+        return m.group(1) if m else ""
+    issues = []
+    if not KEBAB_NOTE.fullmatch(fname): issues.append("filename is not YYYY-MM-DD-kebab-topic.md")
+    title = first(r"^# *(.*)$"); date = first(r"^- date: *([0-9-]*)"); status = first(r"^- status: *([a-z]*)"); typ = first(r"^- type: *([a-z]*)")
+    if not title or title == "<topic>": issues.append("title")
+    if not date: issues.append("date")
+    elif re.match(r"[0-9]{4}-[0-9]{2}-[0-9]{2}-", fname) and date != fname[:10]: issues.append(f"date ({date}) doesn't match filename ({fname[:10]})")
+    if status not in ("open", "cooking", "promoted", "dead"): issues.append(f"status '{status}' not open|cooking|promoted|dead" if status else "status")
+    if typ not in ("question", "research", "issue"): issues.append(f"type '{typ}' not question|research|issue" if typ else "type")
+    if not re.search(r"^## What's the question / problem\?", text, re.M): issues.append("'What's the question / problem?' section")
+    return issues
+
+def check_headers():
+    """Inbox notes whose header is missing or invalid (GET /api/check)."""
+    with _lock.read():
+        try: names = sorted(f for f in os.listdir(NOTES) if f.endswith(".md") and not f.startswith(".") and f not in HEADER_SKIP)
+        except OSError: names = []
+        root = os.path.realpath(NOTES); checked = 0; problems = []
+        for f in names:
+            p = os.path.join(NOTES, f)
+            try:
+                if not os.path.isfile(p) or (os.path.islink(p) and not _within(os.path.realpath(p), root)): continue
+                with open(p, "rb") as fh: text = to_lf(fh.read().decode("utf-8", "replace"))
+            except OSError: continue
+            checked += 1; issues = header_issues(f, text)
+            if issues: problems.append({"file": f, "issues": issues})
+    return {"checked": checked, "problems": problems}
+
+def new_note(req):
+    """Create today's note from the folder's _template.md (POST /api/new), as one undoable step. `thought` goes under
+    "What's the question / problem?". Refuses a name that already exists."""
+    slug = _text(req, "slug").lower(); thought = _text(req, "thought")
+    if not slug or len(slug) > 60 or not SLUG_RE.fullmatch(slug): raise ValueError("slug must be short kebab-case: lowercase letters, digits and dashes")
+    if not os.path.isdir(NOTES): raise ValueError("the notes folder doesn't exist yet; open the page to set it up")
+    t = today().isoformat(); fname = f"{t}-{slug}.md"; path = os.path.join(NOTES, fname)
+    with mutation(f"new note {fname}") as tx:
+        if os.path.lexists(path): raise ValueError(f"{fname} already exists")
+        tpl = os.path.join(NOTES, "_template.md")
+        text, eol = read_note(tpl) if os.path.isfile(tpl) else read_note(TEMPLATE)
+        text = "\n".join(re.sub("YYYY-MM-DD", t, re.sub("<topic>", slug.replace("-", " "), l, count=1), count=1) for l in text.split("\n"))
+        if thought:
+            ph = re.compile(r"^<one or two sentences[^\n]*>[ \t]*$", re.M)
+            if ph.search(text): text = ph.sub(lambda m: thought, text, count=1)
+            elif re.search(r"^## What's the question / problem\?[ \t]*$", text, re.M):
+                text = re.sub(r"(^## What's the question / problem\?[ \t]*\n)", lambda m: m.group(1) + "\n" + thought + "\n", text, count=1, flags=re.M)
+            else: text = text.rstrip("\n") + "\n\n" + thought + "\n"
+        tx.write(path, text, eol); tx.select = fname; tx.log(f"new {fname}")
+    return {"ok": True, "msg": f"Created {fname}", "file": fname, "path": path}
+
 MAX_BODY = 1 << 20
 
 class Server(ThreadingHTTPServer):
@@ -1785,6 +1844,7 @@ class H(BaseHTTPRequestHandler):
             if u.path == "/api/notes": return self._send(200, list_notes())
             if u.path == "/api/reference/unindexed": return self._send(200, reference_unindexed())
             if u.path == "/api/stats": return self._send(200, stats())
+            if u.path == "/api/check": return self._send(200, check_headers())
             if FONT_RE.match(u.path):
                 p = os.path.join(HERE, u.path.lstrip("/"))
                 if not os.path.isfile(p): return self._send(404, {"error": "not found"})
@@ -1809,6 +1869,7 @@ class H(BaseHTTPRequestHandler):
             if path == "/api/reference/index": return self._send(200, reference_index_add(req))
             if path == "/api/merge": return self._send(200, merge(req))
             if path == "/api/restore": return self._send(200, restore(req))
+            if path == "/api/new": return self._send(200, new_note(req))
             if path == "/api/project/status": return self._send(200, project_status(req))
             if path in ("/api/github/token", "/api/github/token/remove"):
                 if not self._this_machine(): raise ValueError("The GitHub sign-in can only be changed from the machine running the server.")

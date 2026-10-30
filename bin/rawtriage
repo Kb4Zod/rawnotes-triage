@@ -1,0 +1,266 @@
+#!/usr/bin/env python3
+"""rawtriage — triage RawNotes through the rawnotes-triage server (python stdlib only).
+
+  rawtriage                          AI-assisted triage: starts a Claude session that uses the rawnotes skill
+  rawtriage -l [status] [--json]     print the Inbox: status, type, age, date, title, stale/expired flags
+  rawtriage where                    the notes folder and the projects root
+  rawtriage check                    notes whose header is missing or invalid
+  rawtriage new <slug> [thought]     create today's note from _template.md
+  rawtriage keep <file> [--status open|cooking] [--next TEXT]
+  rawtriage kill <file> --reason TEXT
+  rawtriage reference <file> [--why TEXT]
+  rawtriage promote <file> --dest active|experiments|learning|templates --done TEXT
+                    [--due-days N | --due YYYY-MM-DD] [--slug S]
+  rawtriage merge <file> <file>... --title TEXT [--then inbox|promote|reference] [promote options]
+  rawtriage undo                     reverse the newest change (the page's undo list is the same one)
+  rawtriage project ship|extend|kill <name> [--kind active|experiments] [--note TEXT] [--days N]
+
+Every command goes through the running server, so a decision made here is logged, undoable in the page and counted
+in Pulse exactly like one made in the page. If the server is down it is started (the systemd unit if installed, else
+server.py --no-browser). If that fails, or something else answers on the port, rawtriage exits 2 and has changed
+nothing; do not edit notes by hand instead. Exit codes: 0 done, 1 refused (the server's reason is printed), 2 no server.
+--json prints the server's answer. RAWTRIAGE_PORT picks another port (default 8765).
+"""
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+REPO = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+PORT = int(os.environ.get("RAWTRIAGE_PORT") or 8765)
+BASE = f"http://127.0.0.1:{PORT}"
+UNIT = "rawtriage-web.service"
+WAIT = 5.0  # seconds to wait for a server we just started
+PROMPT = ("Raw note triage session. Use the rawnotes skill (its triage workflow): list the backlog with `rawtriage -l`, "
+          "then walk me through the notes one at a time and make me decide. Decide only through the rawtriage command.")
+
+
+class Refused(Exception):
+    """The server answered, but said no."""
+
+
+class NoServer(Exception):
+    """There is no usable server; nothing was changed."""
+
+
+class Lost(NoServer):
+    """The server went away while a request was in flight, so what happened to that request is not known."""
+
+
+def say(*a): print(*a, flush=True)
+
+
+def die(msg, code):
+    print(f"rawtriage: {msg}", file=sys.stderr); sys.exit(code)
+
+
+def _get(path, timeout=3):
+    with urllib.request.urlopen(BASE + path, timeout=timeout) as r: return json.loads(r.read())
+
+
+def probe():
+    """'up' (our server), 'down' (nothing listening) or 'foreign' (something else answers)."""
+    try: info = _get("/api/version", timeout=2)
+    except urllib.error.HTTPError: return "foreign"
+    except (OSError, ValueError): return "down"  # URLError, refused, timeout, or a non-JSON answer from a half-started server
+    return "up" if isinstance(info, dict) and info.get("app") == "rawnotes-triage" else "foreign"
+
+
+def wait_up():
+    end = time.time() + WAIT
+    while time.time() < end:
+        state = probe()
+        if state != "down": return state
+        time.sleep(0.15)
+    return "down"
+
+
+def unit_name():
+    """The systemd user unit to start when the server is down: the installed one, which always listens on 8765, so only
+    for that port (RAWTRIAGE_UNIT names another, for tests). '' = none installed."""
+    unit = os.environ.get("RAWTRIAGE_UNIT") or (UNIT if PORT == 8765 else "")
+    if not unit: return ""
+    try: return unit if subprocess.run(["systemctl", "--user", "cat", unit], capture_output=True, timeout=10).returncode == 0 else ""
+    except (OSError, subprocess.TimeoutExpired): return ""
+
+
+def ensure_server():
+    """Make sure our server answers; otherwise raise NoServer before anything has been changed."""
+    state = probe()
+    if state == "down":
+        unit = unit_name()
+        if unit:
+            try: ok = subprocess.run(["systemctl", "--user", "start", unit], capture_output=True, timeout=30).returncode == 0
+            except (OSError, subprocess.TimeoutExpired): ok = False
+            if not ok: raise NoServer(f"the triage server isn't running and `systemctl --user start {unit}` failed")
+        else:
+            try:
+                subprocess.Popen([sys.executable, os.path.join(REPO, "server.py"), "--no-browser", "--port", str(PORT)],
+                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 start_new_session=True, cwd=REPO)
+            except OSError as e: raise NoServer(f"the triage server isn't running and couldn't be started ({e})")
+        state = wait_up()
+    if state == "foreign": raise NoServer(f"something that isn't rawnotes-triage answers on port {PORT}")
+    if state == "down": raise NoServer("the triage server isn't running and couldn't be started")
+
+
+def api(path, body=None):
+    """GET (body None) or POST JSON to the server; returns the parsed answer. Raises Refused or NoServer."""
+    data = None if body is None else json.dumps(body).encode()
+    req = urllib.request.Request(BASE + path, data=data, method="GET" if body is None else "POST",
+                                 headers={} if body is None else {"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r: return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        try: msg = json.loads(e.read()).get("error") or f"HTTP {e.code}"
+        except (ValueError, AttributeError): msg = f"HTTP {e.code}"
+        raise Refused(msg)
+    except (OSError, ValueError) as e:
+        raise Lost(f"lost the triage server ({e}); check the state with `rawtriage -l` before retrying")
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message):  # exit 1, not argparse's 2: 2 means "no server" here
+        self.print_usage(sys.stderr); print(f"rawtriage: {message}", file=sys.stderr); sys.exit(1)
+
+
+def make_parser():
+    p = Parser(prog="rawtriage", description="Triage RawNotes through the rawnotes-triage server.")
+    common = Parser(add_help=False); common.add_argument("--json", action="store_true", help="print the server's answer as JSON")
+    sub = p.add_subparsers(dest="cmd", parser_class=Parser)
+    def add(name, help, *args, **kw):
+        sp = sub.add_parser(name, help=help, parents=[common], **kw)
+        for a, k in args: sp.add_argument(*a, **k)
+        return sp
+    add("where", "print the notes folder and the projects root")
+    add("check", "list notes with a missing or invalid header")
+    add("new", "create today's note from _template.md", (("slug",), {}), (("thought",), {"nargs": "*"}))
+    add("keep", "keep a note in the Inbox", (("file",), {}), (("--status",), {"choices": ["open", "cooking"], "default": "cooking"}),
+        (("--next",), {"default": "", "help": "a next-step line to add"}))
+    add("kill", "kill a note (to the Archive)", (("file",), {}), (("--reason",), {"required": True}))
+    add("reference", "file a note as reference", (("file",), {}), (("--why",), {"default": ""}))
+    promo = [(("--dest",), {"choices": ["active", "experiments", "learning", "templates"]}), (("--done",), {"default": "", "help": "what done means"}),
+             (("--due-days",), {"type": int}), (("--due",), {"help": "ship-by date YYYY-MM-DD"}), (("--slug",), {"default": ""})]
+    add("promote", "promote a note to a project", (("file",), {}), *promo)
+    add("merge", "merge notes into one", (("files",), {"nargs": "+"}), (("--title",), {"required": True}),
+        (("--then",), {"choices": ["inbox", "promote", "reference"], "default": "inbox"}), (("--question",), {"default": ""}), *promo)
+    add("undo", "undo the newest change")
+    pr = add("project", "ship, push or kill a project", (("action",), {"choices": ["ship", "extend", "kill"]}), (("name",), {}),
+             (("--kind",), {"choices": ["active", "experiments"]}), (("--note",), {"default": ""}), (("--days",), {"type": int}))
+    return p
+
+
+def out(args, data, text):
+    say(json.dumps(data, indent=2, ensure_ascii=False) if getattr(args, "json", False) else text)
+
+
+def note_name(arg):
+    """The name the server wants for a note: a path inside the notes folder is made relative; an unambiguous part of a
+    name (the slug, say) is completed from the Inbox."""
+    notes = api("/api/notes")
+    root = notes.get("notes_dir", "").rstrip("/") + "/"
+    if arg.startswith(root): arg = arg[len(root):]
+    names = [n["file"] for n in notes["live"]]
+    if arg in names or arg.startswith("done/"): return arg
+    hits = [n for n in names if arg in n]
+    if len(hits) == 1: return hits[0]
+    if len(hits) > 1: raise Refused(f"“{arg}” matches {len(hits)} notes: " + ", ".join(hits))
+    return arg  # let the server say it's not there
+
+
+def promote_body(args):
+    if args.dest not in (None, "experiments") and args.due is None and args.due_days is None:
+        raise Refused("Give a ship-by: --due-days N or --due YYYY-MM-DD (only experiments are open-ended).")
+    body = {"dest": args.dest, "note": args.done, "slug": args.slug}
+    if args.due is not None: body["due"] = args.due
+    if args.due_days is not None: body["due_days"] = args.due_days
+    return body
+
+
+def project_body(args):
+    action = {"ship": "shipped"}.get(args.action, args.action)
+    body = {"action": action, "note": args.note}
+    if args.days is not None: body["days"] = args.days
+    flights = [x for x in api("/api/notes").get("inflight", [])
+               if not x["done"] and (x["project"] or os.path.basename(x["path"])[:-3]) == args.name and (not args.kind or x["dest"] == args.kind)]
+    if len(flights) > 1: flights = [x for x in flights if x["path"].endswith("/NOTES.md")] or flights
+    if len(flights) > 1: raise Refused(f"“{args.name}” has {len(flights)} promoted files; say --kind or fix it in the page")
+    if flights: return {**body, "path": flights[0]["path"]}
+    if args.action == "extend": raise Refused(f"“{args.name}” has no ship-by date to push")
+    return {**body, "name": args.name, "kind": args.kind or "active"}
+
+
+def run(args):
+    c = args.cmd
+    if c == "where":
+        s = api("/api/setup")
+        return out(args, {"notes_dir": s["notes_dir"], "projects_dir": s["projects_dir"]}, f"notes: {s['notes_dir']}\nprojects: {s['projects_dir']}")
+    if c == "check":
+        r = api("/api/check")
+        text = (f"RawNotes header check: {len(r['problems'])} note(s) don't have a complete header.\n" +
+                "\n".join(f"- {p['file']} — missing/invalid: {', '.join(p['issues'])}" for p in r["problems"])
+                if r["problems"] else f"All {r['checked']} notes have a complete header.")
+        return out(args, r, text)
+    if c == "new":
+        r = api("/api/new", {"slug": args.slug, "thought": " ".join(args.thought)})
+        return out(args, r, f"{r['msg']}\n{r['path']}")
+    if c == "undo":
+        r = api("/api/undo", {}); return out(args, r, r["msg"])
+    if c == "project":
+        r = api("/api/project/status", project_body(args)); return out(args, r, r["msg"])
+    if c == "merge":
+        body = {"files": [note_name(f) for f in args.files], "title": args.title, "then": args.then, "question": args.question}
+        if args.then == "promote": body.update(promote_body(args))
+        elif args.then == "reference": body.update({"note": args.done, "slug": args.slug})
+        r = api("/api/merge", body); return out(args, r, r["msg"])
+    body = {"file": note_name(args.file)}
+    if c == "keep": body.update(action="keep", status=args.status, note=args.next)
+    elif c == "kill": body.update(action="kill", note=args.reason)
+    elif c == "reference": body.update(action="reference", note=args.why)
+    elif c == "promote": body.update(action="promote", **promote_body(args))
+    r = api("/api/action", body); out(args, r, r["msg"])
+
+
+def list_notes(argv):
+    lp = Parser(prog="rawtriage -l"); lp.add_argument("status", nargs="?"); lp.add_argument("--json", action="store_true")
+    a = lp.parse_args(argv)
+    ensure_server()
+    live = [n for n in api("/api/notes")["live"] if not a.status or n["status"] == a.status]
+    if a.json: return say(json.dumps(live, indent=2, ensure_ascii=False))
+    say("%-8s %-9s %-4s %-10s %s" % ("STATUS", "TYPE", "AGE", "DATE", "TITLE"))
+    if not live and not a.status: say("(no notes)")
+    for n in live:
+        age = "?" if n.get("age") is None else n["age"]
+        flags = "".join(f"  [{k}]" for k in ("stale", "expired") if n.get(k))
+        say("%-8s %-9s %3sd %-10s %s  (%s)%s" % (n["status"], n["type"], age, n["date"], n["title"], n["file"], flags))
+
+
+def session():
+    """No arguments: a Claude triage session, started in the notes folder when the server can say where it is."""
+    try:
+        ensure_server(); notes = api("/api/setup")["notes_dir"]
+        if os.path.isdir(notes): os.chdir(notes)
+    except (NoServer, Refused) as e: print(f"rawtriage: {e}; starting the session anyway, but it cannot decide anything until the server is up", file=sys.stderr)
+    try: os.execvp("claude", ["claude", "--model", "haiku", "--effort", "low", PROMPT])
+    except OSError as e: die(f"can't start claude ({e})", 1)
+
+
+def main(argv):
+    if not argv: return session()
+    if argv[0] in ("-l", "--list"): return list_notes(argv[1:])
+    args = make_parser().parse_args(argv)
+    if not args.cmd: make_parser().error("give a command (or -l); see --help")
+    if args.cmd == "promote": promote_body(args)  # refuse a missing ship-by before even looking for the server
+    ensure_server()
+    run(args)
+
+
+if __name__ == "__main__":
+    try: main(sys.argv[1:])
+    except Refused as e: print(f"rawtriage: {e}", file=sys.stderr); sys.exit(1)
+    except Lost as e: print(f"rawtriage: {e}", file=sys.stderr); sys.exit(2)
+    except NoServer as e: print(f"rawtriage: {e}. Nothing was changed.", file=sys.stderr); sys.exit(2)

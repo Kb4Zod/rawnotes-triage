@@ -109,7 +109,8 @@ One-time setup, run from the repo:
    run from a linked git worktree (a feature branch), it uses the main checkout of that repo instead, so the
    always-on service never runs a branch. It also links `~/.local/bin/rawtriage-web` to `bin/rawtriage-web`
    there. A hand-made wrapper from before 2.12 is backed up (`rawtriage-web.bak.rawnotes-triage`) and replaced;
-   any other file with that name stops the install, untouched.
+   any other file with that name stops the install, untouched. `~/.local/bin/rawtriage` is linked to `bin/rawtriage`
+   the same way (a hand-made bash `rawtriage` is backed up as `rawtriage.bak.rawnotes-triage`); see **Commands**.
 2. Press `SUPER + SPACE`, type `RawNotes Triage`, Enter. The page opens in its own window, not a browser tab,
    and always full screen. `SUPER + F` leaves full screen (and goes back), as for any window.
 
@@ -125,11 +126,60 @@ One-time setup, run from the repo:
   running server belongs to the service, `--restart` restarts the service instead of stopping it.
 - If a server you started by hand holds the port, the service waits and tries again every 30 s.
 - Launcher entry only, no service: `./install-webapp.sh --no-service`. Undo everything: `./install-webapp.sh --remove`
-  (it removes `~/.local/bin/rawtriage-web` only if it is the installer's link).
+  (it removes `~/.local/bin/rawtriage-web` and `~/.local/bin/rawtriage` only if they are the installer's links).
 - **Moved the checkout?** Run `./install-webapp.sh` again from the new place: the service file and the link are
   rewritten to point there.
 - The launcher entry runs `rawtriage-web --app`, not `omarchy-launch-webapp`, so it doesn't show up in Omarchy's
   *Remove Web App* menu. Use `--remove` instead.
+
+## Commands
+
+`rawtriage` (`bin/rawtriage`, installed to `~/.local/bin/rawtriage` by `install-webapp.sh`) triages from a terminal or
+an agent. It never edits notes itself: every command goes through the running server, so a decision made here has the
+same rules, lock, undo list and `triage.log` line as one made in the page (and shows up in Pulse's "decided").
+
+```
+rawtriage                          # a Claude triage session (uses the rawnotes skill)
+rawtriage -l [status] [--json]     # the Inbox: status, type, age, date, title, [stale] / [expired] flags
+rawtriage where                    # the notes folder and the projects root
+rawtriage check                    # notes with a missing or invalid header (same rules as check-frontmatter.sh)
+rawtriage new <slug> [thought...]  # create today's note from _template.md; refuses a name that exists
+rawtriage keep <file> [--status open|cooking] [--next "step"]
+rawtriage kill <file> --reason "why"
+rawtriage reference <file> [--why "..."]
+rawtriage promote <file> --dest active|experiments|learning|templates --done "done means" \
+                  [--due-days 7 | --due YYYY-MM-DD] [--slug name]
+rawtriage merge <file> <file>... --title "..." [--then inbox|promote|reference] [promote options]
+rawtriage undo                     # the newest change, whoever made it (the page's undo list is the same list)
+rawtriage project ship|extend|kill <name> [--kind active|experiments] [--note "..."] [--days N]
+```
+
+- `<file>` is a name in the Inbox, an absolute path, or any part of a name that matches one note (`rawtriage kill dns-slow --reason ...`).
+- `promote` needs `--done`, and a ship-by (`--due-days` or `--due`) for everything except `experiments`; without them
+  it exits 1 and changes nothing.
+- `--json` prints the server's answer instead of a sentence. `RAWTRIAGE_PORT` picks another port (default 8765).
+- **Exit codes:** 0 done; 1 refused (the reason is printed; bad usage too); 2 no usable server.
+- **Server down:** `systemctl --user start rawtriage-web` if the unit is installed, otherwise `server.py --no-browser`
+  is started detached; it waits up to 5 seconds. If that fails, or something that isn't rawnotes-triage answers on the
+  port, it exits 2 and says nothing was changed. Do not fall back to editing notes by hand.
+- `GET /api/check` and `POST /api/new {slug, thought}` are the two endpoints added for it.
+
+## The rawnotes skill
+
+`skills/rawnotes/` teaches an agent (Claude, Codex, OpenCode) to capture and triage notes from a thread in any folder,
+not just inside the notes folder: `SKILL.md` (when to use it, the rules), `capture.md`, `triage.md`, and
+`global-rule.md` (the few lines to paste into your global instructions). It is path-free: the agent asks
+`rawtriage where` for the notes folder, creates notes with `rawtriage new`, checks headers with `rawtriage check`, and
+decides only through `rawtriage ...` (see **Commands**); if `rawtriage` exits 2 it stops and tells you.
+
+- `./install-webapp.sh` links it into `~/.claude/skills/rawnotes`, `~/.agents/skills/rawnotes` and
+  `~/.codex/skills/rawnotes`, always from the main checkout (never a worktree). A rerun is safe; `--remove` removes
+  only those links; anything else already called `rawnotes` there stops the install, untouched.
+- Paste `skills/rawnotes/global-rule.md` into `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md` and
+  `~/.config/opencode/AGENTS.md` (by hand; the installer doesn't edit your instruction files).
+- **One source of truth.** In your notes folder, point the instruction files at the skill instead of copying it:
+  link `TRIAGE.md` to `skills/rawnotes/triage.md`, make `CLAUDE.md` a few lines ("Use the rawnotes skill (capture or
+  triage). This folder is the notes folder. Never reorganize it."), and make `AGENTS.md` a link to `CLAUDE.md`.
 
 ## Words (same in the web app and RawNotes/CLAUDE.md)
 
@@ -450,6 +500,9 @@ build of the page.
 - `install-webapp.sh`, `systemd/rawtriage-web.service`: the Omarchy launcher app and its always-on service (the
   installer fills in the checkout's path in the service file)
 - `bin/rawtriage-web`: the command-line wrapper the launcher runs
+- `bin/rawtriage`: the triage command (stdlib client of the server's API)
+- `skills/rawnotes/`: the capture and triage skill for agents (installed by `install-webapp.sh`)
+- `testdata/check-frontmatter.sh`: a copy of RawNotes' header hook, so `test_cli.py` can check `/api/check` gives the same verdicts
 - `test_*.py`, `testkit.py`, `cdp.py`, `loadcheck.py`: tests and load check
 - `.scratch/`: specs and tickets for past and pending work (see `AGENTS.md`)
 
