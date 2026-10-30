@@ -346,7 +346,7 @@ class NoServerRunning(unittest.TestCase):
         hits = []
         class Other(BaseHTTPRequestHandler):
             def do_GET(self):
-                hits.append(self.path); body = b'{"hello": "world"}'
+                hits.append((self.command, self.path)); body = b'{"hello": "world"}'
                 self.send_response(200); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
             do_POST = do_GET
             def log_message(self, *a): pass
@@ -355,7 +355,9 @@ class NoServerRunning(unittest.TestCase):
         for args in (["new", "x"], ["kill", "2026-10-01-a.md", "--reason", "r"], ["-l"]):
             r = self.rt(*args)
             self.assertEqual(r.returncode, 2, args); self.assertIn("isn't rawnotes-triage", r.stderr); self.assertIn("Nothing was changed", r.stderr)
-        self.assertEqual(set(hits), {"/api/version"})  # asked who it was, then stopped: no decision was ever posted
+        # asked who it was, then stopped: no decision was ever posted. (Only /api/ requests count: something else on the
+        # machine, such as a desktop widget that lists local servers, may probe a fresh port with GET /.)
+        self.assertEqual({h for h in hits if h[0] != "GET" or h[1].startswith("/api/")}, {("GET", "/api/version")})
         self.assertEqual(self.listing(), ["done"])
 
 
