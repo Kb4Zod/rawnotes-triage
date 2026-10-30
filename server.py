@@ -1278,10 +1278,12 @@ def _notes_git(args, timeout=COMMIT_TIMEOUT, stdin=None):
 
 def _commit_paths(ops):
     """Paths inside the notes folder that `ops` wrote or moved (both sides of a move), relative to it, in order.
-    Folders it made are left out: git tracks files, and adding done/ would sweep in everything else there."""
+    Folders it made are left out: git tracks files, and adding done/ would sweep in everything else there. So is a
+    project's own repo ("gitinit": promote makes its first commit itself) and anything outside the notes folder:
+    project folders and ../reference (its note and README.md index line) are never committed here."""
     root = os.path.realpath(NOTES); out = []; first = {}
     for op in ops:
-        if op[0] == "mkdir": continue
+        if op[0] not in ("write", "move"): continue  # mkdir, gitinit
         for p in (op[1], op[2]) if op[0] == "move" else (op[1],):
             if not _within(p, root) or p == root: continue
             rel = os.path.relpath(p, root)

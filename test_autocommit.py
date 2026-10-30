@@ -94,6 +94,32 @@ class AutoCommit(GitFixture):
         self.assertTrue(os.path.isdir(os.path.join(proj, ".git")))  # the project's own repo (ticket 07), not the notes repo
         self.assertEqual(git(proj, "rev-list", "--count", "HEAD").strip(), "1")
 
+    def test_reference_with_an_index_line_commits_only_the_notes_side(self):
+        ref = os.path.join(self.tmp, "reference"); os.makedirs(ref)
+        with open(os.path.join(ref, "README.md"), "w") as fh: fh.write("# reference\n\n## Index\n\n### Tools\n- [x](x.md): x\n")
+        r = self.post("/api/action", {"file": "2026-10-02-beta.md", "action": "reference", "note": "keep it", "section": "Tools"})
+        self.assertTrue(r["commit"]["ok"], r)
+        self.assertEqual(self.changed(), ["A\tdone/2026-10-02-beta.md", "D\t2026-10-02-beta.md"])
+        self.assertIn("- [Beta](beta.md)", open(os.path.join(ref, "README.md")).read())  # written, but not this repo's business
+        self.post("/api/action", {"file": "2026-10-03-gamma.md", "action": "reference"}); n = self.count()
+        r = self.post("/api/reference/index", {"file": "gamma.md", "section": "Tools"})
+        self.assertIn("- [Gamma](gamma.md)", open(os.path.join(ref, "README.md")).read())
+        self.assertNotIn("commit", r); self.assertEqual(self.count(), n)  # indexing a filed note touches only ../reference
+
+    def test_new_note_is_committed(self):
+        r = self.post("/api/new", {"slug": "fresh-idea", "thought": "What if?"})
+        self.assertTrue(r["commit"]["ok"], r); self.assertEqual(self.subject(), f"triage: new note {r['file']}")
+        self.assertEqual(self.changed(), [f"A\t{r['file']}"])
+        self.post("/api/undo", {}); self.assertEqual(self.changed(), [f"D\t{r['file']}"])
+
+    def test_commit_paths_skip_project_repos_and_paths_outside_the_notes_folder(self):
+        proj = os.path.join(self.tmp, "active", "x"); note = os.path.join(self.notes, "a.md")
+        ops = [("mkdir", proj), ("gitinit", proj, "abc123"), ("write", os.path.join(proj, "NOTES.md"), None, b"x", None),
+               ("write", os.path.join(self.tmp, "reference", "README.md"), b"", b"y", None),
+               ("move", note, os.path.join(self.notes, "done", "a.md")), ("mkdir", os.path.join(self.notes, "done"))]
+        self.assertEqual(server._commit_paths(ops)[0], ["a.md", "done/a.md"])
+        self.assertIsNone(server.autocommit("x", ops[:4]))
+
     def test_hand_edits_in_a_touched_note_are_named_in_the_body(self):
         with open(os.path.join(self.notes, "2026-10-01-alpha.md"), "a") as fh: fh.write("typed by hand\n")
         self.post("/api/action", {"file": "2026-10-01-alpha.md", "action": "keep", "status": "cooking"})
