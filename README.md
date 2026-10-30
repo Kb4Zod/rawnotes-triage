@@ -235,11 +235,15 @@ Select a card to open its panel in a column beside it (select it again, or
 README or NOTES. Excerpts and commit titles are quoted from the source, not
 summarised. Buttons: **Mark shipped** (`status: shipped` + `shipped:` date),
 **+7 days** (pushes `due:` from today or the current due date, whichever is
-later; not offered for experiments or undated folders), **Browse repo** when
-the project has a GitHub origin, otherwise **Open folder** (launches
+later; not offered for experiments or undated folders; asks why, at least 10
+characters, and records `- extensions: N` plus a `- pushed <old> → <new>
+(<date>): <reason>` line under `## Plan`; after two pushes (`max_extensions` in
+`config.json`) the button reads "No more extensions", and an overdue project
+with none left shows a **Decide** badge: ship it or kill it), **Browse repo**
+when the project has a GitHub origin, otherwise **Open folder** (launches
 `xdg-open` on the server's machine; only for a browser on that machine, and
-hidden on the phone layout), and **Kill** (asks for a second click). Shipping
-or killing a folder that has no dated file writes into its `NOTES.md`,
+hidden on the phone layout), and **Kill** (asks why; the reason goes under
+`## Outcome`). Shipping or killing a folder that has no dated file writes into its `NOTES.md`,
 creating it if needed. All these writes can be undone. Git facts are cached
 for 20 seconds; **Refresh** re-reads them.
 

@@ -23,6 +23,8 @@ class ApiTestCase(unittest.TestCase):
         os.makedirs(self.notes)
         self.old_notes, self.old_projects, self.old_log = server.NOTES, server.PROJECTS, server.log
         self.old_log_path = server.LOG_PATH
+        self.old_config_dir = server.CONFIG_DIR
+        server.CONFIG_DIR = os.path.join(self.tmp, "config")  # tunables are read from config.json: never the real one
         server.NOTES = self.notes
         server.PROJECTS = self.tmp
         server.log = lambda msg: None  # never write test actions into the real triage.log
@@ -36,6 +38,7 @@ class ApiTestCase(unittest.TestCase):
 
     def _restore(self):
         server.NOTES, server.PROJECTS = self.old_notes, self.old_projects
+        server.CONFIG_DIR = self.old_config_dir
         server.log = self.old_log
 
     def make_project(self, name):
@@ -585,7 +588,7 @@ class DecisionTestCase(unittest.TestCase):
         self.post("/api/action", {"file": "2026-10-01-a.md", "action": "promote", "dest": "active", "note": "x", "due_days": 2})
         f = self.get("/api/notes")["inflight"][0]
         self.assertEqual((f["path"], f["project"]), ("active/a/NOTES.md", "a"))
-        self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "extend", "days": 7})
+        self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "extend", "days": 7, "note": "Waiting on the parts to arrive."})
         self.assertEqual(self.get("/api/notes")["inflight"][0]["days_left"], 9)
         self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "shipped"})
         self.assertTrue(self.get("/api/notes")["inflight"][0]["done"])
@@ -602,12 +605,76 @@ class DecisionTestCase(unittest.TestCase):
         self.assertEqual(status()["experiments/spike"], "shipped")
         self.post("/api/undo", {})
         self.assertFalse(os.path.exists(os.path.join(spike, "NOTES.md")))  # undo removes the file it created
+        self.post("/api/project/status", {"name": "spike", "kind": "experiments", "action": "kill"}, ok=False)  # a reason is required
         self.post("/api/project/status", {"name": "old", "kind": "experiments", "action": "kill", "note": "Went nowhere."})
         text = open(os.path.join(old, "notes.md")).read()  # existing file kept its name and content
         self.assertIn("- status: dead", text); self.assertIn("Some notes.", text); self.assertIn("Went nowhere.", text)
         for bad in ({"name": "spike", "kind": "experiments", "action": "extend"}, {"name": "spike", "action": "shipped"},
                     {"name": "../experiments/spike", "kind": "active", "action": "shipped"}, {"name": "spike", "kind": "learning", "action": "shipped"}):
             self.post("/api/project/status", bad, ok=False)
+
+    def _promoted(self, extra=""):
+        self.note("2026-10-01-a.md")
+        self.post("/api/action", {"file": "2026-10-01-a.md", "action": "promote", "dest": "active", "note": "x", "due_days": 2})
+        path = os.path.join(self.tmp, "active", "a", "NOTES.md")
+        if extra:
+            with open(path) as fh: text = fh.read()
+            with open(path, "w") as fh: fh.write(server.set_field(text, "extensions", extra))
+        return path
+
+    def _push(self, **kw):
+        return {"path": "active/a/NOTES.md", "action": "extend", "days": 7, "note": "Waiting on the parts to arrive.", **kw}
+
+    def test_extend_needs_a_reason_and_changes_nothing_without_one(self):
+        self._promoted(); before = self.snapshot()
+        for bad in ({"note": ""}, {"note": "too short"}, {"note": "          "}, {"note": None}):
+            self.post("/api/project/status", self._push(**bad), ok=False); self.assertEqual(self.snapshot(), before)
+        for days in (0, 8, 30, "x"):
+            self.post("/api/project/status", self._push(days=days), ok=False); self.assertEqual(self.snapshot(), before)
+
+    def test_extend_records_count_and_plan_line_then_stops_after_two(self):
+        path = self._promoted(); t = server.today()
+        due0 = server.field(open(path).read(), "due")
+        self.post("/api/project/status", self._push(days=3))
+        text = open(path).read(); due1 = (max(t, server.dt.date.fromisoformat(due0)) + server.dt.timedelta(days=3)).isoformat()
+        self.assertEqual((server.field(text, "due"), server.field(text, "extensions")), (due1, "1"))
+        plan = text.split("## Plan", 1)[1]
+        self.assertIn(f"- pushed {due0} → {due1} ({t.isoformat()}): Waiting on the parts to arrive.", plan)
+        [f] = self.get("/api/notes")["inflight"]; self.assertEqual((f["extensions"], f["max_extensions"]), (1, 2))
+        self.post("/api/project/status", self._push())
+        before = self.snapshot()
+        err = self.post("/api/project/status", self._push(), ok=False)["error"]
+        self.assertEqual(err, "Pushed twice already: ship it or kill it."); self.assertEqual(self.snapshot(), before)
+        self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "shipped"})  # shipping is still allowed
+
+    def test_missing_extensions_counts_as_zero_and_undo_restores_exactly(self):
+        path = self._promoted(); original = open(path, "rb").read()
+        self.assertNotIn(b"extensions", original)
+        self.post("/api/project/status", self._push()); self.assertNotEqual(open(path, "rb").read(), original)
+        self.post("/api/undo", {}); self.assertEqual(open(path, "rb").read(), original)
+
+    def test_extend_adds_a_plan_section_when_missing(self):
+        path = self._promoted()
+        with open(path) as fh: text = fh.read()
+        with open(path, "w") as fh: fh.write(text.split("## Plan")[0].rstrip() + "\n")
+        original = open(path, "rb").read()
+        self.post("/api/project/status", self._push())
+        self.assertIn("\n## Plan\n\n- pushed ", open(path).read())
+        self.post("/api/undo", {}); self.assertEqual(open(path, "rb").read(), original)
+
+    def test_extension_limit_comes_from_config(self):
+        self._promoted(); os.makedirs(server.CONFIG_DIR, exist_ok=True)
+        with open(os.path.join(server.CONFIG_DIR, "config.json"), "w") as fh: fh.write('{"max_extensions": 1}')
+        self.post("/api/project/status", self._push())
+        self.post("/api/project/status", self._push(), ok=False)
+
+    def test_project_kill_needs_a_reason_and_files_it_under_outcome(self):
+        path = self._promoted(); before = self.snapshot()
+        self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "kill"}, ok=False)
+        self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "kill", "note": "  "}, ok=False)
+        self.assertEqual(self.snapshot(), before)
+        self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "kill", "note": "Not worth it."})
+        self.assertIn("**Killed", open(path).read().split("## Outcome", 1)[1]); self.assertIn("Not worth it.", open(path).read())
 
     def test_stats_counts_captures_and_decisions_by_week(self):
         server.LOG_PATH = os.path.join(self.tmp, "triage.log"); self.addCleanup(setattr, server, "LOG_PATH", self.old_log_path)

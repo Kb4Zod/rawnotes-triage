@@ -30,7 +30,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 import safefs
-from notemeta import (field, set_field, drop_field, title_of, append_outcome, question_of, question_summary, note_body,
+from notemeta import (field, set_field, drop_field, title_of, append_outcome, append_to_section, question_of, question_summary, note_body,
                       eol_of, with_eol, to_lf, header_lines, title_index, HEAD_LINE)
 
 VERSION = "2.12"  # bump on every change; history in CHANGELOG.md
@@ -49,6 +49,9 @@ STARTED = dt.datetime.now().isoformat(timespec="seconds")
 # the page is read once, so it always matches the API of the process serving it (restart to pick up edits)
 with open(os.path.join(HERE, "index.html"), "rb") as _fh: INDEX_HTML = _fh.read().replace(b"__VERSION__", VERSION.encode())
 DUE_DAYS = 7
+MAX_EXTENSIONS = 2  # a ship-by date may be pushed this many times (config.json: max_extensions)
+EXTEND_MAX_DAYS = 7
+REASON_MIN = 10  # characters a reason for pushing the ship-by date has to have
 ACTIVITY_TTL = 600  # seconds; GitHub contribution data barely changes minute to minute
 ACTIVITY_REPO_DAYS = 30
 STALE_DAYS = 60
@@ -125,10 +128,15 @@ def list_notes(with_inflight=True):
         out = scan_notes()
         return {**out, "inflight": inflight() if with_inflight else [], "today": today().isoformat(), "notes_dir": NOTES}
 
+def _count(v):
+    """A header count (extensions: 2) as an int; missing or junk counts as 0."""
+    return int(v) if v.isdigit() else 0
+
 def _meta_of(path, f):
     """The part of a project file the board needs: kept until the file changes."""
     with open(path, "rb") as fh: text = to_lf(fh.read(4000).decode("utf-8", "replace"))
-    return {"title": title_of(text, f), "due": field(text, "due"), "promoted": field(text, "promoted"), "status": field(text, "status") or "?"}
+    return {"title": title_of(text, f), "due": field(text, "due"), "promoted": field(text, "promoted"), "status": field(text, "status") or "?",
+            "extensions": _count(field(text, "extensions"))}
 
 def inflight():
     """Promoted notes with a due date (plus open-ended experiments), found in the sibling project folders."""
@@ -154,6 +162,7 @@ def inflight():
                 out.append({"path": rel, "title": m["title"], "project": rel.split(os.sep)[1] if rel.count(os.sep) >= 2 else "",
                             "dest": dest, "promoted": m["promoted"], "due": due,
                             "days_left": left, "open_ended": open_ended, "status": m["status"],
+                            "extensions": m["extensions"], "max_extensions": tunable("max_extensions", MAX_EXTENSIONS),
                             "done": m["status"] in CLOSED})
     out.sort(key=lambda x: (x["done"], x["days_left"] if x["days_left"] is not None else 999))
     return out
@@ -508,6 +517,13 @@ def saved_notes_dir():
     except (OSError, ValueError): return None
     p = d.get("notes") if isinstance(d, dict) else None
     return p if isinstance(p, str) and os.path.isabs(p) else None
+
+def tunable(key, default):
+    """A whole-number setting from config.json (`default` if missing, unreadable or not a positive/zero integer)."""
+    try:
+        with open(config_path(), encoding="utf-8") as fh: v = json.load(fh).get(key)
+    except (OSError, ValueError, AttributeError): return default
+    return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else default
 
 def save_config(**changes):
     """Merge `changes` into config.json (folder 0700, written through a private temp file and renamed into place)."""
@@ -1154,15 +1170,24 @@ def _status_edit(text, req, name):
         return set_field(set_field(text, "status", "shipped"), "shipped", t), f"ship {name}", f"Shipped {name} 🎉"
     if action == "extend":
         if not field(text, "due"): raise ValueError("open-ended experiments have no ship-by date to push")
-        try: days = int(req.get("days") or 7)
+        why = _text(req, "note")
+        if len(why) < REASON_MIN: raise ValueError(f"Say why you need more time (at least {REASON_MIN} characters).")
+        done = _count(field(text, "extensions"))
+        if done >= tunable("max_extensions", MAX_EXTENSIONS): raise ValueError("Pushed twice already: ship it or kill it.")
+        try: days = int(7 if req.get("days") is None else req.get("days"))
         except (TypeError, ValueError): raise ValueError("days must be a number")
-        if not 1 <= days <= 90: raise ValueError("days must be 1 to 90")
-        try: base = max(dt.date.fromisoformat(field(text, "due")), today())
+        if not 1 <= days <= EXTEND_MAX_DAYS: raise ValueError(f"days must be 1 to {EXTEND_MAX_DAYS}")
+        old = field(text, "due")
+        try: base = max(dt.date.fromisoformat(old), today())
         except ValueError: base = today()
         due = (base + dt.timedelta(days=days)).isoformat()
-        return set_field(text, "due", due), f"push {name} to {due}", f"{name}: ship by {due}"
+        text = append_to_section(set_field(set_field(text, "due", due), "extensions", str(done + 1)), "Plan",
+                                 f"- pushed {old} → {due} ({t}): {' '.join(why.split())}")
+        return text, f"push {name} to {due}", f"{name}: ship by {due}"
     if action == "kill":
-        text = append_outcome(set_field(text, "status", "dead"), f"**Killed {t}:** {_text(req, 'note') or 'stopped.'}")
+        why = _text(req, "note")
+        if not why: raise ValueError("Say why you are killing it.")
+        text = append_outcome(set_field(text, "status", "dead"), f"**Killed {t}:** {why}")
         return text, f"kill {name}", f"Killed {name}"
     raise ValueError("unknown project action")
 

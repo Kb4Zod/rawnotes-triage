@@ -774,6 +774,7 @@ function projectCards(){
   ps.filter(p=>!used.has(p.path)).forEach(p=>cards.push(card(p.path,p.name,null,p)));
   return cards}
 const CLOSED=['done','shipped','dead'];
+const decide=f=>f&&!f.done&&f.days_left!==null&&f.days_left<0&&f.extensions>=f.max_extensions?st('late','Decide'):'';  // overdue with no extensions left
 const expChip=c=>c.exp?st('exp','Experiment'):'';
 const pq=p=>'name='+enc(p.name)+'&kind='+enc(p.kind);
 function ring(f){if(!f||f.days_left===null)return'';const l=f.days_left;
@@ -794,7 +795,7 @@ function renderProjects(){
   const card=c=>{const dm=c.p?(c.p.done_defined?null:'＋ Define “done means”'):null;
     return `<button type="button" class="card pc ${c.id===S.psel?'sel':''} ${c.closed?'closed':''}" data-pid="${esc(c.id)}"><div class="top"><div class="ct">${esc(c.title)}</div>${c.f&&!c.f.done?ring(c.f):''}</div>
       <div class="dm ${dm?'miss':''}">${dm||esc(c.f&&c.f.title!==c.title?c.f.title:(c.p?c.p.path:c.f.path))}</div>
-      <div class="row">${expChip(c)}${c.closed?st(c.status==='dead'?'killed':'shipped',stLabel[c.status]||c.status):''}${c.p?ghChip(c.p.gh):c.exp?'':st('plain',c.f.dest)}${c.f&&c.f.due&&!c.f.done?`<span class="st plain">ship by ${c.f.due.slice(5)}</span>`:''}${c.f&&c.f.open_ended&&!c.f.done?`<span class="st plain">since ${esc((c.f.promoted||'').slice(5))}</span>`:''}</div></button>`};
+      <div class="row">${expChip(c)}${c.closed?st(c.status==='dead'?'killed':'shipped',stLabel[c.status]||c.status):''}${c.p?ghChip(c.p.gh):c.exp?'':st('plain',c.f.dest)}${decide(c.f)}${c.f&&c.f.due&&!c.f.done?`<span class="st plain">ship by ${c.f.due.slice(5)}</span>`:''}${c.f&&c.f.open_ended&&!c.f.done?`<span class="st plain">since ${esc((c.f.promoted||'').slice(5))}</span>`:''}</div></button>`};
   // Left to right by urgency; empty columns are hidden. The drawer opens right after the selected card's column.
   const cols=[['late','Overdue',late],['soon','Due this week',week],['ok','Later',later],['plain','No ship date',none],['exp','Experiments',exps],['plain','Closed',closed]].filter(x=>x[2].length);
   const board=cols.map(([cls,label,cs])=>`<div class="col"><h2>${st(cls,label)} ${cs.length}</h2>${cs.map(card).join('')}</div>`
@@ -823,13 +824,13 @@ async function renderDrawer(){const d=$('#drawer');if(!d)return;const c=projectC
     :`<h3 class="sec label">Clock</h3><div class="muted" style="font-size:13px">Not on the clock. Add a <span class="mono">- due: YYYY-MM-DD</span> line to the header at the top of its NOTES.md to give it a ship-by date.</div>`;
   const open=`<button class="btn" id="openf">${I.folder}Open folder</button>`;
   const acts=linked?`<div class="acts">${p.gh&&p.gh.repo?`<button class="btn" id="browse">${I.gh}Browse repo</button>`:''}${open}</div>`
-    :!c.closed?`<div class="acts"><button class="btn primary" data-pa="shipped">${I.check}Mark shipped</button>${!f||f.open_ended?'':`<button class="btn" data-pa="extend">${I.clock}+7 days</button>`}
+    :!c.closed?`<div class="acts"><button class="btn primary" data-pa="shipped">${I.check}Mark shipped</button>${!f||f.open_ended?'':f.extensions>=f.max_extensions?`<button class="btn" disabled>${I.clock}No more extensions</button>`:`<button class="btn" data-pa="extend">${I.clock}+7 days</button>`}
      ${p&&p.gh&&p.gh.repo?`<button class="btn" id="browse">${I.gh}Browse repo</button>`:open}<button class="btn" data-pa="kill" style="color:var(--rust-ink)">${I.x}Kill</button></div>`
     :`<div class="acts">${p&&p.gh&&p.gh.repo?`<button class="btn" id="browse">${I.gh}Browse repo</button>`:''}${open}</div>`;
-  const head=`<h1 class="sr rh1">Projects</h1><button class="back" onclick="backToList()">‹ Projects</button><div style="display:flex;gap:6px;flex-wrap:wrap">${expChip(c)}${f&&!f.done&&f.days_left!==null?st(f.days_left<0?'late':f.days_left<=2?'soon':'ok',f.days_left<0?`${-f.days_left} days late`:`${f.days_left} days left`):''}${p?ghChip(p.gh):''}</div>
+  const head=`<h1 class="sr rh1">Projects</h1><button class="back" onclick="backToList()">‹ Projects</button><div style="display:flex;gap:6px;flex-wrap:wrap">${expChip(c)}${f&&!f.done&&f.days_left!==null?st(f.days_left<0?'late':f.days_left<=2?'soon':'ok',f.days_left<0?`${-f.days_left} days late`:`${f.days_left} days left`):''}${decide(f)}${p?ghChip(p.gh):''}</div>
     <h2>${esc(c.title)}</h2><span class="copy mono" data-copy="${esc(p?p.abs_path:S.notes.notes_dir.replace(/RawNotes$/,'')+f.path)}" tabindex="0" role="button">${I.copy}<span>~/Projects/${esc(p?p.path:f.path)}</span></span>
     ${linked?'<div class="flag" style="margin:12px 0 0"><b>Symlink.</b> This folder points somewhere else, so Triage shows it but will not edit it.</div>':''}`;
-  d.innerHTML=head+`<div id="dodbox"></div>`+clock+`<div id="pmore"></div>`+acts+`<div class="err" id="perr" role="alert" style="margin-top:8px"></div>`;
+  d.innerHTML=head+`<div id="dodbox"></div>`+clock+`<div id="pmore"></div>`+acts+`<div id="pform"></div><div class="err" id="perr" role="alert" style="margin-top:8px"></div>`;
   const box=$('#dodbox'),more=$('#pmore');
   wireCopy(d);
   d.querySelectorAll('[data-pa]').forEach(b=>b.onclick=()=>projectAction(c,b.dataset.pa,b));
@@ -844,8 +845,16 @@ async function renderDrawer(){const d=$('#drawer');if(!d)return;const c=projectC
     more.innerHTML=(j.commits.length?`<h3 class="sec label">Recent activity${j.branch?' · '+esc(j.branch):''}</h3><ul class="tl">${j.commits.slice(0,5).map(x=>`<li><span>${esc(x.title)}</span><span class="muted">${esc(x.date.slice(5))}</span></li>`).join('')}</ul>`:'')
       +prs+`<h3 class="sec label">From ${esc(j.summary_source||'the project')}</h3><div style="font-size:13px;color:var(--ink2);white-space:pre-wrap;max-height:9.5em;overflow:hidden">${esc(j.summary)}</div>`}
   catch(e){if(aborted(e)||!sc.ok(d,box)||S.psel!==c.id)return;box.innerHTML=`<p class="err">${esc(e.message)}</p>`}}
-async function projectAction(c,a,btn){
-  let note='';if(a==='kill'){if(btn.dataset.confirm!=='1'){btn.dataset.confirm='1';btn.innerHTML=`${I.x}Really kill?`;return}}
+function projectAction(c,a,btn){
+  if(a==='shipped')return sendProject(c,a,'',btn);
+  // pushing the date and killing both ask why first; the reason is written into the project file
+  const box=$('#pform');if(!box)return;const ext=a==='extend',pe=$('#perr');pe&&(pe.textContent='');
+  box.innerHTML=`<form id="pf" style="margin:10px 0;padding:12px;border-radius:10px;border:1px solid ${ext?'var(--gold)':'var(--rust)'}"><div class="field"><label class="label" for="pwhy">${ext?'Why do you need more time? <em>required, 10+ characters</em>':'Why are you killing it? <em>required</em>'}</label>
+    <textarea class="input" id="pwhy" rows="2" maxlength="300"></textarea></div>
+    <div class="acts"><button class="btn ${ext?'primary':''}" type="submit" ${ext?'':'style="color:var(--rust-ink)"'}>${ext?I.clock+'Push 7 days':I.x+'Kill it'}</button><button class="btn" type="button" id="pcancel">Cancel</button></div></form>`;
+  $('#pwhy').focus();$('#pcancel').onclick=()=>{box.innerHTML=''};
+  $('#pf').onsubmit=ev=>{ev.preventDefault();sendProject(c,a,$('#pwhy').value.trim(),$('#pf button[type=submit]'))}}
+async function sendProject(c,a,note,btn){
   btn.disabled=true;
   try{const r=await api('/api/project/status',c.f?{path:c.f.path,action:a,days:7,note}:{name:c.p.name,kind:c.p.kind,action:a,note});S.undoCount++;await changed();render();toast(r.msg,{undo:true})}
   catch(e){btn.disabled=false;const pe=$('#perr');pe&&(pe.textContent=e.message)}}
