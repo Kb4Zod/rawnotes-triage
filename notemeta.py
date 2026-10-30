@@ -9,7 +9,7 @@ import re
 
 HEAD_LINE = re.compile(r"^- ([A-Za-z][\w-]*):([ \t]*)(.*)$")
 SECTION = re.compile(r"^#{2,6}\s")
-SHOWN_KEYS = ("date", "status", "type", "promoted", "due", "shipped", "extensions", "closed", "kept", "keeps", "restored")  # the page shows these itself
+SHOWN_KEYS = ("date", "status", "type", "promoted", "due", "shipped", "extensions", "closed", "kept", "keeps", "restored", "github")  # the page shows these itself
 PROSE_MAX = 3  # at most this many non-blank lines (a subtitle, say) may sit between the title and the header
 
 

@@ -75,6 +75,12 @@ class Review2(unittest.TestCase):
         self.assertEqual(set_field("---\ntags: [a]\n---\n# T\n", "status", "dead"), "---\ntags: [a]\n---\n# T\n\n- status: dead\n")
         self.assertEqual(set_field("---\nnever closed\n# T\n", "status", "dead").count("- status: dead"), 1)
 
+    def test_every_header_key_the_app_writes_is_hidden_from_the_reader_body(self):
+        keys = ("date", "status", "type", "promoted", "due", "shipped", "extensions", "closed", "kept", "keeps", "restored", "github")
+        self.assertEqual(set(notemeta.SHOWN_KEYS), set(keys))
+        t = "# T\n\n" + "".join(f"- {k}: v\n" for k in keys) + "- owner: me\n\nBody\n"
+        self.assertEqual(notemeta.note_body(t), "- owner: me\n\nBody")
+
     def test_question_with_a_fenced_heading_is_not_cut(self):
         q = "Q1\n\n```\n## foo\n```\n\nafter"
         t = f"# T\n\n## What's the question / problem?\n\n{q}\n\n## Notes\n\nn\n"
