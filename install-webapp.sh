@@ -12,7 +12,9 @@
 # window, otherwise it starts one and opens the window. Either way you never get a blank page.
 # Everything is installed from, and runs, the checkout this script is in. Run from a linked git worktree (a feature
 # branch), it installs the main checkout of the same repo instead, so the always-on service never runs a branch.
-# ~/.local/bin/rawtriage-web becomes a link to bin/rawtriage-web in that checkout.
+# ~/.local/bin/rawtriage-web becomes a link to bin/rawtriage-web in that checkout, and ~/.local/bin/rawtriage a link to
+# bin/rawtriage (the command that triages through the server). A hand-made rawtriage is backed up first; any other file
+# with either name stops the install before anything changes.
 set -euo pipefail
 
 NAME="RawNotes Triage"
@@ -31,6 +33,8 @@ UNIT="rawtriage-web.service"
 UNIT_DIR="$HOME/.config/systemd/user"
 BIN="$HOME/.local/bin/rawtriage-web"
 WRAPPER="$REPO/bin/rawtriage-web"
+CLI_BIN="$HOME/.local/bin/rawtriage"
+CLI="$REPO/bin/rawtriage"
 
 fail() { echo "install-webapp: $*" >&2; exit 1; }
 
@@ -51,6 +55,15 @@ bin_kind() {  # prints: none | link | handmade | other
   if [[ -L $BIN ]]; then [[ $(readlink "$BIN") == */bin/rawtriage-web ]] && echo link || echo other
   elif [[ ! -e $BIN ]]; then echo none
   elif [[ -f $BIN ]] && grep -q 'rawnotes-triage/server.py' "$BIN" && (( $(wc -l <"$BIN") <= 5 )); then echo handmade
+  else echo other; fi
+}
+
+# Same question for ~/.local/bin/rawtriage: ours (a link to some checkout's bin/rawtriage), the hand-made bash script
+# that came before it (backed up, then replaced), nothing, or someone else's (never touched).
+cli_kind() {  # prints: none | link | handmade | other
+  if [[ -L $CLI_BIN ]]; then [[ $(readlink "$CLI_BIN") == */bin/rawtriage ]] && echo link || echo other
+  elif [[ ! -e $CLI_BIN ]]; then echo none
+  elif [[ -f $CLI_BIN ]] && head -3 "$CLI_BIN" | grep -q '^# rawtriage' && grep -q 'NOTES_DIR=' "$CLI_BIN"; then echo handmade
   else echo other; fi
 }
 
@@ -106,6 +119,11 @@ case "${1:-}" in
       none) echo "Removed the launcher entry, the service and the Hyprland rule." ;;
       *) echo "Removed the launcher entry, the service and the Hyprland rule. $BIN was not made by this script, so it was left alone." ;;
     esac
+    case $(cli_kind) in
+      link) rm -f "$CLI_BIN"; echo "Removed $CLI_BIN." ;;
+      none) ;;
+      *) echo "$CLI_BIN was not made by this script, so it was left alone." ;;
+    esac
     exit 0 ;;
   ""|--no-service) ;;
   *) echo "usage: $0 [--no-service | --remove]" >&2; exit 2 ;;
@@ -116,10 +134,12 @@ command -v omarchy-webapp-install >/dev/null || fail "omarchy-webapp-install not
 [[ -f $REPO/server.py ]] || fail "$REPO/server.py not found"
 grep -q -- 'APP_PATH = "/triage"' "$REPO/server.py" || fail "$REPO is older than this installer (2.08); git pull there first"
 [[ -x $WRAPPER ]] || fail "$WRAPPER not found (the checkout is older than 2.12); git pull there first"
+[[ -x $CLI ]] || fail "$CLI not found (the checkout is older than 2.13); git pull there first"
 [[ -f $REPO/static/icons/icon-256.png && -f $REPO/systemd/$UNIT ]] || fail "icon or unit file missing in $REPO"
 grep -qF '@REPO@' "$REPO/systemd/$UNIT" || fail "$REPO/systemd/$UNIT is older than this installer (2.12); git pull there first"
 [[ $REPO != *[\"\\\$$'\n']* ]] || fail "the checkout's path ($REPO) has a quote, backslash, \$ or newline in it, which the service file can't hold; move it"
 [[ $(bin_kind) != other ]] || fail "$BIN exists and isn't the rawnotes-triage wrapper; move it away, then rerun"
+[[ $(cli_kind) != other ]] || fail "$CLI_BIN exists and isn't the rawtriage command or the hand-made script it replaces; move it away, then rerun"
 if [[ ${1:-} != --no-service ]]; then
   systemctl --user show-environment &>/dev/null || fail "no systemd user session here; run this from your desktop"
   # A triage server started by hand holds the port; the service would just keep retrying behind it.
@@ -133,7 +153,10 @@ mkdir -p "$(dirname "$BIN")"
 if [[ $(bin_kind) == handmade ]]; then cp -p "$BIN" "$BIN.bak.rawnotes-triage"; echo "Old wrapper: backed up to $BIN.bak.rawnotes-triage"; fi
 ln -sfn "$WRAPPER" "$BIN"
 echo "Wrapper: $BIN -> $WRAPPER"
-case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) warn "$HOME/.local/bin is not on your PATH, so type the full path to run rawtriage-web by hand (the launcher doesn't need it)" ;; esac
+if [[ $(cli_kind) == handmade ]]; then cp -p "$CLI_BIN" "$CLI_BIN.bak.rawnotes-triage"; echo "Old rawtriage: backed up to $CLI_BIN.bak.rawnotes-triage"; fi
+ln -sfn "$CLI" "$CLI_BIN"
+echo "Command: $CLI_BIN -> $CLI"
+case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) warn "$HOME/.local/bin is not on your PATH, so type the full path to run rawtriage or rawtriage-web by hand (the launcher doesn't need it)" ;; esac
 
 omarchy-webapp-install "$NAME" "$APP_URL" "$REPO/static/icons/icon-256.png" "$BIN --app"
 echo "Launcher entry: ~/.local/share/applications/$NAME.desktop"

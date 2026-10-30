@@ -10,7 +10,7 @@ import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-FILES = ("install-webapp.sh", "server.py", "safefs.py", "notemeta.py", "index.html", "bin/rawtriage-web", "systemd/rawtriage-web.service", "static/icons/icon-256.png")
+FILES = ("install-webapp.sh", "server.py", "safefs.py", "notemeta.py", "index.html", "bin/rawtriage-web", "bin/rawtriage", "systemd/rawtriage-web.service", "static/icons/icon-256.png")
 STUBS = {
     "omarchy-webapp-install": 'printf "%s\\n" "$@" >"$STUBLOG/webapp"\n',
     # is-active: up once restarted; show-environment: a user session exists
@@ -39,6 +39,7 @@ class Installer(unittest.TestCase):
             with open(p, "w") as fh: fh.write("#!/usr/bin/env bash\n" + body)
             os.chmod(p, 0o755)
         self.bin = os.path.join(self.home, ".local", "bin", "rawtriage-web")
+        self.cli = os.path.join(self.home, ".local", "bin", "rawtriage")
         self.unit = os.path.join(self.home, ".config", "systemd", "user", "rawtriage-web.service")
 
     def run_installer(self, *args, where=None):
@@ -90,6 +91,48 @@ class Installer(unittest.TestCase):
         self.run_installer("--no-service")
         r = self.run_installer("--remove"); self.assertEqual(r.returncode, 0, r.stderr)
         self.assertFalse(os.path.lexists(self.bin))
+
+    # -- ~/.local/bin/rawtriage (2.13)
+    HANDMADE_CLI = ('#!/usr/bin/env bash\n# rawtriage — review ~/Projects/RawNotes and decide each note\'s fate\n'
+                    'set -euo pipefail\n\nNOTES_DIR="$HOME/Projects/RawNotes"\ncd "$NOTES_DIR"\n')
+
+    def test_rawtriage_is_linked_to_the_cli_of_the_main_checkout(self):
+        r = self.run_installer("--no-service", where=self.worktree); self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(os.readlink(self.cli), os.path.join(self.repo, "bin", "rawtriage"))
+        r = self.run_installer("--no-service"); self.assertEqual(r.returncode, 0, r.stderr)  # a rerun is safe
+        self.assertEqual(os.readlink(self.cli), os.path.join(self.repo, "bin", "rawtriage"))
+        self.assertFalse(os.path.exists(self.cli + ".bak.rawnotes-triage"))
+        self.assertTrue(os.access(self.cli, os.X_OK))
+
+    def test_handmade_rawtriage_is_backed_up_and_replaced(self):
+        os.makedirs(os.path.dirname(self.cli))
+        with open(self.cli, "w") as fh: fh.write(self.HANDMADE_CLI)
+        r = self.run_installer("--no-service"); self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(os.path.islink(self.cli))
+        with open(self.cli + ".bak.rawnotes-triage") as fh: self.assertEqual(fh.read(), self.HANDMADE_CLI)
+
+    def test_someone_elses_rawtriage_stops_the_install_before_anything_changes(self):
+        os.makedirs(os.path.dirname(self.cli))
+        with open(self.cli, "w") as fh: fh.write("#!/bin/sh\necho mine\n")
+        r = self.run_installer("--no-service")
+        self.assertNotEqual(r.returncode, 0); self.assertIn("isn't the rawtriage command", r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(self.log, "webapp"))); self.assertFalse(os.path.lexists(self.bin))
+        r = self.run_installer("--remove"); self.assertEqual(r.returncode, 0, r.stderr); self.assertIn("left alone", r.stdout)
+        with open(self.cli) as fh: self.assertEqual(fh.read(), "#!/bin/sh\necho mine\n")
+
+    def test_remove_takes_only_its_own_rawtriage_link(self):
+        self.run_installer("--no-service"); self.assertTrue(os.path.islink(self.cli))
+        r = self.run_installer("--remove"); self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(os.path.lexists(self.cli)); self.assertFalse(os.path.lexists(self.bin))
+        elsewhere = os.path.join(self.tmp, "elsewhere"); open(elsewhere, "w").close()
+        os.symlink(elsewhere, self.cli)  # a link to something that isn't a bin/rawtriage
+        self.assertNotEqual(self.run_installer("--no-service").returncode, 0)
+        self.run_installer("--remove"); self.assertEqual(os.readlink(self.cli), elsewhere)
+
+    def test_installed_rawtriage_runs_from_its_link(self):
+        self.run_installer("--no-service")
+        r = subprocess.run([self.cli, "bogus"], capture_output=True, text=True, timeout=30, cwd=self.tmp)
+        self.assertEqual(r.returncode, 1); self.assertIn("rawtriage:", r.stderr)
 
 
 if __name__ == "__main__":
