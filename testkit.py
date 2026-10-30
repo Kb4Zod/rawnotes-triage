@@ -1,4 +1,5 @@
 """Shared fixture for the v2.05 regression suites: a real server on a temp projects root, never the real notes."""
+import atexit
 import json
 import os
 import shutil
@@ -15,6 +16,28 @@ import server
 
 
 TEST_EMAIL = "tester@users.noreply.github.com"
+
+# The real config folder, worked out the way server.py does before anything here patches HOME. No test may touch it:
+# importing testkit (every test module does) points server.CONFIG_DIR, and RAWTRIAGE_CONFIG_DIR for any server or CLI a
+# test starts as a subprocess, at a throwaway folder for the whole run; fixtures then use one of their own per test.
+# test_zz_isolation (run last) fails if the real folder changed during the run.
+REAL_CONFIG_DIR = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "rawnotes-triage")
+
+
+def config_dir_state(path=REAL_CONFIG_DIR):
+    """What a folder looks like (exists, and each entry's size and mtime), to tell whether anything touched it."""
+    if not os.path.lexists(path): return None
+    out = {".": os.lstat(path).st_mtime_ns}
+    for root, dirs, files in os.walk(path):
+        for f in dirs + files:
+            st = os.lstat(os.path.join(root, f)); out[os.path.relpath(os.path.join(root, f), path)] = (st.st_size, st.st_mtime_ns)
+    return out
+
+
+REAL_CONFIG_AT_START = config_dir_state()
+SESSION_DIR = tempfile.mkdtemp(prefix="rt-test-session-")
+atexit.register(shutil.rmtree, SESSION_DIR, ignore_errors=True)
+os.environ["RAWTRIAGE_CONFIG_DIR"] = server.CONFIG_DIR = os.path.join(SESSION_DIR, "config")
 
 
 def isolate_git(case, email=TEST_EMAIL):
@@ -41,7 +64,8 @@ class Fixture(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self.notes = os.path.join(self.tmp, "RawNotes"); os.makedirs(self.notes)
         self.saved = (server.NOTES, server.PROJECTS, server.log, server.LOG_PATH, server.CONFIG_DIR)
-        server.CONFIG_DIR = os.path.join(self.tmp, "config")  # never read or write the real saved GitHub token
+        server.CONFIG_DIR = os.path.join(self.tmp, "config")  # never read or write the real config.json or saved GitHub token
+        p = mock.patch.dict(os.environ, {"RAWTRIAGE_CONFIG_DIR": server.CONFIG_DIR}); p.start(); self.addCleanup(p.stop)  # nor a server a test spawns
         server.forget_github()
         if self.relax_limits:  # fixtures use fixed 2026-10 dates: keep the Inbox limits from expiring them as the real date moves on
             p = unittest.mock.patch.dict(server.LIMIT_DEFAULTS, {"inbox_limit_days": 36500, "max_keeps": 1000}); p.start(); self.addCleanup(p.stop)

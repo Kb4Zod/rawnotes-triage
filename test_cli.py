@@ -19,7 +19,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest import mock
 
 import server
-from testkit import Fixture
+from testkit import Fixture, isolate_git
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CLI = os.path.join(HERE, "bin", "rawtriage")
@@ -264,6 +264,7 @@ class Usage(CliBase):
 class NoServerRunning(unittest.TestCase):
     """The CLI on a port where nothing runs: it starts a server from a temp copy of the code, or refuses."""
     def setUp(self):
+        isolate_git(self)  # the server the CLI spawns runs git in the notes folder: never with the real config or hooks
         self.tmp = os.path.realpath(tempfile.mkdtemp()); self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self.code = os.path.join(self.tmp, "code")
         for f in CODE:

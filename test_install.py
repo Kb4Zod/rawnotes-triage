@@ -9,6 +9,8 @@ import subprocess
 import tempfile
 import unittest
 
+from testkit import isolate_git
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 FILES = ("install-webapp.sh", "server.py", "safefs.py", "notemeta.py", "index.html", "bin/rawtriage-web", "bin/rawtriage", "skills/rawnotes/SKILL.md", "systemd/rawtriage-web.service", "static/icons/icon-256.png")
 STUBS = {
@@ -22,6 +24,7 @@ STUBS = {
 @unittest.skipUnless(shutil.which("git") and shutil.which("bash"), "needs git and bash")
 class Installer(unittest.TestCase):
     def setUp(self):
+        self.gitconfig = isolate_git(self)  # git (here and in the installer) never reads the real config or runs its hooks
         self.tmp = os.path.realpath(tempfile.mkdtemp()); self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self.repo = os.path.join(self.tmp, "code", "my triage")  # a space, and nowhere near ~/Projects/active
         for f in FILES:
@@ -43,7 +46,8 @@ class Installer(unittest.TestCase):
         self.unit = os.path.join(self.home, ".config", "systemd", "user", "rawtriage-web.service")
 
     def run_installer(self, *args, where=None):
-        env = {"HOME": self.home, "PATH": self.stubs + ":/usr/bin:/bin", "STUBLOG": self.log}
+        env = {"HOME": self.home, "PATH": self.stubs + ":/usr/bin:/bin", "STUBLOG": self.log, "GIT_CONFIG_GLOBAL": self.gitconfig,
+               "GIT_CONFIG_NOSYSTEM": "1", "RAWTRIAGE_CONFIG_DIR": os.environ["RAWTRIAGE_CONFIG_DIR"]}
         return subprocess.run(["bash", os.path.join(where or self.repo, "install-webapp.sh"), *args],
                               env=env, capture_output=True, text=True, timeout=60)
 
