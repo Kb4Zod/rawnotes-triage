@@ -69,6 +69,19 @@ The dialog only appears while the folder is missing, and setup only works from t
 phone on the network is told to do it there. To move to another folder later, start with `--notes`, or edit
 `config.json` and restart.
 
+**Settings in `config.json`.** Every key is optional; a missing file, bad JSON or a value of the wrong kind means the
+default. Restart after editing.
+
+| Key | Default | What it does |
+|-----|---------|--------------|
+| `notes` | (first run) | the notes folder, a full path |
+| `autocommit` | `true` | `false` turns off committing the notes folder (see **Auto-commit**); so does `--no-commit` |
+| `noreply_suffix` | `@users.noreply.github.com` | the email ending a promoted project's first commit needs (see **Project skeleton**) |
+| `stale_open_days`, `stale_cooking_days` | 14, 7 | when an Inbox note counts as stale (see **Inbox limits**; 1 or more) |
+| `inbox_limit_days`, `max_keeps` | 30, 3 | when an Inbox note expires and Keep is refused (1 or more) |
+| `max_extensions` | 2 | how many times a ship-by date can be pushed (see **Projects page**) |
+| `closed_window_days` | 7 | how far back the Projects board's **Closed** column looks |
+
 ## GitHub sign-in
 
 The app has no GitHub login of its own, and no account is built in. Every GitHub feature (pull requests, the Pulse
@@ -325,7 +338,8 @@ steps already taken are rolled back. If a rollback cannot finish, an
 
 Everything in `done/`, newest first, filtered by Promoted / Reference /
 Killed / Merged (worked out from the status and the `## Outcome` line).
-**Restore to Inbox** sets the note to `cooking` and moves it back; it refuses
+**Restore to Inbox** sets the note to `cooking`, stamps `- restored: <today>`
+(its Inbox limit starts again from that date) and moves it back; it refuses
 if a note with that filename is already in the Inbox, and it does not remove
 a project or reference copy made earlier.
 
@@ -422,7 +436,7 @@ Project inspection is otherwise read-only: no fetch, checkout or repository edit
   more, the page says so. The rail shows a 16-week sparkline, total and streak.
 - **Inbox flow:** notes captured (by filename date, counting Inbox and
   Archive) vs. decided (promote, reference, kill and merge lines in
-  `triage.log`; Keep and Restore do not count) per week, last 8 weeks, with a
+  `triage.log`; Keep, Restore, new notes and warnings do not count) per week, last 8 weeks, with a
   table view. Undone decisions still count as decided.
 - **Median wait** of the notes in the Inbox, against the 7-day goal.
 - **Where the commits went:** the ten repos you committed to most in the
@@ -498,6 +512,9 @@ python3 loadcheck.py                                           # disposable 100/
 `test_browser.py` drives Chromium through `cdp.py` (a tiny stdlib DevTools
 client) against a disposable server; it is skipped when no Chromium/Chrome is
 found (`CHROMIUM=/path` to pick one) and never touches GitHub or your notes.
+No test reads your git config or runs your git hooks (`testkit.isolate_git`), and none reads or writes your
+`~/.config/rawnotes-triage` (testkit points the config folder at a temp one for the whole run;
+`test_zz_isolation.py` runs last and fails if the real folder changed).
 `TRIAGE_INDEX=/path/to/old/index.html` runs the same checks against another
 build of the page.
 
@@ -508,6 +525,7 @@ build of the page.
 - `safefs.py`: symlink-safe path checks, atomic writes, read/write lock, stat cache
 - `index.html` + `static/fonts/`: the whole UI
 - `starter/_template.md`: the note template copied into a new notes folder on first run
+- `starter/skeletons/<dest>/`: the files Promote writes into a new project folder (see **Project skeleton**)
 - `static/icons/`: app icon (SVG source + PNGs), the favicon and the phone home-screen icon
 - `install-webapp.sh`, `systemd/rawtriage-web.service`: the Omarchy launcher app and its always-on service (the
   installer fills in the checkout's path in the service file)
