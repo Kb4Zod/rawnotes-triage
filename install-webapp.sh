@@ -13,7 +13,8 @@
 # Everything is installed from, and runs, the checkout this script is in. Run from a linked git worktree (a feature
 # branch), it installs the main checkout of the same repo instead, so the always-on service never runs a branch.
 # ~/.local/bin/rawtriage-web becomes a link to bin/rawtriage-web in that checkout, and ~/.local/bin/rawtriage a link to
-# bin/rawtriage (the command that triages through the server). A hand-made rawtriage is backed up first; any other file
+# bin/rawtriage (the command that triages through the server), and the rawnotes skill (skills/rawnotes) is linked into
+# ~/.claude/skills, ~/.agents/skills and ~/.codex/skills (--remove takes out only those links). A hand-made rawtriage is backed up first; any other file
 # with either name stops the install before anything changes.
 set -euo pipefail
 
@@ -35,6 +36,8 @@ BIN="$HOME/.local/bin/rawtriage-web"
 WRAPPER="$REPO/bin/rawtriage-web"
 CLI_BIN="$HOME/.local/bin/rawtriage"
 CLI="$REPO/bin/rawtriage"
+SKILL_SRC="$REPO/skills/rawnotes"
+SKILL_LINKS=("$HOME/.claude/skills/rawnotes" "$HOME/.agents/skills/rawnotes" "$HOME/.codex/skills/rawnotes")
 
 fail() { echo "install-webapp: $*" >&2; exit 1; }
 
@@ -64,6 +67,13 @@ cli_kind() {  # prints: none | link | handmade | other
   if [[ -L $CLI_BIN ]]; then [[ $(readlink "$CLI_BIN") == */bin/rawtriage ]] && echo link || echo other
   elif [[ ! -e $CLI_BIN ]]; then echo none
   elif [[ -f $CLI_BIN ]] && head -3 "$CLI_BIN" | grep -q '^# rawtriage' && grep -q 'NOTES_DIR=' "$CLI_BIN"; then echo handmade
+  else echo other; fi
+}
+
+# Same for a skill link: ours (a link to some checkout's skills/rawnotes), nothing, or anything else (never touched).
+skill_kind() {  # skill_kind PATH; prints: none | link | other
+  if [[ -L $1 ]]; then [[ $(readlink "$1") == */skills/rawnotes ]] && echo link || echo other
+  elif [[ ! -e $1 ]]; then echo none
   else echo other; fi
 }
 
@@ -124,6 +134,13 @@ case "${1:-}" in
       none) ;;
       *) echo "$CLI_BIN was not made by this script, so it was left alone." ;;
     esac
+    for l in "${SKILL_LINKS[@]}"; do
+      case $(skill_kind "$l") in
+        link) rm -f "$l"; echo "Removed $l." ;;
+        none) ;;
+        *) echo "$l was not made by this script, so it was left alone." ;;
+      esac
+    done
     exit 0 ;;
   ""|--no-service) ;;
   *) echo "usage: $0 [--no-service | --remove]" >&2; exit 2 ;;
@@ -134,6 +151,7 @@ command -v omarchy-webapp-install >/dev/null || fail "omarchy-webapp-install not
 [[ -f $REPO/server.py ]] || fail "$REPO/server.py not found"
 grep -q -- 'APP_PATH = "/triage"' "$REPO/server.py" || fail "$REPO is older than this installer (2.08); git pull there first"
 [[ -x $WRAPPER ]] || fail "$WRAPPER not found (the checkout is older than 2.12); git pull there first"
+[[ -f $SKILL_SRC/SKILL.md ]] || fail "$SKILL_SRC not found (the checkout is older than 2.13); git pull there first"
 [[ -x $CLI ]] || fail "$CLI not found (the checkout is older than 2.13); git pull there first"
 [[ -f $REPO/static/icons/icon-256.png && -f $REPO/systemd/$UNIT ]] || fail "icon or unit file missing in $REPO"
 grep -qF '@REPO@' "$REPO/systemd/$UNIT" || fail "$REPO/systemd/$UNIT is older than this installer (2.12); git pull there first"
@@ -148,6 +166,9 @@ if [[ ${1:-} != --no-service ]]; then
     fail "a triage server started by hand is running (pid ${pid:-?}); stop it first (Ctrl-C in its terminal, or kill ${pid:-<pid>}), then rerun"
   fi
 fi
+for l in "${SKILL_LINKS[@]}"; do
+  [[ $(skill_kind "$l") != other ]] || fail "$l exists and isn't a link to the rawnotes skill; move it away, then rerun"
+done
 
 mkdir -p "$(dirname "$BIN")"
 if [[ $(bin_kind) == handmade ]]; then cp -p "$BIN" "$BIN.bak.rawnotes-triage"; echo "Old wrapper: backed up to $BIN.bak.rawnotes-triage"; fi
@@ -156,6 +177,9 @@ echo "Wrapper: $BIN -> $WRAPPER"
 if [[ $(cli_kind) == handmade ]]; then cp -p "$CLI_BIN" "$CLI_BIN.bak.rawnotes-triage"; echo "Old rawtriage: backed up to $CLI_BIN.bak.rawnotes-triage"; fi
 ln -sfn "$CLI" "$CLI_BIN"
 echo "Command: $CLI_BIN -> $CLI"
+for l in "${SKILL_LINKS[@]}"; do
+  mkdir -p "$(dirname "$l")"; ln -sfn "$SKILL_SRC" "$l"; echo "Skill: $l -> $SKILL_SRC"
+done
 case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) warn "$HOME/.local/bin is not on your PATH, so type the full path to run rawtriage or rawtriage-web by hand (the launcher doesn't need it)" ;; esac
 
 omarchy-webapp-install "$NAME" "$APP_URL" "$REPO/static/icons/icon-256.png" "$BIN --app"

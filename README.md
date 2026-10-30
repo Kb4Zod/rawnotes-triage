@@ -163,6 +163,23 @@ rawtriage project ship|extend|kill <name> [--kind active|experiments] [--note ".
   port, it exits 2 and says nothing was changed. Do not fall back to editing notes by hand.
 - `GET /api/check` and `POST /api/new {slug, thought}` are the two endpoints added for it.
 
+## The rawnotes skill
+
+`skills/rawnotes/` teaches an agent (Claude, Codex, OpenCode) to capture and triage notes from a thread in any folder,
+not just inside the notes folder: `SKILL.md` (when to use it, the rules), `capture.md`, `triage.md`, and
+`global-rule.md` (the few lines to paste into your global instructions). It is path-free: the agent asks
+`rawtriage where` for the notes folder, creates notes with `rawtriage new`, checks headers with `rawtriage check`, and
+decides only through `rawtriage ...` (see **Commands**); if `rawtriage` exits 2 it stops and tells you.
+
+- `./install-webapp.sh` links it into `~/.claude/skills/rawnotes`, `~/.agents/skills/rawnotes` and
+  `~/.codex/skills/rawnotes`, always from the main checkout (never a worktree). A rerun is safe; `--remove` removes
+  only those links; anything else already called `rawnotes` there stops the install, untouched.
+- Paste `skills/rawnotes/global-rule.md` into `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md` and
+  `~/.config/opencode/AGENTS.md` (by hand; the installer doesn't edit your instruction files).
+- **One source of truth.** In your notes folder, point the instruction files at the skill instead of copying it:
+  link `TRIAGE.md` to `skills/rawnotes/triage.md`, make `CLAUDE.md` a few lines ("Use the rawnotes skill (capture or
+  triage). This folder is the notes folder. Never reorganize it."), and make `AGENTS.md` a link to `CLAUDE.md`.
+
 ## Words (same in the web app and RawNotes/CLAUDE.md)
 
 Places: **Inbox** (undecided notes in `RawNotes/`), **Projects** (promoted
@@ -406,6 +423,7 @@ build of the page.
   installer fills in the checkout's path in the service file)
 - `bin/rawtriage-web`: the command-line wrapper the launcher runs
 - `bin/rawtriage`: the triage command (stdlib client of the server's API)
+- `skills/rawnotes/`: the capture and triage skill for agents (installed by `install-webapp.sh`)
 - `testdata/check-frontmatter.sh`: a copy of RawNotes' header hook, so `test_cli.py` can check `/api/check` gives the same verdicts
 - `test_*.py`, `testkit.py`, `cdp.py`, `loadcheck.py`: tests and load check
 - `.scratch/`: specs and tickets for past and pending work (see `AGENTS.md`)
