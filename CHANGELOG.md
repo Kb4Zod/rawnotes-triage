@@ -4,6 +4,52 @@ The version shows in the page heading ("RawNotes Triage version X.XX") and
 in the startup line. Bump `VERSION` in `server.py` and add an entry here
 with every change. Versions 1.00-1.03 were numbered after the fact from git history.
 
+## 2.13 — 2026-10-30
+Flow gaps (plan and tickets in `.scratch/flow-gaps/`; Hugh approved all 13 recommended decisions on 2026-10-30).
+- **RawNotes is committed after every change (01).** If the notes folder is a git repo, each decision, batch, merge,
+  restore, new note and undo is committed right after it succeeds: only the notes-folder paths it touched (both sides of
+  a move), message `triage: <what>`, body = the paths (plus any hand edits it swept in) and `via rawnotes-triage 2.13`.
+  Other edited or staged files are left alone; hooks always run; history is never rewritten. Not a repo, a merge or
+  rebase in progress, `index.lock`, no `user.email` or a refusing hook (gitleaks) skips the commit with a reason in the
+  toast and on stderr; the change always stands and stays undoable. Responses gain a `commit` object. Off with
+  `--no-commit` or `"autocommit": false` in `config.json`. Project folders and `../reference` are never committed.
+- **`rawtriage` triages from a terminal or any agent (02).** `bin/rawtriage` (linked to `~/.local/bin/rawtriage` by
+  the installer, backing up a hand-made one): `-l [status] [--summary] [--json]`, `where`, `check`, `new`, `keep`,
+  `kill`, `reference [--section --blurb | --unindexed]`, `index`, `promote`, `merge`, `undo`,
+  `project ship|extend|kill [--reason]`. Every command goes through the server (same rules, lock, undo list, log and
+  commit as the page). If the server is down it is started (systemd unit, else a detached `server.py`); if that fails it
+  exits 2 having changed nothing. New `GET /api/check` (header check, same verdicts as RawNotes' hook) and
+  `POST /api/new` (today's note from `_template.md`; logged as `new`, not a decision).
+- **One `rawnotes` skill for every agent (03).** `skills/rawnotes/` (`SKILL.md`, `capture.md`, `triage.md`,
+  `global-rule.md`), path-free: it asks `rawtriage where` and decides only through `rawtriage`. `install-webapp.sh`
+  links it into `~/.claude/skills`, `~/.agents/skills` and `~/.codex/skills` from the main checkout.
+- **Inbox limits (04).** `open` is stale after 14 days and `cooking` after 7 (from the last Keep); a note expires after
+  30 days in the Inbox (from capture, or from Restore) or 3 Keeps, and then Keep is refused on the page, in a batch
+  (one expired note refuses the whole batch) and through the API; Promote, Reference, Merge and Kill still work. Keep
+  writes `kept:`/`keeps:`, Restore writes `restored:`. Rows show `kept 2×` and `expires in 3d`; an **Expired** filter
+  and Pulse count. All four numbers can be set in `config.json`. `inbox_summary()` gives the nudge line, also sent as
+  `summary` by `GET /api/notes` and printed by `rawtriage -l --summary`.
+- **Ship clock (05, 06).** Pushing a ship-by date needs a reason (at least 10 characters), recorded as `extensions: N`
+  and a `pushed <old> → <new>` line under `## Plan`; after two (`max_extensions`) it is refused and an overdue project
+  shows **Decide**. Killing a project needs a reason. Ship and kill write `closed: <date>`; the **Closed** column shows
+  the last 7 days (`closed_window_days`) with **Show all (N)**.
+- **Promote builds a real project (07, 08, 10).** Every destination, learning and templates included, gets a folder
+  from `starter/skeletons/<dest>/` (README, NOTES.md with `github: private`, AGENTS.md with the first build round,
+  CLAUDE.md, .gitignore, and `.scratch/`, `notes/` or `template/`), then `git init -b main` and one commit, all one undo
+  step (new Tx op `gitinit`; undo removes `.git` only while it still holds just that commit). A non-noreply identity, a
+  refused commit or no git is a `warning` in the response and toast, never a failure; the app never sets an identity.
+  Learning and templates folders are on the board only if promoted. Linked git worktrees are left off the board.
+- **Reference filing adds the index line (13).** The Reference form (and batch Reference all) picks an **Index
+  section** and a one-line summary; the same undoable step adds `- [Title](slug.md): summary` under `## Index` in
+  `reference/README.md` and records `section:` in the note. Nothing outside `## Index` is touched; no README or no
+  index means filed with a warning. The Archive lists unindexed reference notes with **Add to index**
+  (`GET /api/reference/unindexed`, `POST /api/reference/index`; `rawtriage reference --unindexed` / `rawtriage index`).
+- **Integration.** One config reader (`read_config` / `config_value` / `config_int`) behind every setting, with a
+  settings table in the README. The reader hides every header key the app writes (`kept`, `keeps`, `restored`,
+  `extensions`, `closed`, `github`). Tests: every git-running test uses `testkit.isolate_git`; testkit points the config
+  folder at a temp one for the whole run, and `test_zz_isolation.py` fails if `~/.config/rawnotes-triage` changed.
+  `ReferenceIndexTestCase` no longer reruns the decision tests.
+
 ## 2.12 — 2026-10-24
 - **First run asks where the notes live.** When the notes folder doesn't exist (a fresh install), the page opens a
   **Welcome** dialog, prefilled with `~/Projects/RawNotes`, before anything else. It creates the folder (or adopts an
