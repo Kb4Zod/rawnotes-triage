@@ -164,6 +164,13 @@ class PromoteSkeleton(PromoteBase):
         self.assertEqual(self.files(proj), ACTIVE_FILES)
         self.post("/api/undo", {}); self.assertEqual(self.snapshot(), self.before)
 
+    def test_a_warning_is_logged_but_pulse_counts_one_decision(self):
+        server.log = self.saved[2]; server.LOG_PATH = os.path.join(self.tmp, "triage.log")
+        self.set_email("me@example.com"); self.promote()
+        lines = open(server.LOG_PATH).read().splitlines()
+        self.assertEqual([l.split(" ", 2)[1] for l in lines], ["promote", "warning"])
+        self.assertEqual(sum(w["decided"] for w in self.get("/api/stats")["weeks"]), 1)
+
     def test_no_identity_at_all_is_a_warning_too(self):
         with open(self.gitconfig, "w") as fh: fh.write("[core]\n\thooksPath = /dev/null\n[user]\n\tuseConfigOnly = true\n")
         r = self.promote()

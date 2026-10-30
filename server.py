@@ -1138,7 +1138,7 @@ def _act(req, tx):
     tx.write(src, text, eol)
     dst = to_done(src, tx); tx.log(f"{'durable' if action == 'reference' else action} {fname} -> {rel}; capture -> {dst}")
     verb = "Promoted" if action == "promote" else "Filed"
-    if warning: tx.log(f"promote {fname}: {warning}")
+    if warning: tx.log(f"warning {fname}: {warning}")  # not "promote …": Pulse counts those lines as decisions
     return {"ok": True, "msg": f"{verb} “{title}” → {rel}", "target": rel, "label": f"{action} “{title}”", **({"warning": warning} if warning else {})}
 
 SKELETONS = os.path.join(HERE, "starter", "skeletons")  # starter/skeletons/<dest>/: the files Promote writes into a new project folder
