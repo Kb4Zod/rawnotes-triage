@@ -892,5 +892,128 @@ class ServiceTestCase(unittest.TestCase):
             self.assertEqual(server.in_own_scope(argv), argv)  # from a terminal or the launcher: unchanged
 
 
+INDEX = """# reference
+
+## Index
+
+### Azure
+- [A](x1.md): first
+- [B](x2.md): second
+
+### Hardware
+- [H](h.md): hw
+
+## Other
+
+- [Z](z.md): not the index
+"""
+
+class IndexInsertTest(unittest.TestCase):
+    def test_adds_at_end_of_existing_section_and_touches_nothing_else(self):
+        out = server.index_insert(INDEX, "Azure", "- [N](n.md): new")
+        self.assertEqual(out, INDEX.replace("- [B](x2.md): second\n", "- [B](x2.md): second\n- [N](n.md): new\n"))
+
+    def test_last_section_stays_above_next_heading(self):
+        out = server.index_insert(INDEX, "Hardware", "- [N](n.md): new")
+        self.assertIn("- [H](h.md): hw\n- [N](n.md): new\n\n## Other", out)
+
+    def test_new_section_goes_at_end_of_index(self):
+        out = server.index_insert(INDEX, "Cooking", "- [N](n.md): new")
+        self.assertIn("- [H](h.md): hw\n\n### Cooking\n- [N](n.md): new\n\n## Other", out)
+
+    def test_refuses_without_index_or_when_already_linked(self):
+        self.assertIsNone(server.index_insert("# x\n\n## Notes\n", "A", "- [N](n.md)"))
+        self.assertIsNone(server.index_insert(INDEX, "Azure", "- [Again](h.md): dup"))
+        self.assertIsNone(server.index_insert(INDEX, "Azure", "- [Y](x1.md)"))
+
+    def test_link_elsewhere_in_readme_does_not_count(self):
+        self.assertIsNotNone(server.index_insert(INDEX, "Azure", "- [Z](z.md): ok"))
+
+    def test_index_at_end_of_file_without_trailing_newline(self):
+        out = server.index_insert("## Index\n\n### A\n- [x](x.md)", "A", "- [y](y.md)")
+        self.assertEqual(out, "## Index\n\n### A\n- [x](x.md)\n- [y](y.md)")
+
+    def test_brackets_and_newlines_removed(self):
+        self.assertEqual(server.index_line("A [b]\nc", "n.md", "see [x]\n\nnow"), "- [A b c](n.md): see x now")
+
+
+class ReferenceIndexTestCase(DecisionTestCase):
+    def readme(self, text=INDEX):
+        os.makedirs(os.path.join(self.tmp, "reference"), exist_ok=True)
+        p = os.path.join(self.tmp, "reference", "README.md")
+        with open(p, "w") as fh: fh.write(text)
+        return p
+
+    def read(self, p):
+        with open(p) as fh: return fh.read()
+
+    def test_reference_with_section_indexes_and_undo_reverts_both(self):
+        self.note("2026-10-01-a.md", title="My [odd] note"); p = self.readme(); before = self.snapshot()
+        r = self.post("/api/action", {"file": "2026-10-01-a.md", "action": "reference", "note": "why", "section": "Azure", "blurb": "does a thing"})
+        self.assertNotIn("warning", r)
+        self.assertIn("- [My odd note](a.md): does a thing\n\n### Hardware", self.read(p))
+        self.assertIn('section: "Azure"', self.read(os.path.join(self.tmp, "reference", "a.md")))
+        self.post("/api/undo", {})
+        self.assertEqual(self.snapshot(), before)
+
+    def test_default_blurb_is_first_sentence_of_question(self):
+        self.note("2026-10-01-a.md", title="T"); p = self.readme()
+        self.post("/api/action", {"file": "2026-10-01-a.md", "action": "reference", "section": "Azure"})
+        self.assertIn("- [T](a.md): Why T?", self.read(p))
+
+    def test_no_section_leaves_readme_alone(self):
+        self.note("2026-10-01-a.md"); p = self.readme()
+        self.post("/api/action", {"file": "2026-10-01-a.md", "action": "reference"})
+        self.assertEqual(self.read(p), INDEX)
+        self.assertNotIn("section:", self.read(os.path.join(self.tmp, "reference", "a.md")))
+
+    def test_missing_readme_or_index_still_files_with_warning(self):
+        self.note("2026-10-01-a.md"); self.note("2026-10-01-b.md")
+        r = self.post("/api/action", {"file": "2026-10-01-a.md", "action": "reference", "section": "Azure"})
+        self.assertIn("No reference/README.md", r["warning"])
+        self.assertTrue(os.path.exists(os.path.join(self.tmp, "reference", "a.md")))
+        p = self.readme("# reference\n\nno index here\n")
+        r = self.post("/api/action", {"file": "2026-10-01-b.md", "action": "reference", "section": "Azure"})
+        self.assertIn("no ## Index", r["warning"])
+        self.assertEqual(self.read(p), "# reference\n\nno index here\n")
+        self.assertNotIn("section:", self.read(os.path.join(self.tmp, "reference", "b.md")))
+
+    def test_undo_refuses_when_readme_changed_since(self):
+        self.note("2026-10-01-a.md"); p = self.readme()
+        self.post("/api/action", {"file": "2026-10-01-a.md", "action": "reference", "section": "Azure"})
+        with open(p, "a") as fh: fh.write("edited\n")
+        self.assertIn("changed", self.post("/api/undo", {}, ok=False)["error"])
+        self.assertTrue(os.path.exists(os.path.join(self.tmp, "reference", "a.md")))
+
+    def test_batch_reference_all_one_section_one_undo(self):
+        self.note("2026-10-01-a.md", title="A1"); self.note("2026-10-01-b.md", title="B1"); p = self.readme(); before = self.snapshot()
+        self.post("/api/batch", {"files": ["2026-10-01-a.md", "2026-10-01-b.md"], "action": "reference", "section": "New one"})
+        t = self.read(p)
+        self.assertIn("### New one\n- [A1](a.md): Why A1?\n- [B1](b.md): Why B1?\n", t)
+        self.post("/api/undo", {})
+        self.assertEqual(self.snapshot(), before)
+
+    def test_unindexed_list_and_add(self):
+        p = self.readme(); d = os.path.join(self.tmp, "reference")
+        for n in ("x1.md", "new.md"):
+            with open(os.path.join(d, n), "w") as fh: fh.write(f"---\ncreated: x\n---\n\n# Title {n}\n\n## What's the question / problem?\n\nHow does it work? More.\n")
+        j = self.get("/api/reference/unindexed")
+        self.assertEqual(j["sections"], ["Azure", "Hardware"])
+        self.assertEqual([f["file"] for f in j["files"]], ["new.md"])
+        self.assertEqual(j["files"][0]["blurb"], "How does it work?")
+        before = self.snapshot()
+        r = self.post("/api/reference/index", {"file": "new.md", "section": "Hardware", "blurb": "mine"})
+        self.assertIn("- [Title new.md](new.md): mine", self.read(p))
+        self.assertIn('section: "Hardware"', self.read(os.path.join(d, "new.md")))
+        self.assertEqual(self.get("/api/reference/unindexed")["files"], [])
+        self.post("/api/undo", {})
+        self.assertEqual(self.snapshot(), before)
+
+    def test_index_add_rejects_bad_input(self):
+        self.readme()
+        for body in ({"file": "../x.md", "section": "A"}, {"file": "README.md", "section": "A"}, {"file": "nope.md", "section": "A"}, {"file": "nope.md", "section": ""}):
+            self.assertIn("error", self.post("/api/reference/index", body, ok=False))
+
+
 if __name__ == "__main__":
     unittest.main()

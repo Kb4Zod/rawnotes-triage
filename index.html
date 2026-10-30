@@ -465,7 +465,7 @@ async function doUndo(){
 /* ---------- data ---------- */
 // Two loads can overlap (a refresh and a save): the newest request's answer is the one kept.
 let notesSeq=0,notesP=null,projSeq=0,projP=null;
-function loadNotes(){const my=++notesSeq;const p=notesP=api('/api/notes').then(d=>{if(my===notesSeq)S.notes=d});return p.then(()=>my===notesSeq?undefined:notesP)}
+function loadNotes(){const my=++notesSeq;const p=notesP=Promise.all([api('/api/notes'),api('/api/reference/unindexed').catch(()=>null)]).then(([d,r])=>{if(my===notesSeq){S.notes=d;S.ref=r}});return p.then(()=>my===notesSeq?undefined:notesP)}
 function loadProjects(fresh){const my=++projSeq;const p=projP=api('/api/projects'+(fresh?'?refresh=1':'')).then(d=>{if(my===projSeq)S.projects=d.projects});return p.then(()=>my===projSeq?undefined:projP)}
 // After ANY change (decide, batch, merge, restore, project action, done means, undo) what the other screens cached is wrong:
 // drop it, and reload what the current screen needs.
@@ -608,6 +608,13 @@ const shipDate=()=>{const dd=$('#dueDate');return dd&&dd.value?dd.value:addDays(
 const shipBody=dest=>{if(dest==='experiments')return{};const dd=$('#dueDate');return dd&&dd.value?{due:dd.value}:{due_days:segVal('due')}};
 function syncShipBy(dest){const sb=$('#shipby');if(sb)sb.style.display=dest==='experiments'?'none':'';
   const n=$('#note');if(n)n.placeholder=dest==='experiments'?'What will you know or have when this experiment is done?':'What does shipped look like? One or two sentences.'}
+const firstSentence=t=>((t||'').replace(/\s+/g,' ').trim().split(/(?<=[.?!])\s/)[0]||'').slice(0,200);
+const NEW_SEC='__new__';
+function secField(id){const r=S.ref;if(!r||!r.has_index)return '';
+  return `<div class="field"><label class="label" for="${id}">Index section</label><select class="input" id="${id}"><option value="">Don’t index</option>${r.sections.map(x=>`<option>${esc(x)}</option>`).join('')}<option value="${NEW_SEC}">New section…</option></select>
+   <input class="input" id="${id}New" placeholder="name of the new section" style="display:none;margin-top:6px" aria-label="New section name"></div>`}
+const secVal=id=>{const e=document.getElementById(id);if(!e||!e.value)return '';return e.value===NEW_SEC?(document.getElementById(id+'New')?.value||'').trim():e.value};
+function wireSec(root,id,onChange){const e=root.querySelector('#'+id);if(!e)return;const nw=root.querySelector('#'+id+'New'),sync=()=>{nw.style.display=e.value===NEW_SEC?'':'none';onChange&&onChange()};e.onchange=sync;nw.addEventListener('input',()=>onChange&&onChange());sync()}
 function formHtml(mode,n){const s=slugOf(n.file);
   const foot=(btn,cls,hint)=>`<div class="formfoot"><button type="submit" class="btn ${cls}" id="go">${btn} ${kbh('↵')}</button><button type="button" class="btn ghost" id="cancel">Cancel ${kbh('Esc')}</button><span class="err" id="ferr" role="alert"></span><span class="hint">${hint}</span></div>`;
   if(mode==='promote')return `<form class="form promote" id="form"><div>
@@ -618,7 +625,8 @@ function formHtml(mode,n){const s=slugOf(n.file);
     <div class="preview" id="pv"></div>${foot(I.up+'Promote &amp; next','primary','Undo afterwards with Z · every move is logged')}</form>`;
   if(mode==='reference')return `<form class="form reference" id="form"><div>
     <div class="field"><label class="label" for="slug">File name</label><input class="input mono" id="slug" value="${esc(s)}" autocomplete="off"></div>
-    <div class="field"><label class="label" for="note">Why keep it</label><input class="input" id="note" placeholder="optional: what this is a reference for"></div></div>
+    <div class="field"><label class="label" for="note">Why keep it</label><input class="input" id="note" placeholder="optional: what this is a reference for"></div>
+    ${secField('rsec')}${S.ref&&S.ref.has_index?`<div class="field" id="blurbField"><label class="label" for="blurb">One-line summary</label><input class="input" id="blurb" value="${esc(firstSentence(n.question))}" autocomplete="off"></div>`:''}</div>
     <div class="preview" id="pv"></div>${foot(I.ref+'File as reference','primary','Shows up in Obsidian under Reference/')}</form>`;
   if(mode==='keep')return `<form class="form keep" id="form"><div>
     <div class="field"><span class="label">Status</span>${seg('status',[['cooking','Cooking',"I'm working it"],['open','Open','still just a question']],n.status==='open'?'open':'cooking')}</div>
@@ -632,7 +640,7 @@ function updatePreview(){const pv=$('#pv');if(!pv||!S.mode)return;const slug=($(
     const days=Math.round((new Date(due+'T00:00')-new Date(addDays(0)+'T00:00'))/864e5);
     pv.innerHTML=`<div class="label">What will happen</div><ol><li>Creates <span class="mono">~/Projects/${d}/${slug}${folder?'/':'.md'}</span>${folder?' with README, NOTES.md (this note), AGENTS.md and CLAUDE.md, as a git repo on <b>main</b> with a first commit (private; push it in the first build round)':''}</li>
       <li>Stamps <b>promoted</b> today · ${exp?'<b>no ship-by date</b> (open-ended)':`<b>ship by ${fmtDate(due)}</b>`}</li><li>Writes your <b>done means</b> into its ## Plan</li><li>Moves the capture to <span class="mono">RawNotes/done/</span></li><li>Shows up in <b>Projects</b> ${exp?'under Experiments, no clock':`with a ${days}-day clock`}</li></ol>`}
-  if(S.mode==='reference')pv.innerHTML=`<div class="label">What will happen</div><ol><li>Copies to <span class="mono">~/Projects/reference/${slug}.md</span> with Obsidian properties</li><li>Moves the capture to <span class="mono">RawNotes/done/</span></li><li>Add it to <span class="mono">reference/README.md</span> if it belongs in the index</li></ol>`}
+  if(S.mode==='reference')pv.innerHTML=`<div class="label">What will happen</div><ol><li>Copies to <span class="mono">~/Projects/reference/${slug}.md</span> with Obsidian properties</li><li>Moves the capture to <span class="mono">RawNotes/done/</span></li>${secVal('rsec')?`<li>Adds a line to <span class="mono">reference/README.md</span> under <b>${esc(secVal('rsec'))}</b></li>`:'<li>Not added to <span class="mono">reference/README.md</span> (pick an Index section to add it)</li>'}</ol>`}
 
 function renderReader(){const r=$('#reader');if(!r)return;r.scrollTop=0;
   if(!S.sel){r.innerHTML=`<div class="empty">${S.notes.live.length?'Pick a note.':'Inbox zero. Nothing to decide.'}</div>`;return}
@@ -644,14 +652,16 @@ function renderReader(){const r=$('#reader');if(!r)return;r.scrollTop=0;
    ${optCards(S.mode,n)}${S.mode?formHtml(S.mode,n):''}</div><div id="doc" class="card doc"><div class="muted">Loading…</div></div>`;
   wireDecide(n);loadDoc(n)}
 // What was typed into a decision form is kept per note and decision, so a refresh or a trip to another note doesn't lose it.
-function formState(f){const o={};f.querySelectorAll('input.input,textarea.input').forEach(i=>{if(i.id)o[i.id]=i.value});f.querySelectorAll('[data-seg]').forEach(s=>{const b=s.querySelector('.on');if(b)o['seg:'+s.dataset.seg]=b.dataset.v});return o}
+function formState(f){const o={};f.querySelectorAll('input.input,textarea.input,select.input').forEach(i=>{if(i.id)o[i.id]=i.value});f.querySelectorAll('[data-seg]').forEach(s=>{const b=s.querySelector('.on');if(b)o['seg:'+s.dataset.seg]=b.dataset.v});return o}
 function restoreForm(f,o){if(!o)return;for(const k in o){if(k.startsWith('seg:')){const s=f.querySelector(`[data-seg="${k.slice(4)}"]`);s&&s.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.v===o[k]))}
   else{const i=document.getElementById(k);if(i&&f.contains(i)){i.value=o[k];if(k==='dueDate'){i.classList.toggle('on',!!o[k]);if(o[k])f.querySelectorAll('[data-seg=due] button').forEach(b=>b.classList.remove('on'))}}}}}
 function wireDecide(n){
   $$('#decide .opt').forEach(b=>b.onclick=()=>setMode(S.mode===b.dataset.m?null:b.dataset.m));
   const f=$('#form');if(!f)return;
   const key=n.file+'|'+S.mode;restoreForm(f,S.forms[key]);
-  wireSegs(f,updatePreview);wireShipBy(f,updatePreview);$('#slug')&&($('#slug').oninput=updatePreview);updatePreview();
+  wireSegs(f,updatePreview);wireShipBy(f,updatePreview);$('#slug')&&($('#slug').oninput=updatePreview);
+  if(S.mode==='reference'){wireSec(f,'rsec',updatePreview);const b=$('#blurb'),nt=$('#note');if(b&&nt){b.addEventListener('input',()=>b.dataset.t='1');if(b.value!==firstSentence(n.question))b.dataset.t='1';nt.addEventListener('input',()=>{if(!b.dataset.t)b.value=nt.value.trim()||firstSentence(n.question)})}}
+  updatePreview();
   const save=()=>{S.forms[key]=formState(f)};f.addEventListener('input',save);f.addEventListener('click',e=>{if(e.target.closest('[data-seg]'))save()});
   f.onsubmit=e=>{e.preventDefault();apply()};$('#cancel').onclick=()=>{delete S.forms[key];setMode(null)};
   const first=f.querySelector('textarea,input#note')||f.querySelector('input');if(first&&!narrow())first.focus()}
@@ -684,7 +694,8 @@ async function apply(){
   if(S.sel&&S.sel.startsWith('stack:'))return applyBatch();
   if(!S.mode||!S.sel)return;const go=$('#go'),err=$('#ferr');
   const val=id=>{const e=document.getElementById(id);return e?e.value.trim():undefined};
-  const body={file:S.sel,action:S.mode,note:val('note'),slug:val('slug'),dest:segVal('dest'),status:segVal('status'),...(S.mode==='promote'?shipBody(segVal('dest')):{})};
+  const body={file:S.sel,action:S.mode,note:val('note'),slug:val('slug'),dest:segVal('dest'),status:segVal('status'),...(S.mode==='promote'?shipBody(segVal('dest')):{}),...(S.mode==='reference'&&secVal('rsec')?{section:secVal('rsec'),blurb:val('blurb')}:{})};
+  if(S.mode==='reference'&&$('#rsec')&&$('#rsec').value===NEW_SEC&&!secVal('rsec')){err.textContent='Name the new section.';$('#rsecNew').focus();return}
   if(S.mode==='promote'&&!body.note){err.textContent='Say what done means first.';$('#note').focus();return}
   go.disabled=true;err.textContent='';submitting=true;
   try{const ord=navOrder(inboxModel()),i=ord.indexOf(S.sel);
@@ -706,7 +717,7 @@ function renderBatch(){const k=S.sel.slice(6),stk=inboxModel().stacks[k];const r
   $$('[data-bm]').forEach(b=>b.onclick=()=>{S.batchMode=b.dataset.bm;S.armed=S.sel;renderBatch()});
   const f=$('#form'),sync=()=>{if(S.batchMode==='merge'){$('#promoteBits').style.display=segVal('then')==='promote'?'':'none';syncShipBy(segVal('dest'));batchPreview()}};wireSegs(f,sync);
   f.onsubmit=e=>{e.preventDefault();apply()};$('#cancel').onclick=()=>{S.sel=stk.members[0].file;S.expanded=k;renderInboxList();renderReader()};
-  f.querySelectorAll('input,textarea').forEach(i=>i.oninput=batchPreview);wireShipBy(f,sync);  // after: it owns #dueDate's oninput
+  f.querySelectorAll('input,textarea').forEach(i=>i.oninput=batchPreview);if(S.batchMode==='reference')wireSec(f,'rsec',batchPreview);wireShipBy(f,sync);  // after: it owns #dueDate's oninput
   renderBatchSummary()}
 function batchForm(stk){const m=S.batchMode;
   const foot=(btn,cls)=>`<div class="formfoot"><button type="submit" class="btn ${cls}" id="go">${btn} ${kbh('↵')}</button><button type="button" class="btn ghost" id="cancel">Cancel</button><span class="err" id="ferr" role="alert"></span><span class="hint" id="bleft"></span></div>`;
@@ -717,14 +728,14 @@ function batchForm(stk){const m=S.batchMode;
       <div class="field"><label class="label" for="slug">Project name</label><input class="input mono" id="slug" value="${esc(stackKey(stk.members[0]))}"></div>
       <div class="field"><label class="label" for="note">Done means <em>required</em></label><textarea class="input" id="note" rows="2"></textarea></div></div></div>
     <div class="preview" id="pv"></div>${foot(I.merge+'Merge','primary')}`;
-  if(m==='reference')return `<div><div class="field"><label class="label" for="note">Why keep them</label><input class="input" id="note" placeholder="optional, applied to each"></div></div><div class="preview" id="pv"></div>${foot(I.ref+'File all','primary')}`;
+  if(m==='reference')return `<div><div class="field"><label class="label" for="note">Why keep them</label><input class="input" id="note" placeholder="optional, applied to each"></div>${secField('rsec')}</div><div class="preview" id="pv"></div>${foot(I.ref+'File all','primary')}`;
   if(m==='keep')return `<div><div class="field"><span class="label">Status</span>${seg('status',[['cooking','Cooking'],['open','Open']],'cooking')}</div><div class="field"><label class="label" for="note">Next step</label><input class="input" id="note" placeholder="optional, added to each"></div></div><div class="preview" id="pv"></div>${foot(I.pot+'Keep all','primary')}`;
   return `<div><div class="field"><label class="label" for="note">Why not</label><input class="input" id="note" placeholder="one line, written into each note"></div></div><div class="preview" id="pv"></div>${foot(I.x+'Kill all','danger')}`}
 function batchPreview(){const pv=$('#pv');if(!pv)return;const n=S.batch.size,m=S.batchMode,t=new Date().toLocaleDateString('sv');
   if(m==='merge'){const title=($('#mtitle')?.value||'merged').trim(),slug=title.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,60),then=segVal('then');
     const kb_=S.notes.live.filter(x=>S.batch.has(x.file)).reduce((a,x)=>a+x.size,0)/1024,size=kb_>=1024?(kb_/1024).toFixed(1)+' MB':Math.round(kb_)+' KB';
     pv.innerHTML=`<div class="label">What will happen</div><ol><li>Writes <span class="mono">RawNotes/${t}-${esc(slug)}.md</span> with ${n} sections, newest first · <b ${kb_>200?'class="err" title="A big note: consider merging smaller groups (untick some)"':''}>about ${size}</b></li><li>Moves the ${n} sources to <span class="mono">done/</span>, each pointing at the merge</li>${then==='promote'?`<li>Promotes the merged note → <b>Projects</b>, ${segVal('dest')==='experiments'?'as an open-ended experiment':'ship by '+fmtDate(shipDate())}</li>`:then==='reference'?'<li>Files the merged note in <span class="mono">reference/</span></li>':'<li>The merged note waits in the Inbox</li>'}</ol>`}
-  else pv.innerHTML=`<div class="label">What will happen</div><ol><li>${m==='kill'?`Kills ${n} notes and moves them to the Archive`:m==='keep'?`Sets ${n} notes to ${segVal('status')}`+(S.notes.live.some(x=>S.batch.has(x.file)&&x.expired)?` <b class="err">· ${S.notes.live.filter(x=>S.batch.has(x.file)&&x.expired).length} expired: Keep will be refused for the whole batch</b>`:''):`Copies ${n} notes into <span class="mono">reference/</span>, captures to done/`}</li><li>One undo step for all of them</li></ol>`}
+  else pv.innerHTML=`<div class="label">What will happen</div><ol><li>${m==='kill'?`Kills ${n} notes and moves them to the Archive`:m==='keep'?`Sets ${n} notes to ${segVal('status')}`+(S.notes.live.some(x=>S.batch.has(x.file)&&x.expired)?` <b class="err">· ${S.notes.live.filter(x=>S.batch.has(x.file)&&x.expired).length} expired: Keep will be refused for the whole batch</b>`:''):`Copies ${n} notes into <span class="mono">reference/</span>, captures to done/${secVal('rsec')?`; adds ${n} lines under <b>${esc(secVal('rsec'))}</b> in the index (summary: each note’s question)`:''}`}</li><li>One undo step for all of them</li></ol>`}
 function renderBatchSummary(){if(!S.sel||!S.sel.startsWith('stack:'))return;const k=S.sel.slice(6),stk=inboxModel().stacks[k];if(!stk||!$('#btable'))return;
   const n=S.batch.size;$('#bcount').textContent=`${n} of ${stk.members.length} ${stk.name} notes selected`;
   $('#bleft').textContent=n<stk.members.length?`${stk.members.length-n} unticked stay in the Inbox`:'';
@@ -736,12 +747,15 @@ async function applyBatch(){const files=[...S.batch],m=S.batchMode,go=$('#go'),e
   if(m==='merge'&&segVal('then')==='promote'&&!val('note')){err.textContent='Say what done means first.';$('#note').focus();return}
   go.disabled=true;err.textContent='';submitting=true;
   try{const r=m==='merge'?await api('/api/merge',{files,title:val('mtitle'),then:segVal('then'),dest:segVal('dest'),...shipBody(segVal('dest')),slug:val('slug'),note:val('note')})
-      :await api('/api/batch',{files,action:m,note:val('note'),status:segVal('status')});
+      :await api('/api/batch',{files,action:m,note:val('note'),status:segVal('status'),...(m==='reference'&&secVal('rsec')?{section:secVal('rsec')}:{})});
     S.undoCount++;await changed();S.expanded=null;S.armed=null;S.batch=new Set();S.sel=r.file||null;render();toast(withWarning(r),{undo:true,bad:!!r.warning})}
   catch(e){go.disabled=false;err.textContent=e.message}
   finally{submitting=false}}
 
 /* ---------- Archive ---------- */
+function refBanner(){const r=S.ref;if(!r||!r.has_index||!r.files.length)return '';
+  return `<details class="unidx" style="margin:0 0 10px"><summary><b>${r.files.length}</b> reference note${r.files.length===1?'':'s'} ${r.files.length===1?'isn’t':'aren’t'} in the index</summary>${r.files.map((f,i)=>`<div data-row data-sid="us${i}" style="margin:10px 0;padding-top:8px;border-top:1px solid var(--line)"><div><b>${esc(f.title)}</b> <span class="mono muted">${esc(f.file)}</span></div>
+    ${secField('us'+i)}<div class="field"><input class="input blurb" value="${esc(f.blurb)}" aria-label="One-line summary for ${esc(f.title)}" autocomplete="off"></div><button type="button" class="btn sm" data-idx="${esc(f.file)}">Add to index</button> <span class="err" role="alert"></span></div>`).join('')}</details>`}
 function renderArchive(){
   const done=S.notes.done,af=S.af,q=af.q.toLowerCase();
   const items=done.filter(n=>(af.fate==='all'||n.fate===af.fate)&&(!q||(n.title+' '+n.file).toLowerCase().includes(q)));
@@ -751,10 +765,16 @@ function renderArchive(){
   $('#main').innerHTML=`<div class="split"><div class="listpane"><div class="pane-h"><h1>Archive</h1><div class="sub">Everything decided · newest first · nothing is ever deleted</div>
     <div class="search">${I.search}<input id="q" type="search" aria-label="Search the archive" placeholder="Search the archive…" value="${esc(af.q)}" autocomplete="off" aria-keyshortcuts="/">${kbh('/')}</div>
     <div class="chips stack" role="group" aria-label="Outcome">${chip('all','All')}${chip('promoted','Promoted')}${chip('reference','Reference')}${chip('killed','Killed')}${chip('merged','Merged')}</div></div>
+    ${refBanner()}
     <div class="list" id="list">${items.length?items.map(n=>`<div class="item ${n.file===S.asel?'sel':''}" data-f="${esc(n.file)}" role="button" tabindex="0"${n.file===S.asel?' aria-current="true"':''}><span class="bar"></span><div><div class="t">${esc(n.title)}</div><div class="m">${st(n.fate)}<span>${esc(n.date)}</span></div></div><span></span></div>`).join(''):'<div class="empty">Nothing here.</div>'}</div></div>
     <div class="reader" id="reader"></div></div>`;
   $('#q').oninput=e=>{S.af.q=e.target.value;const p=e.target.selectionStart;renderArchive();const i=$('#q');i.focus();i.setSelectionRange(p,p)};
   $$('[data-fate]').forEach(b=>b.onclick=()=>{S.af.fate=b.dataset.fate;renderArchive()});
+  $$('[data-idx]').forEach(b=>b.onclick=async()=>{const row=b.closest('[data-row]'),sec=secVal(row.dataset.sid),err=row.querySelector('.err');
+    if(!sec){err.textContent='Pick a section.';return}b.disabled=true;err.textContent='';
+    try{const r=await api('/api/reference/index',{file:b.dataset.idx,section:sec,blurb:row.querySelector('input.blurb').value.trim()});S.undoCount++;await changed();render();toast(r.msg,{undo:true})}
+    catch(e){b.disabled=false;err.textContent=e.message}});
+  $$('.unidx select').forEach(sel=>wireSec(sel.parentNode,sel.id));
   $$('#list [data-f]').forEach(r=>{r.onclick=()=>selectArchive(r.dataset.f,true);r.onkeydown=e=>{if((e.key==='Enter'||e.key===' ')&&e.target===r){e.preventDefault();selectArchive(r.dataset.f,true)}}});
   renderArchiveReader()}
 function selectArchive(f,nav){S.asel=f;$$('#list [data-f]').forEach(r=>{const on=r.dataset.f===f;r.classList.toggle('sel',on);on?r.setAttribute('aria-current','true'):r.removeAttribute('aria-current')});renderArchiveReader();if(nav&&narrow()){document.body.classList.add('note');scrollTo(0,0)}}
