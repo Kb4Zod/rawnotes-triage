@@ -482,8 +482,8 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(d["gh"]["repo"], "me/viaport")
 
 
-class DecisionTestCase(unittest.TestCase):
-    """2.00: decisions, batch, merge, restore, project status and undo, all through the HTTP API."""
+class DecisionBase(unittest.TestCase):
+    """The decision fixture and helpers, with no tests of its own (so subclasses don't run DecisionTestCase twice)."""
     _restore, get = ApiTestCase._restore, ApiTestCase.get
 
     def setUp(self):
@@ -514,6 +514,10 @@ class DecisionTestCase(unittest.TestCase):
                 p = os.path.join(root, f)
                 with open(p, "rb") as fh: out[os.path.relpath(p, self.tmp)] = fh.read()
         return out
+
+
+class DecisionTestCase(DecisionBase):
+    """2.00: decisions, batch, merge, restore, project status and undo, all through the HTTP API."""
 
     def test_kill_then_undo_puts_everything_back(self):
         self.note("2026-10-01-a.md"); before = self.snapshot()
@@ -937,7 +941,7 @@ class IndexInsertTest(unittest.TestCase):
         self.assertEqual(server.index_line("A [b]\nc", "n.md", "see [x]\n\nnow"), "- [A b c](n.md): see x now")
 
 
-class ReferenceIndexTestCase(DecisionTestCase):
+class ReferenceIndexTestCase(DecisionBase):
     def readme(self, text=INDEX):
         os.makedirs(os.path.join(self.tmp, "reference"), exist_ok=True)
         p = os.path.join(self.tmp, "reference", "README.md")
