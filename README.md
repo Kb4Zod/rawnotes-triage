@@ -244,7 +244,13 @@ when the project has a GitHub origin, otherwise **Open folder** (launches
 `xdg-open` on the server's machine; only for a browser on that machine, and
 hidden on the phone layout), and **Kill** (asks why; the reason goes under
 `## Outcome`). Shipping or killing a folder that has no dated file writes into its `NOTES.md`,
-creating it if needed. All these writes can be undone. Git facts are cached
+creating it if needed. Shipping or killing also writes `- closed: <date>`.
+The **Closed** column shows only projects closed in the last 7 days
+(`closed_window_days` in `config.json`), counting folders and dated files that
+have since moved to `maintained/` or `archive/`; **Show all (N)** lists every
+closed project still under `active/` or `experiments/`. A project's closed date
+is its `closed:` line, else `shipped:`, else the date in `**Killed
+YYYY-MM-DD:**` under `## Outcome`. All these writes can be undone. Git facts are cached
 for 20 seconds; **Refresh** re-reads them.
 
 **Symlinked project folders** are listed read-only with a note. Every write

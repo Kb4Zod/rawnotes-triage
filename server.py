@@ -30,7 +30,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 import safefs
-from notemeta import (field, set_field, drop_field, title_of, append_outcome, append_to_section, question_of, question_summary, note_body,
+from notemeta import (field, set_field, drop_field, title_of, append_outcome, append_to_section, closed_date, question_of, question_summary, note_body,
                       eol_of, with_eol, to_lf, header_lines, title_index, HEAD_LINE)
 
 VERSION = "2.12"  # bump on every change; history in CHANGELOG.md
@@ -50,6 +50,8 @@ STARTED = dt.datetime.now().isoformat(timespec="seconds")
 with open(os.path.join(HERE, "index.html"), "rb") as _fh: INDEX_HTML = _fh.read().replace(b"__VERSION__", VERSION.encode())
 DUE_DAYS = 7
 MAX_EXTENSIONS = 2  # a ship-by date may be pushed this many times (config.json: max_extensions)
+CLOSED_WINDOW_DAYS = 7  # the Projects board's Closed column shows projects closed this recently (config.json: closed_window_days)
+CLOSED_READ = 200_000  # bytes of a closed project's notes read to find its Killed date
 EXTEND_MAX_DAYS = 7
 REASON_MIN = 10  # characters a reason for pushing the ship-by date has to have
 ACTIVITY_TTL = 600  # seconds; GitHub contribution data barely changes minute to minute
@@ -126,7 +128,8 @@ def scan_notes():
 def list_notes(with_inflight=True):
     with _lock.read():
         out = scan_notes()
-        return {**out, "inflight": inflight() if with_inflight else [], "today": today().isoformat(), "notes_dir": NOTES}
+        return {**out, "inflight": inflight() if with_inflight else [], "today": today().isoformat(), "notes_dir": NOTES,
+                **{"closed_window_days": tunable("closed_window_days", CLOSED_WINDOW_DAYS)}}
 
 def _count(v):
     """A header count (extensions: 2) as an int; missing or junk counts as 0."""
@@ -134,14 +137,23 @@ def _count(v):
 
 def _meta_of(path, f):
     """The part of a project file the board needs: kept until the file changes."""
-    with open(path, "rb") as fh: text = to_lf(fh.read(4000).decode("utf-8", "replace"))
-    return {"title": title_of(text, f), "due": field(text, "due"), "promoted": field(text, "promoted"), "status": field(text, "status") or "?",
-            "extensions": _count(field(text, "extensions"))}
+    with open(path, "rb") as fh: raw = fh.read(CLOSED_READ)
+    text = to_lf(raw[:4000].decode("utf-8", "replace"))
+    status = field(text, "status") or "?"
+    # a killed project's date can sit far down, in ## Outcome: only closed projects pay for reading more
+    closed = closed_date(to_lf(raw.decode("utf-8", "replace")) if status in CLOSED else text)
+    return {"title": title_of(text, f), "due": field(text, "due"), "promoted": field(text, "promoted"), "status": status,
+            "extensions": _count(field(text, "extensions")), "closed": closed}
+
+def in_closed_window(day):
+    """Was `day` (YYYY-MM-DD) within the last closed_window_days days?"""
+    try: return (today() - dt.date.fromisoformat(day)).days <= tunable("closed_window_days", CLOSED_WINDOW_DAYS)
+    except ValueError: return False
 
 def inflight():
     """Promoted notes with a due date (plus open-ended experiments), found in the sibling project folders."""
     out = []
-    for dest in ("active", "experiments", "learning", "templates", "maintained"):
+    for dest in ("active", "experiments", "learning", "templates", "maintained", "archive"):
         d = os.path.join(PROJECTS, dest)
         if not os.path.isdir(d): continue
         for root, dirs, files in os.walk(d):
@@ -151,11 +163,17 @@ def inflight():
                 p = os.path.join(root, f)
                 try: m = _meta_cache.get(("meta", p), [p], lambda _: _meta_of(p, f))
                 except OSError: continue
-                due = m["due"]
+                due = m["due"]; recently_closed = False
+                if dest in ("maintained", "archive"):
+                    # finished work that moved out of the board's folders: only the Closed column shows it, and only while recent
+                    if m["closed"]:
+                        if not in_closed_window(m["closed"]) or not (f.lower() == "notes.md" or root == d): continue
+                        recently_closed = True
+                    elif dest == "archive" or not due: continue
                 # promoted with no ship-by: one per experiment (its NOTES.md, or a flat file), not every note it holds
                 open_ended = (not due and dest == "experiments" and bool(m["promoted"])
                               and (f == "NOTES.md" or root == d))
-                if not due and not open_ended: continue
+                if not due and not open_ended and not recently_closed: continue
                 try: left = (dt.date.fromisoformat(due) - today()).days if due else None
                 except ValueError: left = None
                 rel = os.path.relpath(p, PROJECTS)
@@ -163,7 +181,7 @@ def inflight():
                             "dest": dest, "promoted": m["promoted"], "due": due,
                             "days_left": left, "open_ended": open_ended, "status": m["status"],
                             "extensions": m["extensions"], "max_extensions": tunable("max_extensions", MAX_EXTENSIONS),
-                            "done": m["status"] in CLOSED})
+                            "done": m["status"] in CLOSED or (dest in ("maintained", "archive") and bool(m["closed"])), "closed": m["closed"]})
     out.sort(key=lambda x: (x["done"], x["days_left"] if x["days_left"] is not None else 999))
     return out
 
@@ -278,6 +296,16 @@ def folder_status(path):
     """The `- status:` line in the project's NOTES.md, if it has one."""
     return project_facts(path)[0]
 
+def folder_closed(path, status):
+    """When a project folder was closed (see closed_date), "" if it is still open or says nothing; kept until its notes change."""
+    if status not in CLOSED: return ""
+    def build(_):
+        try:
+            with open(notes_file(path), "rb") as fh: return closed_date(to_lf(fh.read(CLOSED_READ).decode("utf-8", "replace")))
+        except OSError: return ""
+    try: return _proj_cache.get(("closed", path), [notes_file(path)], build)
+    except OSError: return ""
+
 def project_folders():
     """Every project folder under ../active and ../experiments; `kind` says which (experiments are labelled on the board).
     A symlinked folder is listed (read-only: `linked`) but Triage never writes into it."""
@@ -291,6 +319,7 @@ def project_folders():
             status, defined = project_facts(full)
             out.append({"name": name, "kind": kind, "path": f"{kind}/{name}", "abs_path": full,
                         "repo": os.path.exists(os.path.join(full, ".git")), "status": status, "done_defined": defined,
+                        "closed": folder_closed(full, status),
                         "linked": os.path.islink(full) or os.path.islink(base)})
     return out
 
@@ -1167,7 +1196,7 @@ def _status_edit(text, req, name):
     """The new text, label and message for a project status action (shipped / extend / kill)."""
     t = today().isoformat(); action = req.get("action")
     if action == "shipped":
-        return set_field(set_field(text, "status", "shipped"), "shipped", t), f"ship {name}", f"Shipped {name} 🎉"
+        return set_field(set_field(set_field(text, "status", "shipped"), "shipped", t), "closed", t), f"ship {name}", f"Shipped {name} 🎉"
     if action == "extend":
         if not field(text, "due"): raise ValueError("open-ended experiments have no ship-by date to push")
         why = _text(req, "note")
@@ -1187,7 +1216,7 @@ def _status_edit(text, req, name):
     if action == "kill":
         why = _text(req, "note")
         if not why: raise ValueError("Say why you are killing it.")
-        text = append_outcome(set_field(text, "status", "dead"), f"**Killed {t}:** {why}")
+        text = append_outcome(set_field(set_field(text, "status", "dead"), "closed", t), f"**Killed {t}:** {why}")
         return text, f"kill {name}", f"Killed {name}"
     raise ValueError("unknown project action")
 
