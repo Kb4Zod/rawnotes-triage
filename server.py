@@ -2275,7 +2275,7 @@ class H(BaseHTTPRequestHandler):
             if path == "/api/undo": return self._send(200, undo(self._this_machine()))
             if path == "/api/done": return self._send(200, set_done(req.get("name", ""), req.get("text", ""), req.get("expected", ""), req.get("kind")))
             if path == "/api/open":
-                if self.client_address[0] not in ("127.0.0.1", "::1", "::ffff:127.0.0.1"): raise ValueError("Open only works from the machine running the server.")
+                if not self._this_machine(): raise ValueError("Open only works from the machine running the server.")
                 target = open_target(req)
                 try: open_path(target)
                 except OSError as e: raise OSError(f"couldn't launch xdg-open: {e}")

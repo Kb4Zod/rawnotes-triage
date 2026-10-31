@@ -110,6 +110,8 @@ Flow gaps (plan and tickets in `.scratch/flow-gaps/`; Hugh approved all 13 recom
     the server's own machine: from a phone or a rebound DNS name on a `--host 0.0.0.0` bind it is refused (400, nothing
     changed). Undo of a move first runs the dependency check on the move back, and anything pointing at the folder
     in its new place refuses it with the list, like close out.
+  - `/api/open` uses the same this-machine check as the other local-only routes (peer address and a localhost `Host`),
+    not the peer address alone: under `--host 0.0.0.0` a DNS-rebound page could ask it to open a project folder.
 - **Test fix.** `test_runtime.HttpLimits` reads the 413 right after the headers and tolerates the server closing
   before the oversized body is sent (it was flaky with BrokenPipe under load); it now also asserts no file changed
   and no undo step was added.

@@ -546,7 +546,8 @@ private repos through the viewer; keep that to the tailnet or a trusted
 network. Guards against a web page you visit driving the server: on a
 localhost bind, requests whose `Host` is not localhost are refused; on any
 bind, a request from another origin and a non-JSON `POST` are refused.
-`/api/open` only answers a browser on the server's own machine and only for
+`/api/open` only answers a browser on the server's own machine with a localhost
+`Host` (so a DNS-rebound page can't use it under `--host 0.0.0.0`), and only for
 project folders or dated files the board lists. Saving or removing the GitHub
 token (`/api/github/token`) is likewise limited to the server's own machine,
 and also needs a localhost `Host` on any bind (so a DNS-rebound page can't do it

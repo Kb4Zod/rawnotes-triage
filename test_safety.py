@@ -8,6 +8,8 @@ import subprocess
 import sys
 import threading
 import unittest
+import urllib.error
+import urllib.request
 from unittest import mock
 
 import safefs
@@ -125,6 +127,16 @@ class OpenEndpoint(Fixture):
                {"name": "../demo", "kind": "active"}, {"name": "demo", "kind": "learning"}, {"name": "nope"}, {"name": "https://evil.example", "kind": "active"},
                {"name": ".hidden"}, {"name": "demo/x"}, {}, {"name": None}]
         for b in bad: self.post("/api/open", b, ok=False)
+        self.assertEqual(self.opened, [])
+
+    def test_refuses_a_rebound_host_name_on_an_all_interfaces_bind(self):
+        """--host 0.0.0.0: a DNS name rebound to 127.0.0.1 reaches the server from this machine's own address, but its
+        Host is not localhost, so it is not a browser on this machine (the same _this_machine() check as the other routes)."""
+        with mock.patch.object(server, "BIND_HOST", "0.0.0.0"):
+            req = urllib.request.Request(f"http://127.0.0.1:{self.port}/api/open", method="POST", data=json.dumps({"name": "demo", "kind": "active"}).encode(),
+                                         headers={"Content-Type": "application/json", "Host": f"rebound.example:{self.port}"})
+            with self.assertRaises(urllib.error.HTTPError) as cm: urllib.request.urlopen(req)
+            self.assertIn("machine running the server", json.loads(cm.exception.read())["error"])
         self.assertEqual(self.opened, [])
 
     def test_refuses_a_symlinked_project_folder(self):
