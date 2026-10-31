@@ -1928,12 +1928,15 @@ def _status_edit(text, req, name):
 def project_status(req, local=True):
     """On a promoted project file (a due: line, or an open-ended experiment): mark it shipped, push the ship-by
     date (not on open-ended experiments), or kill it.
-    A project folder with no promoted file ({name, kind} instead of path) can be shipped or killed through its NOTES.md.
-    Shipping or killing a project folder on the board is a close out (close_project): it needs an outcome, and moves."""
+    Shipping or killing a project folder on the board ({name, kind}, or a path inside it) is a close out (close_project):
+    it needs an outcome, and may move the folder. A folder has no ship-by to push unless it has a promoted file."""
     folder = _folder_of(req) if req.get("action") in ("shipped", "kill") else None
     if folder: return close_project(req, folder, local)
     if req.get("outcome"): raise ValueError("Only a project folder can be closed out; this project is a single file.")
-    if not req.get("path"): return folder_project_status(req)
+    if not req.get("path"):  # a folder with no promoted file: shipped and kill went to close out above; nothing else applies
+        project_dir(req.get("name", ""), req.get("kind"))
+        if req.get("action") == "extend": raise ValueError("This project folder has no ship-by date (no due: line) to push.")
+        raise ValueError("unknown project action")
     rel = req.get("path", "")
     with mutation() as tx:
         if not isinstance(rel, str) or rel not in {x["path"] for x in inflight()}: raise ValueError("unknown project file")
@@ -1943,17 +1946,6 @@ def project_status(req, local=True):
         text, tx.label, msg = _status_edit(text, req, name)
         tx.write(path, text, eol)
     _log(f"project {req.get('action')} {rel}")
-    return {"ok": True, "msg": msg}
-
-def folder_project_status(req):
-    path, kind = project_dir(req.get("name", ""), req.get("kind"), write=True); name = os.path.basename(path)
-    if req.get("action") == "extend": raise ValueError("unknown project action")  # no due: line to push in a bare folder
-    with mutation() as tx:
-        target = notes_file(path)
-        text, eol = read_note(target) if os.path.exists(target) else (f"# {name}\n", "\n")
-        text, tx.label, msg = _status_edit(text, req, name)
-        tx.write(target, text, eol)
-    _log(f"project {req.get('action')} {kind}/{name}")
     return {"ok": True, "msg": msg}
 
 # ---- close out: ship a project folder into another round, maintained/ or archive/, or kill it into archive/ ----

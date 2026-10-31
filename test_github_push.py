@@ -256,7 +256,16 @@ class CloseOutGate(GithubCase):
         """No second, older Ship gate is left beside close out's (it was dead code that could drift from it)."""
         self.assertFalse(hasattr(server, "require_github_to_ship"))
         import inspect
-        self.assertNotIn("require_github", inspect.getsource(server.project_status) + inspect.getsource(server.folder_project_status))
+        self.assertNotIn("require_github", inspect.getsource(server.project_status))
+        self.assertFalse(hasattr(server, "folder_project_status"))  # its ship/kill went to close out; what was left only refused
+
+    def test_a_bare_folder_says_it_has_no_ship_by_to_push_and_changes_nothing(self):
+        self.project("plain", notes="# p\n\n- status: promoted\n"); before = self.snapshot()
+        err = self.post("/api/project/status", {"name": "plain", "kind": "active", "action": "extend", "note": "Waiting on the parts."}, ok=False)["error"]
+        self.assertIn("no ship-by date", err)
+        self.assertEqual(self.post("/api/project/status", {"name": "plain", "kind": "active", "action": "bogus"}, ok=False)["error"], "unknown project action")
+        self.assertEqual(self.post("/api/project/status", {"name": "ghost", "kind": "active", "action": "extend"}, ok=False)["error"], "unknown project")
+        self.assertEqual((self.snapshot(), server._undo), (before, []))
 
     def test_the_gate_off_lets_everything_through(self):
         path = self.promoted(); self.work(path)
