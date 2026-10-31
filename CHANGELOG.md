@@ -136,6 +136,8 @@ Flow gaps (plan and tickets in `.scratch/flow-gaps/`; Hugh approved all 13 recom
   - A folder too big for Undo to check (over 200,000 entries, or partly unreadable) is flagged before the move: the
     close-out form shows "can't be undone from here", as do `rawtriage project deps` and `/api/project/deps`
     (`undo_warning`, with the `mv` to move it back by hand, relative to the projects folder).
+  - README and the spec say what the GitHub gate checks (commits and pushes, not uncommitted changes) and that Next
+    round is never gated (a change from user story 22, noted in `spec.md`).
 - **Test fix.** `test_runtime.HttpLimits` reads the 413 right after the headers and tolerates the server closing
   before the oversized body is sent (it was flaky with BrokenPipe under load); it now also asserts no file changed
   and no undo step was added.

@@ -400,6 +400,12 @@ is a 400 starting "Push it first" and nothing changes:
 | **Next round** | never |
 | **Kill** (`archive/<name>_abandoned`) | never |
 
+The gate checks **commits and pushes only**: uncommitted or untracked changes
+in the folder are not looked at, and move with it (commit and push them first
+if they matter). **Next round** is never gated, in any folder: the folder
+stays where it is, so shipping a round of a project that isn't on GitHub yet
+is allowed (the red chip stays until it is pushed).
+
 Experiments and learning are never gated (the chip stays red). The panel of a
 project that has a local repo and no origin has a **Create private GitHub repo** button (also
 `rawtriage project github <name>`; `POST /api/project/github {name, kind}`). It

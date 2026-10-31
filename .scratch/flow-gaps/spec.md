@@ -140,6 +140,11 @@ and automatic `reference/README.md` index lines.
 - `github_state()` (`server.py:329-344`) adds `commits_after_skeleton` and `promoted` age; chip **Not on GitHub**
   when no origin and (commits after skeleton > 0 or promoted ≥ 2 days ago).
 - Ship refused for `active`/`templates` with no GitHub origin.
+- **Changed in review (2026-10-30), vs user story 22:** Ship became close out (12), and the gate sits there. It refuses
+  only the outcomes that move the folder: **maintained** always, **archive** when the repo has work beyond the skeleton
+  commit. **Next round** (and kill) are never gated, so a round can ship before the first push; the Not on GitHub chip
+  still flags it. "On GitHub" means commits and pushes (a pushed GitHub origin, no local branch ahead of it); uncommitted
+  or untracked changes in the folder are not checked.
 - Part B (optional): `POST /api/project/github` (this machine only) runs
   `gh repo create <login>/<slug> --private --source <path> --remote origin` then
   `git push -u origin main` with the pre-push hook's override in its environment only. Never public.
