@@ -216,7 +216,7 @@ def check_project(args):
 
 
 def project_body(args):
-    if args.action == "github": return {"name": args.name, "kind": args.kind or "active"}
+    if args.action == "github": return {"name": args.name, "kind": folder_kind(args)}
     action = {"ship": "shipped"}.get(args.action, args.action)
     body = {"action": action, "note": args.reason}
     if args.days is not None: body["days"] = args.days

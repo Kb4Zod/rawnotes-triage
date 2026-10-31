@@ -379,11 +379,20 @@ GitHub** instead, once it has a commit after Promote's own first commit or
 was promoted 2 or more days ago (a project made before the skeleton existed is
 judged by the `promoted:` date alone).
 
-**Shipped means it's on GitHub.** Mark shipped is refused (400, "Push it
-first: shipped means it's on GitHub.", nothing changes) for an `active` or
-`templates` project whose repo has no GitHub origin. Experiments and learning
-may ship without one (the chip stays red). The panel of a project that has a
-local repo and no origin has a **Create private GitHub repo** button (also
+**Shipped means it's on GitHub.** For an `active` or `templates` project
+folder with no GitHub origin, the gate sits in **close out** (below), so no
+route around it skips it. It is checked fresh, under the same lock as the move;
+a refusal is a 400 starting "Push it first" and nothing changes:
+
+| Close-out outcome | Needs a GitHub origin? |
+|---|---|
+| **Maintained** | always |
+| **Archive** | only if the folder is a git repo with work in it: any commit after Promote's skeleton commit, or any commit at all when the repo has no skeleton commit. No `.git`, no commits, or only the skeleton commit: archives without GitHub |
+| **Next round** | never |
+| **Kill** (`archive/<name>_abandoned`) | never |
+
+Experiments and learning are never gated (the chip stays red). The panel of a
+project that has a local repo and no origin has a **Create private GitHub repo** button (also
 `rawtriage project github <name>`; `POST /api/project/github {name, kind}`). It
 only works from the machine running the server (the button is hidden on a
 phone or any non-`localhost` page) and refuses if an `origin` exists, the tree
@@ -445,7 +454,8 @@ next to `rawnotes-triage`) is not a hit. The app never moves memory folders or e
   being built (rawnotes-triage itself).
 - **Maintained**: `status: shipped`, `shipped:`, `closed:`, then the folder moves to `maintained/<name>`. Suggested when
   the folder has a GitHub origin.
-- **Archive**: the same, into `archive/<name>`. Suggested otherwise (a one-off, often just a `NOTES.md`).
+- **Archive**: the same, into `archive/<name>`. Suggested otherwise (a one-off, often just a `NOTES.md`). In
+  `active/` and `templates/` both Maintained and Archive pass the GitHub gate above first.
 - **Kill** (reason required) always moves the folder to `archive/<name>_abandoned`.
 
 A folder already marked shipped (or `done` by hand) before close out existed, and still in its project folder, shows

@@ -1721,9 +1721,35 @@ def restore(req):
 SHIP_NEEDS_GITHUB = ("active", "templates")  # shipped means it's on GitHub (experiments and learning may ship without)
 
 def require_github_to_ship(req, folder, kind):
-    """Refuse Ship for an active/templates project folder that has no GitHub origin. Reads the repo fresh."""
+    """Refuse Ship for an active/templates project that has no GitHub origin, outside close out (a promoted file deeper
+    than <kind>/<folder>/<file>.md). A project folder is gated in close_project instead (require_github_to_close)."""
     if req.get("action") == "shipped" and kind in SHIP_NEEDS_GITHUB and os.path.isdir(folder) and not github_state(folder, True)["repo"]:
         raise ValueError("Push it first: shipped means it's on GitHub.")
+
+def work_commits(path):
+    """Commits in a folder's repo beyond Promote's skeleton commit (every commit when no root commit is the skeleton).
+    0 with no repo or no commits yet. A repo git can't read counts as work (1), so the gate fails closed."""
+    if not os.path.exists(os.path.join(path, ".git")): return 0
+    if git_out(path, ["rev-parse", "--verify", "-q", "HEAD"]) is None:
+        return 0 if git_out(path, ["rev-parse", "--git-dir"]) is not None else 1  # an unborn branch: nothing committed
+    total = git_out(path, ["rev-list", "--count", "HEAD"]); roots = git_out(path, ["log", "--max-parents=0", "--format=%s", "HEAD"])
+    if not total or not total.isdigit() or roots is None: return 1
+    return int(total) - (1 if any(SKELETON_SUBJECT.fullmatch(r) for r in roots.splitlines()) else 0)
+
+def require_github_to_close(path, kind, outcome):
+    """The GitHub gate at close out, for active/templates folders with no GitHub origin (read fresh). maintained:
+    refused. archive: refused only when the repo has work in it (work_commits > 0); no git, or only the skeleton
+    commit, archives freely. next and kill (abandoned) are never gated."""
+    if kind not in SHIP_NEEDS_GITHUB or outcome not in ("maintained", "archive") or github_state(path, True)["repo"]: return
+    name = os.path.basename(path)
+    if outcome == "maintained":
+        raise ValueError(f"Push it first: maintained means it's on GitHub. Create a private repo for {name} (Create private "
+                         f"GitHub repo, or `rawtriage project github {name}`), then close it out again.")
+    n = work_commits(path)
+    if n:
+        raise ValueError(f"Push it first: {name} has {n} commit{'s' if n > 1 else ''} that {'are' if n > 1 else 'is'} not on GitHub, "
+                         f"and archive must not strand them. Create a private repo (Create private GitHub repo, or "
+                         f"`rawtriage project github {name}`), then archive it, or kill it instead.")
 
 def _status_edit(text, req, name):
     """The new text, label and message for a project status action (shipped / extend / kill)."""
@@ -1833,6 +1859,7 @@ def close_project(req, folder=None):
         path, kind = project_dir(name, kind, write=True)  # again under the lock: it may have moved since
         if file and os.path.relpath(file, PROJECTS) not in {x["path"] for x in inflight()}: raise ValueError("unknown project file")
         target = file or notes_file(path)
+        require_github_to_close(path, kind, outcome)  # here, under the lock: every ship/close of a folder passes this way
         if outcome == "next": res["msg"] = _next_round(tx, path, kind, name, target, done, due)
         else: res.update(_close_and_move(tx, req, path, kind, name, target, action, outcome))
     if res.get("moved_to"): res["sync_apps"] = run_sync_apps()

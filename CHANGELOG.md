@@ -61,13 +61,20 @@ Flow gaps (plan and tickets in `.scratch/flow-gaps/`; Hugh approved all 13 recom
   Project moves are never part of a RawNotes auto-commit.
 - **First push to GitHub (09).** A project with no GitHub origin shows a red **Not on GitHub** chip once it has a
   commit after Promote's skeleton commit or was promoted 2+ days ago (older projects: by `promoted:` age alone).
-  Ship is refused for `active` and `templates` projects with no origin ("Push it first: shipped means it's on
-  GitHub."); experiments and learning can still ship. New **Create private GitHub repo** button (`POST
+  For `active` and `templates` folders with no GitHub origin, close out (12) is gated ("Push it first"); experiments
+  and learning are never gated. New **Create private GitHub repo** button (`POST
   /api/project/github`, `rawtriage project github <name>`): this machine only; refuses an existing origin, a dirty
   tree, a branch other than `main` or no `gh` sign-in; runs `gh repo create <login>/<folder> --private --source <path>
   --remote origin` then `git push -u origin main` with `ALLOW_PUSH_MAIN=1` in that process only. Never public, never
   `--no-verify`. `github_state()` gains `after_skeleton` and `not_on_github`. Tests stub `gh` on PATH; the "remote"
-  is a local bare repo. Fixtures switch the Ship gate off (`SHIP_NEEDS_GITHUB`); `test_github_push.py` switches it on.
+  is a local bare repo. Fixtures switch the gate off (`SHIP_NEEDS_GITHUB`); `test_github_push.py` switches it on.
+- **Where the GitHub gate meets close out (09 + 12).** The gate runs inside `close_project`, under the lock, so every
+  route that ships or closes a folder (`/api/project/close`, `/api/project/status`, the CLI, the page) passes it:
+  **maintained** needs a GitHub origin; **archive** needs one only when the folder is a git repo with a commit after
+  Promote's skeleton commit (any commit if there is no skeleton commit), so a folder with no `.git` or only the
+  skeleton archives freely; **next round** and **kill** (`_abandoned`) are never gated. New `work_commits()` /
+  `require_github_to_close()`; a repo git can't read counts as work (fails closed). The panel shows **Create private
+  GitHub repo** next to **Close out…** as well. `rawtriage project` takes `ship|extend|kill|close|deps|github`.
 - **Integration.** One config reader (`read_config` / `config_value` / `config_int`) behind every setting, with a
   settings table in the README. The reader hides every header key the app writes (`kept`, `keeps`, `restored`,
   `extensions`, `closed`, `github`). Tests: every git-running test uses `testkit.isolate_git`; testkit points the config

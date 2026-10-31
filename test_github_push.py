@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""v2.13 (ticket 09): the "Not on GitHub" flag, the Ship gate for active/templates, and the Create private GitHub repo
+"""v2.13 (ticket 09): the "Not on GitHub" flag, the GitHub gate at close out for active/templates, and the Create private GitHub repo
 button. `gh` is a stub script on PATH and "GitHub" is a local bare repo (git's url.pushInsteadOf), so nothing leaves the machine."""
 import json
 import os
@@ -73,7 +73,6 @@ class GithubCase(Fixture):
     def state(self, name, kind="active"):
         return next(p for p in self.get("/api/projects?refresh=1")["projects"] if p["name"] == name and p["kind"] == kind)["gh"]
 
-    def ship(self, name, kind="active", ok=True): return self.post("/api/project/status", {"name": name, "kind": kind, "action": "shipped"}, ok=ok)
     def create(self, name, kind="active", ok=True): return self.post("/api/project/github", {"name": name, "kind": kind}, ok=ok)
 
 
@@ -107,33 +106,92 @@ class NotOnGithubFlag(GithubCase):
         self.assertFalse(self.state("plain")["not_on_github"])
 
 
-class ShipGate(GithubCase):
-    def test_active_and_templates_cannot_ship_without_an_origin_and_nothing_changes(self):
+class CloseOutGate(GithubCase):
+    """The GitHub gate sits in close out (close_project), for active/templates folders: maintained needs an origin;
+    archive needs one only when the repo has work beyond Promote's skeleton commit; next and kill are never gated."""
+    def close(self, name="demo", kind="active", outcome="archive", ok=True, **kw):
+        return self.post("/api/project/close", {"name": name, "kind": kind, "outcome": outcome, **kw}, ok=ok)
+
+    def work(self, path, n=1):
+        for i in range(n):
+            with open(os.path.join(path, f"work{i}.txt"), "w") as fh: fh.write(str(i))
+            run(path, "add", "-A"); run(path, "commit", "-qm", f"work {i}")
+
+    def assert_refused(self, contains="Push it first", **kw):
+        before = self.snapshot(); n = len(server._undo)
+        err = self.close(ok=False, **kw)["error"]
+        self.assertIn(contains, err)
+        self.assertEqual((self.snapshot(), len(server._undo)), (before, n))  # nothing moved, nothing written, no undo step
+        return err
+
+    def test_maintained_needs_an_origin_in_active_and_templates(self):
         for dest, name in (("active", "a1"), ("templates", "t1")):
             self.promoted(name, dest)
-            before = self.snapshot(); n = len(server._undo)
-            err = self.ship(name, dest, ok=False)["error"]
-            self.assertEqual(err, "Push it first: shipped means it's on GitHub.")
-            self.assertEqual((self.snapshot(), len(server._undo)), (before, n))
+            err = self.assert_refused(name=name, kind=dest, outcome="maintained")
+            self.assertIn("maintained means it's on GitHub", err); self.assertIn(f"rawtriage project github {name}", err)
 
-    def test_the_gate_applies_to_the_promoted_file_route_too(self):
-        self.promoted("a1")
-        err = self.post("/api/project/status", {"path": "active/a1/NOTES.md", "action": "shipped"}, ok=False)["error"]
-        self.assertIn("Push it first", err)
+    def test_maintained_with_no_git_at_all_is_refused_too(self):
+        self.project("plain", notes="# p\n\n- status: promoted\n")
+        self.assert_refused(name="plain", outcome="maintained")
 
-    def test_experiments_and_learning_ship_without_github(self):
+    def test_with_an_origin_maintained_moves(self):
+        path = self.promoted(); self.work(path); run(path, "remote", "add", "origin", "https://github.com/me/demo.git")
+        self.assertEqual(self.close(outcome="maintained")["moved_to"], "maintained/demo")
+        self.assertIn("- status: shipped", open(os.path.join(self.tmp, "maintained", "demo", "NOTES.md")).read())
+
+    def test_archive_with_only_the_skeleton_commit_moves_without_github(self):
+        self.promoted()
+        self.assertEqual(self.close()["moved_to"], "archive/demo")
+
+    def test_archive_of_a_folder_with_no_git_moves_without_github(self):
+        self.project("plain", notes="# p\n\n- status: promoted\n")
+        self.assertEqual(self.close("plain")["moved_to"], "archive/plain")
+
+    def test_archive_of_a_repo_with_no_commits_moves_without_github(self):
+        path = self.project("empty", notes="# e\n\n- status: promoted\n"); run(path, "init", "-q", "-b", "main")
+        self.assertEqual(self.close("empty")["moved_to"], "archive/empty")
+
+    def test_archive_with_work_after_the_skeleton_needs_an_origin(self):
+        for dest, name in (("active", "a1"), ("templates", "t1")):
+            path = self.promoted(name, dest); self.work(path, 2)
+            self.assertIn("has 2 commits that are not on GitHub", self.assert_refused(name=name, kind=dest))
+            run(path, "remote", "add", "origin", f"https://github.com/me/{name}.git")
+            self.assertEqual(self.close(name, dest)["moved_to"], f"archive/{name}")
+
+    def test_archive_of_a_repo_without_a_skeleton_commit_counts_every_commit(self):
+        path = self.project("old", notes="# old\n\n- status: promoted\n")
+        run(path, "init", "-q", "-b", "main"); run(path, "add", "-A"); run(path, "commit", "-qm", "initial")
+        self.assertIn("has 1 commit that is not on GitHub", self.assert_refused(name="old"))
+
+    def test_the_promoted_file_route_and_the_status_route_are_gated_too(self):
+        path = self.promoted("a1"); self.work(path)
+        for body in ({"path": "active/a1/NOTES.md", "action": "shipped", "outcome": "maintained"},
+                     {"path": "active/a1/NOTES.md", "action": "shipped", "outcome": "archive"},
+                     {"name": "a1", "kind": "active", "action": "shipped", "outcome": "maintained"}):
+            before = self.snapshot()
+            self.assertIn("Push it first", self.post("/api/project/status", body, ok=False)["error"])
+            self.assertEqual(self.snapshot(), before)
+
+    def test_next_round_is_not_gated(self):
+        path = self.promoted(); self.work(path)
+        self.close(outcome="next", done="It ships again.", due_days=7)
+        self.assertTrue(os.path.isdir(path)); self.assertIn("## Rounds", open(os.path.join(path, "NOTES.md")).read())
+
+    def test_kill_is_not_gated(self):
+        path = self.promoted("k1"); self.work(path)
+        r = self.post("/api/project/status", {"name": "k1", "kind": "active", "action": "kill", "note": "no time"})
+        self.assertEqual(r["moved_to"], "archive/k1_abandoned")
+
+    def test_experiments_and_learning_close_out_without_github(self):
         for dest in ("experiments", "learning"):
-            path = self.promoted("e-" + dest, dest); self.set_promoted(path, 5, commit=True)
+            path = self.promoted("e-" + dest, dest); self.set_promoted(path, 5, commit=True); self.work(path)
             self.assertTrue(self.state("e-" + dest, dest)["not_on_github"])  # the chip stays red
-            self.ship("e-" + dest, dest)
+            self.assertEqual(self.close("e-" + dest, dest, "maintained")["moved_to"], f"maintained/e-{dest}")
 
-    def test_with_an_origin_ship_works(self):
-        path = self.promoted(); run(path, "remote", "add", "origin", "https://github.com/me/demo.git")
-        self.ship("demo")
-        self.assertIn("- status: shipped", open(os.path.join(path, "NOTES.md")).read())
-
-    def test_kill_and_extend_are_not_gated(self):
-        self.promoted("k1"); self.post("/api/project/status", {"name": "k1", "kind": "active", "action": "kill", "note": "no time"})
+    def test_the_gate_off_lets_everything_through(self):
+        path = self.promoted(); self.work(path)
+        with mock.patch.object(server, "SHIP_NEEDS_GITHUB", ()):
+            self.assertEqual(self.close(outcome="maintained")["moved_to"], "maintained/demo")
 
 
 class CreateRepo(GithubCase):
@@ -158,7 +216,7 @@ class CreateRepo(GithubCase):
         self.assertEqual(run(bare, "rev-parse", "main"), run(path, "rev-parse", "HEAD"))
         self.assertEqual(run(path, "rev-parse", "--abbrev-ref", "main@{upstream}"), "origin/main")
         s = self.state("demo"); self.assertEqual((s["repo"], s["pushed"], s["not_on_github"]), ("me/demo", True, False))
-        self.ship("demo")
+        self.assertEqual(self.post("/api/project/close", {"name": "demo", "kind": "active", "outcome": "maintained"})["moved_to"], "maintained/demo")
 
     def test_refuses_off_this_machine(self):
         self.promoted(); self.bare("demo")
