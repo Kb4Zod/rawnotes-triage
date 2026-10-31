@@ -101,6 +101,8 @@ Flow gaps (plan and tickets in `.scratch/flow-gaps/`; Hugh approved all 13 recom
     and ends with a letter or digit; a leading dash is dropped (`--x` → `x`). `/api/new` already refused one.
   - The dependency check no longer lists the app's own `git`/`gh` children (a push, `gh repo create`) as processes
     blocking a move; a `git` you run yourself in the folder still blocks.
+  - Undo of a Promote is refused once the new repo has a remote (after **Create private GitHub repo**): it would delete
+    the folder and orphan the GitHub repo. Delete the GitHub repo first (and the remote), or keep the project.
 - **Test fix.** `test_runtime.HttpLimits` reads the 413 right after the headers and tolerates the server closing
   before the oversized body is sent (it was flaky with BrokenPipe under load); it now also asserts no file changed
   and no undo step was added.

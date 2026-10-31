@@ -1308,13 +1308,18 @@ def _check_movedir(op, vfs=None):
         raise ValueError(f"Can't undo: {name} changed since it moved (files added, removed or edited). Nothing was changed; {back}")
 
 def _check_gitinit(path, sha):
-    """Raise ValueError unless `path`/.git is still exactly what promote made: HEAD at its one commit, every ref on
-    that commit, nothing modified or untracked (or, if no commit was made, still no commit at all)."""
+    """Raise ValueError unless `path`/.git is still exactly what promote made: no remote (a GitHub repo made since would
+    be orphaned), HEAD at its one commit, every ref on that commit, nothing modified or untracked (or, if no commit was
+    made, still no commit at all)."""
     gitdir = os.path.join(path, ".git")
     bad = ValueError(f"Can't undo: {os.path.basename(path)}/.git changed since (a new commit, or files added or edited). Fix it by hand.")
     if os.path.islink(gitdir) or not os.path.isdir(gitdir): raise bad
     if not shutil.which("git"): raise ValueError(f"Can't undo: git is not installed, so {os.path.basename(path)}/.git can't be checked. Fix it by hand.")
     try:
+        remotes = _git(path, ["remote"])
+        if remotes[0] or remotes[1].strip():
+            raise ValueError(f"Can't undo: {os.path.basename(path)} has a remote now ({', '.join(remotes[1].split()) or 'unreadable'}), "
+                             f"so its repo may be on GitHub. Delete the GitHub repo first (then remove the remote), or keep the project.")
         head = _git(path, ["rev-parse", "-q", "--verify", "HEAD"])
         refs = _git(path, ["for-each-ref", "--format=%(objectname)"])
         status = _git(path, ["status", "--porcelain", "--untracked-files=all"]) if sha else (0, "", "")

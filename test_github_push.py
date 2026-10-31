@@ -273,6 +273,16 @@ class CreateRepo(GithubCase):
         s = self.state("demo"); self.assertEqual((s["repo"], s["pushed"], s["not_on_github"]), ("me/demo", True, False))
         self.assertEqual(self.post("/api/project/close", {"name": "demo", "kind": "active", "outcome": "maintained"})["moved_to"], "maintained/demo")
 
+    def test_undo_of_the_promote_is_refused_once_the_repo_has_a_remote(self):
+        path = self.promoted(); self.bare("demo"); self.create("demo")
+        before = self.snapshot(); n = len(server._undo)
+        err = self.post("/api/undo", {}, ok=False)["error"]
+        self.assertIn("Delete the GitHub repo first", err); self.assertIn("origin", err)
+        self.assertEqual((self.snapshot(), len(server._undo)), (before, n))
+        self.assertTrue(os.path.isdir(os.path.join(path, ".git")))
+        run(path, "remote", "remove", "origin")  # GitHub repo deleted and the remote taken out by hand: undo works again
+        self.post("/api/undo", {}); self.assertFalse(os.path.exists(path))
+
     def test_refuses_off_this_machine(self):
         self.promoted(); self.bare("demo")
         p = mock.patch.object(server, "BIND_HOST", "0.0.0.0"); p.start(); self.addCleanup(p.stop)  # a phone on the LAN: its Host name is accepted, but it isn't this machine
