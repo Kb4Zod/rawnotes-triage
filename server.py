@@ -605,7 +605,8 @@ def project_detail(name, kind=None):
     def run(args, timeout=5):
         try:
             proc = subprocess.run(args, cwd=path, capture_output=True, text=True, timeout=timeout,
-                                  env={**(gh_env() if args[0] == "gh" else os.environ), "GIT_TERMINAL_PROMPT": "0", "GH_PROMPT_DISABLED": "1"})
+                                  env={**(gh_env() if args[0] == "gh" else {k: v for k, v in os.environ.items() if k not in GIT_ENV_DROP}),
+                                       "GIT_TERMINAL_PROMPT": "0", "GH_PROMPT_DISABLED": "1"})
             return proc.stdout.strip() if proc.returncode == 0 else None
         except (OSError, subprocess.TimeoutExpired): return None
     result["gh"] = github_state(path)
@@ -662,7 +663,8 @@ def gh_env(token=None):
     """The environment every gh process gets: never prompts, and signed in as the saved token if there is one
     (GH_TOKEN, never on the command line)."""
     token = token or saved_token()
-    return {**os.environ, "GH_PROMPT_DISABLED": "1", **({"GH_TOKEN": token} if token else {})}
+    env = {k: v for k, v in os.environ.items() if k not in GIT_ENV_DROP}  # gh runs git (repo create --source adds the remote)
+    return {**env, "GH_PROMPT_DISABLED": "1", **({"GH_TOKEN": token} if token else {})}
 
 def _gh(args, timeout=25, token=None):
     """Run the gh CLI and return stdout. Signed in as the token saved through the page if there is one (given to gh in

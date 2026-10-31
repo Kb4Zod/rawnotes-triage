@@ -111,6 +111,17 @@ class NotOnGithubFlag(GithubCase):
         self.assertEqual((s["repo"], s["after_skeleton"]), ("", 0))
         self.assertEqual(server.work_commits(path), 0)
 
+    def test_an_inherited_git_dir_does_not_reach_gh_or_the_project_panel(self):
+        """gh runs git itself (gh repo create --source adds the remote), and the panel's own git reads (branch, log): an
+        inherited GIT_DIR must reach neither."""
+        path = self.promoted(); other = os.path.join(self.tmp, "other"); os.makedirs(other)
+        run(other, "init", "-q", "-b", "elsewhere"); run(other, "commit", "-q", "--allow-empty", "-m", "not this project")
+        drop = {"GIT_DIR": os.path.join(other, ".git"), "GIT_WORK_TREE": other, "GIT_INDEX_FILE": os.path.join(other, "idx")}
+        with mock.patch.dict(os.environ, drop):
+            self.assertFalse(set(server.gh_env()) & set(drop))
+            d = self.get("/api/project?name=demo&kind=active")
+        self.assertEqual(d["branch"], "main"); self.assertEqual([c["title"] for c in d["commits"]], ["Start demo (promoted from RawNotes)"])
+
     def test_a_project_with_no_promoted_line_is_never_flagged_by_age(self):
         self.project("plain", notes="# plain\n\n- status: promoted\n")
         self.assertFalse(self.state("plain")["not_on_github"])

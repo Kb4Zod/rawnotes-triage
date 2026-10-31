@@ -115,6 +115,9 @@ Flow gaps (plan and tickets in `.scratch/flow-gaps/`; Hugh approved all 13 recom
   - Promote's "no commit" warning no longer shows the email address git would use or the project's absolute path
     (it went to `triage.log` and to whichever browser asked, a phone included): it says the address isn't a noreply
     one (or that none is set) and gives the commands to run in `<kind>/<name>`.
+  - An inherited `GIT_DIR` (or `GIT_WORK_TREE`, `GIT_INDEX_FILE`, …: a server started from a git hook or a `git -C`
+    alias) no longer reaches `gh` (whose `repo create --source` adds the remote with git), the project panel's git reads
+    (branch, history), or a server `rawtriage` starts when none is running.
 - **Test fix.** `test_runtime.HttpLimits` reads the 413 right after the headers and tolerates the server closing
   before the oversized body is sent (it was flaky with BrokenPipe under load); it now also asserts no file changed
   and no undo step was added.

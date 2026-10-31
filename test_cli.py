@@ -348,6 +348,17 @@ class NoServerRunning(unittest.TestCase):
         self.assertEqual(len(self.listing()), 2)  # done/ and the new note
         self.assertEqual(self.rt("where").returncode, 0)  # the server it started is still there
 
+    def test_the_spawned_server_does_not_inherit_a_git_dir(self):
+        """An agent's shell inside a git hook (or `git -C` alias) has GIT_DIR set: the server the CLI starts must not
+        inherit it, or every git and gh child it runs (gh repo create adds the remote with git) acts on that repo."""
+        other = os.path.join(self.tmp, "other"); os.makedirs(other); subprocess.run(["git", "init", "-q", other], check=True)
+        r = self.rt("new", "with-git-dir", env={"GIT_DIR": os.path.join(other, ".git"), "GIT_WORK_TREE": other, "GIT_INDEX_FILE": "/tmp/x"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/api/version", timeout=5) as resp: pid = json.loads(resp.read())["pid"]
+        with open(f"/proc/{pid}/environ", "rb") as fh: names = {e.split(b"=", 1)[0].decode() for e in fh.read().split(b"\0") if e}
+        self.assertEqual(names & {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"}, set())
+        self.assertIn("RAWTRIAGE_CONFIG_DIR", names)  # the rest of the environment is passed on
+
     def test_with_the_unit_installed_systemctl_start_is_used(self):
         start = f'{sys.executable} "{self.code}/server.py" --no-browser --port {self.port} >/dev/null 2>&1 </dev/null &'
         path = self.stub("systemctl", f'echo "$*" >> "$STUBLOG/systemctl"\ncase "$*" in *start*) setsid {start} ;; esac\nexit 0\n')
