@@ -24,7 +24,7 @@ from testkit import Fixture, isolate_git
 HERE = os.path.dirname(os.path.abspath(__file__))
 CLI = os.path.join(HERE, "bin", "rawtriage")
 HOOK = os.path.join(HERE, "testdata", "check-frontmatter.sh")
-CODE = ("server.py", "safefs.py", "notemeta.py", "index.html", "bin/rawtriage", "starter/_template.md")
+CODE = ("server.py", "safefs.py", "notemeta.py", "depcheck.py", "index.html", "bin/rawtriage", "starter/_template.md")
 
 
 def free_port():

@@ -12,7 +12,7 @@ import unittest
 from testkit import isolate_git
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-FILES = ("install-webapp.sh", "server.py", "safefs.py", "notemeta.py", "index.html", "bin/rawtriage-web", "bin/rawtriage", "skills/rawnotes/SKILL.md", "systemd/rawtriage-web.service", "static/icons/icon-256.png")
+FILES = ("install-webapp.sh", "server.py", "safefs.py", "notemeta.py", "depcheck.py", "index.html", "bin/rawtriage-web", "bin/rawtriage", "skills/rawnotes/SKILL.md", "systemd/rawtriage-web.service", "static/icons/icon-256.png")
 STUBS = {
     "omarchy-webapp-install": 'printf "%s\\n" "$@" >"$STUBLOG/webapp"\n',
     # is-active: up once restarted; show-environment: a user session exists

@@ -322,6 +322,21 @@ class Flows(BrowserCase):
         self.page.click("#closedAll"); self.page.wait("document.querySelector('#closedAll').textContent.includes('Last 7')")
         self.assertEqual(sorted(col()[1]), ["active/ancient", "active/fresh"])
 
+    def test_the_drawer_shows_what_points_at_the_folder(self):
+        import depcheck
+        home = os.path.join(self.tmp, "fakehome"); os.makedirs(os.path.join(home, ".local", "bin"))
+        with open(os.path.join(home, ".local", "bin", "demo-run"), "w") as fh: fh.write(f"#!/bin/sh\nexec {self.tmp}/active/demo/run\n")
+        with mock.patch.object(server, "DEPS", depcheck.Sources(home, proc=os.path.join(self.tmp, "noproc"), crontab=lambda: "")):
+            self.open("projects"); self.page.click("[data-pid='active/demo/NOTES.md']")
+            self.page.wait("document.querySelector('#pdeps #blockers')")
+            text = self.text("#pdeps")
+            self.assertIn("What points here", text); self.assertIn("1 thing would break", text)
+            self.assertIn("demo-run", text); self.assertIn("Update any T3 Code project whose folder is", text)
+            os.remove(os.path.join(home, ".local", "bin", "demo-run"))
+            self.page.click("[data-pid='active/nodod/NOTES.md']"); self.page.wait("document.querySelector('#pdeps #todos')")
+            self.assertIn("Nothing blocks a move to archive/nodod/", self.text("#pdeps"))
+        self.assertEqual(self.posts(), [])  # looking is read-only
+
     def test_an_open_ended_experiment_is_only_under_experiments(self):
         self.project("spike", kind="experiments", notes="# Spike\n\n- date: 2026-10-01\n- status: promoted\n- promoted: 2026-10-01\n\n## Plan\n\n- definition of done: We know.\n")
         self.open("projects"); self.page.wait("document.querySelector('[data-pid^=\"experiments/spike\"]')")

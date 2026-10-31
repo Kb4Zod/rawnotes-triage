@@ -261,6 +261,8 @@ button.tile{cursor:pointer;font:inherit;color:inherit}
 .tl li{display:grid;grid-template-columns:12px 1fr auto;gap:8px;padding:4px 0;align-items:baseline}
 .tl li:before{content:"";width:7px;height:7px;border-radius:50%;background:var(--green);margin-top:5px}
 .tl .muted{font-size:11.5px}
+.deps{list-style:none;margin:0;padding:0;font-size:13px}.deps li{padding:6px 0;border-top:1px solid var(--line)}.deps li:first-child{border-top:0}
+.deps .fix{display:block;margin-top:3px;word-break:break-all;color:var(--green-ink);white-space:pre-wrap}.deps .det{white-space:pre-wrap}
 .acts{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px}
 .clockbar{height:8px;border-radius:4px;background:var(--sunk);margin-top:8px;overflow:hidden}
 .clockbar i{display:block;height:100%}
@@ -417,7 +419,7 @@ function cancelScopes(){for(const k in SC)SC[k].c.abort()}
 const S={route:'inbox',notes:null,projects:null,activity:null,gh:null,stats:null,
   sel:null,mode:null,expanded:null,batch:new Set(),batchMode:'merge',
   f:{q:'',status:'all',type:null},af:{q:'',fate:'all'},asel:null,
-  psel:null,pdetail:null,showAllClosed:false,repo:null,undoCount:0,
+  psel:null,pdetail:null,deps:null,showAllClosed:false,repo:null,undoCount:0,
   dods:{},   // unsaved "done means" edits by project: {mode:'edit'|'confirm', text}
   forms:{},  // unsaved decision forms by note+mode
   armed:null};  // the stack whose batch action was chosen on purpose (Enter submits only then)
@@ -869,7 +871,7 @@ async function renderDrawer(){const d=$('#drawer');if(!d)return;const c=projectC
   const head=`<h1 class="sr rh1">Projects</h1><button class="back" onclick="backToList()">‹ Projects</button><div style="display:flex;gap:6px;flex-wrap:wrap">${expChip(c)}${f&&!f.done&&f.days_left!==null?st(f.days_left<0?'late':f.days_left<=2?'soon':'ok',f.days_left<0?`${-f.days_left} days late`:`${f.days_left} days left`):''}${decide(f)}${p?ghChip(p.gh):''}</div>
     <h2>${esc(c.title)}</h2><span class="copy mono" data-copy="${esc(p?p.abs_path:S.notes.notes_dir.replace(/RawNotes$/,'')+f.path)}" tabindex="0" role="button">${I.copy}<span>~/Projects/${esc(p?p.path:f.path)}</span></span>
     ${linked?'<div class="flag" style="margin:12px 0 0"><b>Symlink.</b> This folder points somewhere else, so Triage shows it but will not edit it.</div>':''}`;
-  d.innerHTML=head+`<div id="dodbox"></div>`+clock+`<div id="pmore"></div>`+acts+`<div id="pform"></div><div class="err" id="perr" role="alert" style="margin-top:8px"></div>`;
+  d.innerHTML=head+`<div id="dodbox"></div>`+clock+`<div id="pmore"></div><div id="pdeps"></div>`+acts+`<div id="pform"></div><div class="err" id="perr" role="alert" style="margin-top:8px"></div>`;
   const box=$('#dodbox'),more=$('#pmore');
   wireCopy(d);
   d.querySelectorAll('[data-pa]').forEach(b=>b.onclick=()=>projectAction(c,b.dataset.pa,b));
@@ -882,8 +884,21 @@ async function renderDrawer(){const d=$('#drawer');if(!d)return;const c=projectC
     const dr=S.dods[j.path];renderDod(j,dr&&dr.mode,dr&&dr.text);  // an unsaved edit comes back as it was left
     const prs=j.prs&&j.prs.length?`<h3 class="sec label">Pull requests</h3><ul class="tl">${j.prs.slice(0,5).map(x=>`<li><a href="${esc(ghUrl(x.url))}" target="_blank" rel="noopener noreferrer">#${x.number} ${esc(x.title)}</a><span class="muted">${esc(x.mergedAt?'merged':x.state.toLowerCase())}</span></li>`).join('')}</ul>`:'';
     more.innerHTML=(j.commits.length?`<h3 class="sec label">Recent activity${j.branch?' · '+esc(j.branch):''}</h3><ul class="tl">${j.commits.slice(0,5).map(x=>`<li><span>${esc(x.title)}</span><span class="muted">${esc(x.date.slice(5))}</span></li>`).join('')}</ul>`:'')
-      +prs+`<h3 class="sec label">From ${esc(j.summary_source||'the project')}</h3><div style="font-size:13px;color:var(--ink2);white-space:pre-wrap;max-height:9.5em;overflow:hidden">${esc(j.summary)}</div>`}
+      +prs+`<h3 class="sec label">From ${esc(j.summary_source||'the project')}</h3><div style="font-size:13px;color:var(--ink2);white-space:pre-wrap;max-height:9.5em;overflow:hidden">${esc(j.summary)}</div>`;
+    if(!linked&&!c.closed)loadDeps(c)}
   catch(e){if(aborted(e)||!sc.ok(d,box)||S.psel!==c.id)return;box.innerHTML=`<p class="err">${esc(e.message)}</p>`}}
+// "What points here": the read-only dependency check of a project folder. Blockers stop a move until fixed; to-dos are
+// what is left to do by hand after one (the app never writes outside the notes and projects folders).
+function depsHtml(d){const li=x=>`<li><b>${esc(x.where)}</b> <span class="muted det">${esc(x.detail)}</span><span class="mono fix">${esc(x.fix)}</span></li>`;
+  return `<h3 class="sec label">What points here</h3>`+(d.blockers.length
+    ?`<div class="flag" role="note"><b>${d.blockers.length} ${d.blockers.length>1?'things':'thing'} would break</b> if this folder moved. Fix ${d.blockers.length>1?'each':'it'} first:</div><ul class="deps" id="blockers">${d.blockers.map(li).join('')}</ul>`
+    :`<div class="muted" style="font-size:13px">Nothing blocks a move to <span class="mono">${esc(d.dest)}/</span>.</div>`)
+    +(d.todos.length?`<div class="label" style="margin-top:8px">After a move, by hand</div><ul class="deps" id="todos">${d.todos.map(li).join('')}</ul>`:'')}
+async function loadDeps(c,to){const box=$('#pdeps');if(!box||!c.p)return;const sc=scope('deps');
+  if(!box.innerHTML)box.innerHTML='<h3 class="sec label">What points here</h3><div class="muted" style="font-size:13px">Checking…</div>';
+  try{const d=await api('/api/project/deps?'+pq(c.p)+(to?'&to='+enc(to):''),undefined,sc.signal);if(!sc.ok(box)||S.psel!==c.id)return;
+    S.deps={...d,id:c.id};box.innerHTML=depsHtml(d);return d}
+  catch(e){if(aborted(e)||!sc.ok(box))return;box.innerHTML=`<h3 class="sec label">What points here</h3><p class="err">${esc(e.message)}</p>`}}
 function projectAction(c,a,btn){
   if(a==='shipped')return sendProject(c,a,'',btn);
   // pushing the date and killing both ask why first; the reason is written into the project file

@@ -395,6 +395,22 @@ is its `closed:` line, else `shipped:`, else the date in `**Killed
 YYYY-MM-DD:**` under `## Outcome`. All these writes can be undone. Git facts are cached
 for 20 seconds; **Refresh** re-reads them.
 
+**What points here** (the panel of an open project folder) is a read-only dependency check, the same one a move
+runs (see **Close out** below; `GET /api/project/deps?name=&kind=[&to=maintained|archive|abandoned]`). It looks for:
+
+| Looks at | Finds | Result |
+|---|---|---|
+| `~/.config/systemd/user/*.service`, `.timer`, `.path`, `.socket` (and `.d/*.conf` drop-ins) | the folder's path, also spelled `%h/…`, `~/…` or `$HOME/…` | **blocks** |
+| running processes (`/proc/<pid>/cwd`, `/proc/<pid>/cmdline`) | anything running from inside the folder | **blocks** |
+| `git worktree list` in the folder; a `gitdir:` `.git` file | linked worktrees, or the folder is one | **blocks** (a worktree whose folder is gone: a `git worktree prune` to-do) |
+| `~/.local/bin/*` | links into the folder; scripts under 64 KB naming it | **blocks** |
+| `crontab -l` | uncommented lines naming it | **blocks** |
+| `~/.claude/projects/<path with every non-alphanumeric as ->` (and its subfolders') | agent memory for the old path | to-do: the exact `mv` |
+| T3 Code projects | the app can't read them | to-do, always listed |
+
+Each hit comes with the command that fixes it. A path that only starts the same way (`rawnotes-triage-flow-gaps`
+next to `rawnotes-triage`) is not a hit. The app never moves memory folders or edits T3 itself.
+
 **Symlinked project folders** are listed read-only with a note. Every write
 must land on a real path inside `RawNotes/` or the projects folders with no
 symlink on the way, or it is refused. Undo, rollback and redo check the same
@@ -514,7 +530,9 @@ client) against a disposable server; it is skipped when no Chromium/Chrome is
 found (`CHROMIUM=/path` to pick one) and never touches GitHub or your notes.
 No test reads your git config or runs your git hooks (`testkit.isolate_git`), and none reads or writes your
 `~/.config/rawnotes-triage` (testkit points the config folder at a temp one for the whole run;
-`test_zz_isolation.py` runs last and fails if the real folder changed).
+`test_zz_isolation.py` runs last and fails if the real folder changed). The dependency check never looks at this
+machine in tests: testkit points it at an empty fake home and `/proc` with no crontab, and a folder move never runs the
+real `sync-apps`.
 `TRIAGE_INDEX=/path/to/old/index.html` runs the same checks against another
 build of the page.
 
@@ -523,6 +541,7 @@ build of the page.
 - `server.py`: HTTP API, decisions, undo engine, project scan, GitHub access, startup and `--restart`
 - `notemeta.py`: note header and section parsing
 - `safefs.py`: symlink-safe path checks, atomic writes, read/write lock, stat cache
+- `depcheck.py`: the read-only dependency check run before a project folder moves (scanners take their roots as arguments)
 - `index.html` + `static/fonts/`: the whole UI
 - `starter/_template.md`: the note template copied into a new notes folder on first run
 - `starter/skeletons/<dest>/`: the files Promote writes into a new project folder (see **Project skeleton**)

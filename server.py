@@ -32,7 +32,7 @@ from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
-import safefs
+import depcheck, safefs
 from notemeta import (field, set_field, drop_field, title_of, append_outcome, append_to_section, closed_date, question_of, question_summary, note_body,
                       eol_of, with_eol, to_lf, header_lines, title_index, HEAD_LINE)
 
@@ -399,6 +399,40 @@ def project_dir(name, kind=None, write=False):
         try: safefs.ensure_inside([PROJECTS], path)
         except ValueError: raise ValueError(f"“{name}” is a symlink: Triage only changes real folders inside Projects.")
     return path, kind
+
+# ---- close out: where a finished project folder goes, and what points at it first (depcheck, read-only) ----
+DEPS = None  # where the dependency check looks: a depcheck.Sources (tests give fake roots); None = this machine
+SYNC_APPS = "sync-apps"  # run after a folder moves (or moves back) so Obsidian's Apps/ links follow it; best effort
+CLOSE_DEST = {"maintained": ("maintained", ""), "archive": ("archive", ""), "abandoned": ("archive", "_abandoned")}
+
+def dep_sources(): return DEPS or depcheck.Sources.default()
+
+def unique_dir(path):
+    """`path`, or `path`-2, -3 … if the name is taken (no extension splitting: folder names may contain dots)."""
+    n = 2; out = path
+    while os.path.lexists(out): out = f"{path}-{n}"; n += 1
+    return out
+
+def close_suggestion(path):
+    """Maintained for a folder with a GitHub origin (a live tool that still gets fixes), else Archive (a one-off,
+    often just a NOTES.md)."""
+    return "maintained" if github_state(path)["repo"] else "archive"
+
+def close_target(path, outcome):
+    base, suffix = CLOSE_DEST[outcome]
+    return unique_dir(os.path.join(PROJECTS, base, os.path.basename(path) + suffix))
+
+def project_deps(name, kind=None, to=None):
+    """GET /api/project/deps: what points at a project folder (blockers and to-dos, each with its fix), for a move to
+    `to` (maintained, archive or abandoned; default the suggestion). Reads only."""
+    path, kind = project_dir(name, kind)
+    suggest = close_suggestion(path); to = to or suggest
+    if to not in CLOSE_DEST: raise ValueError("to must be maintained, archive or abandoned")
+    with _lock.read():
+        dest = close_target(path, to)
+        found = depcheck.check(path, dep_sources(), dest)
+    return {"name": name, "kind": kind, "path": f"{kind}/{name}", "suggest": suggest, "to": to,
+            "dest": os.path.relpath(dest, PROJECTS), **found}
 
 GITHUB_REMOTE = re.compile(r"(?:https://(?:www\.)?github\.com/|git@(?:ssh\.)?github\.com:|ssh://git@(?:ssh\.)?github\.com(?::\d+)?/)([\w.-]+/[\w.-]+?)(?:\.git)?/?")
 
@@ -1832,6 +1866,7 @@ class H(BaseHTTPRequestHandler):
             if u.path == "/api/version": return self._send(200, {"version": VERSION, "started": STARTED, "pid": os.getpid(), "app": "rawnotes-triage"})
             if u.path == "/api/projects": return self._send(200, {"projects": projects_listing(q.get("refresh") == ["1"])})
             if u.path == "/api/project": return self._send(200, project_detail(q.get("name", [""])[0], q.get("kind", [""])[0]))
+            if u.path == "/api/project/deps": return self._send(200, project_deps(q.get("name", [""])[0], q.get("kind", [""])[0], q.get("to", [""])[0]))
             if u.path == "/api/github": return self._send(200, github_status(q.get("refresh") == ["1"]))
             if u.path == "/api/activity": return self._send(200, github_activity(q.get("refresh") == ["1"]))
             if u.path == "/api/repo": return self._send(200, repo_overview(q.get("name", [""])[0]))
