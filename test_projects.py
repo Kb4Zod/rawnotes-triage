@@ -368,6 +368,13 @@ class PromoteSkeleton(PromoteBase):
             w = self.promote()["warning"]
         self.assertIn("first commit failed", w); self.assertIn("key in ~/.ssh/id", w); self.assertNotIn(home, w)
 
+    def test_the_git_ceiling_is_the_real_parent_and_never_a_split_path(self):
+        real = os.path.join(self.tmp, "real"); os.makedirs(os.path.join(real, "proj"))
+        link = os.path.join(self.tmp, "link"); os.symlink(real, link)
+        self.assertEqual(server.git_env(os.path.join(link, "proj"))["GIT_CEILING_DIRECTORIES"], os.path.realpath(real))
+        odd = os.path.join(self.tmp, "a:b"); os.makedirs(os.path.join(odd, "proj"))
+        self.assertNotIn("GIT_CEILING_DIRECTORIES", server.git_env(os.path.join(odd, "proj")))  # ':' splits the list
+
     def test_a_failed_git_add_is_a_warning_not_a_failure(self):
         self.fail_git("add")
         r = self.promote(); self.assertIn("first commit failed", r["warning"]); self.assertIn("simulated add failure", r["warning"])

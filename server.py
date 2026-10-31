@@ -499,11 +499,11 @@ def github_repo_of(url):
 
 def git_env(path):
     """The environment for git run in a project folder `path`: never prompts; a GIT_DIR or similar inherited from the
-    environment is dropped; and GIT_CEILING_DIRECTORIES is the folder's parent, so git only ever reads `path`'s own
+    environment is dropped; and GIT_CEILING_DIRECTORIES is the folder's parent (its real path; none if it has a ':'),
+    so git only ever reads `path`'s own
     .git: one it can't read (a half-made one) is "not a repo", never the repo of a folder above (projects kept inside
     a dotfiles or ~/Projects repo)."""
-    env = depcheck.without_git_env()
-    return {**env, "GIT_TERMINAL_PROMPT": "0", "GIT_CEILING_DIRECTORIES": os.path.dirname(os.path.abspath(path))}
+    return depcheck.git_env(path)
 
 def git_out(path, args, timeout=5):
     """stdout of a read-only `git args` in `path` (None if it failed). Like _git: never prompts and reads only the repo

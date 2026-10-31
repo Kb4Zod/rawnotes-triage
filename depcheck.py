@@ -29,6 +29,17 @@ def without_git_env(environ=None):
     return {k: v for k, v in env.items() if k not in GIT_ENV_DROP and not k.startswith(GIT_ENV_DROP_PREFIXES)}
 
 
+def git_env(path):
+    """The environment for git run in a project folder `path` (server.git_env): never prompts, without_git_env, and
+    GIT_CEILING_DIRECTORIES is the real path of the folder's parent, so git reads only `path`'s own .git, never the repo
+    of a folder above, also when the projects root is reached through a symlink. A parent whose path has a ':' (the
+    variable's separator) can't be given: then there is no ceiling."""
+    env = {**without_git_env(), "GIT_TERMINAL_PROMPT": "0"}
+    parent = os.path.realpath(os.path.dirname(os.path.abspath(path)))
+    if ":" not in parent: env["GIT_CEILING_DIRECTORIES"] = parent
+    return env
+
+
 def _crontab_l():
     """`crontab -l` of this user ("" when there is none, or no crontab command)."""
     try: p = subprocess.run(["crontab", "-l"], capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL)
@@ -182,8 +193,7 @@ def scan_processes(path, proc, home, own_pid=None):
 
 
 def _git(path, args):
-    env = without_git_env()
-    env.update(GIT_TERMINAL_PROMPT="0", GIT_CEILING_DIRECTORIES=os.path.dirname(os.path.abspath(path)))  # only path's own .git, never a repo above
+    env = git_env(path)  # only path's own .git, never a repo above
     try: p = subprocess.run(["git", *args], cwd=path, capture_output=True, text=True, timeout=10, env=env)
     except (OSError, subprocess.TimeoutExpired): return None
     return p.stdout if p.returncode == 0 else None
