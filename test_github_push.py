@@ -201,6 +201,27 @@ class CloseOutGate(GithubCase):
         run(path, "push", "-q", "origin", "side")
         self.assertEqual(self.close(outcome="maintained")["moved_to"], "maintained/demo")
 
+    def test_the_refusal_names_each_unpushed_branch_with_both_ways_out(self):
+        path = self.promoted(); self.work(path); self.origin(path)
+        run(path, "switch", "-q", "-c", "feat/merged-on-github"); self.work(path, 2); run(path, "switch", "-q", "main")
+        err = self.assert_refused(outcome="maintained")
+        self.assertIn("2 commits on demo's local branches are not on GitHub", err)
+        self.assertIn("feat/merged-on-github (2)", err)
+        self.assertIn("`git push origin feat/merged-on-github`", err)
+        self.assertIn("`git branch -D feat/merged-on-github`", err)
+        self.assertNotIn("git branch -D main", err)
+
+    def test_a_git_check_that_fails_refuses_rather_than_lets_it_through(self):
+        """The unpushed count comes from git rev-list: if that fails (or times out) the gate fails closed."""
+        path = self.promoted(); self.work(path); self.origin(path)
+        real = server.git_out
+        def broken(p, args, timeout=5):
+            if args[0] == "rev-list" and "--not" in args: return None
+            return real(p, args, timeout)
+        with mock.patch.object(server, "git_out", broken):
+            for outcome in ("maintained", "archive"):
+                err = self.assert_refused(outcome=outcome); self.assertIn("couldn't check", err)
+
     def test_archive_of_a_repo_without_a_skeleton_commit_counts_every_commit(self):
         path = self.project("old", notes="# old\n\n- status: promoted\n")
         run(path, "init", "-q", "-b", "main"); run(path, "add", "-A"); run(path, "commit", "-qm", "initial")

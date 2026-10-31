@@ -1843,10 +1843,36 @@ def require_github_to_close(path, kind, outcome):
     if not st["pushed"]:
         raise ValueError(f"Push it first: {name} has a GitHub origin ({st['repo']}) but nothing was ever pushed to it. "
                          f"Run `git push -u origin main` in the folder, then close it out again.")
-    if st["unpushed"]:
-        u = st["unpushed"]
+    u, branches = unpushed_work(path)
+    if u is None:
+        raise ValueError(f"Push it first: couldn't check with git whether every local branch of {name} is on GitHub ({st['repo']}), so "
+                         f"nothing was moved. Look with `git log --branches --not --remotes=origin` in the folder, then close it out again.")
+    if u:
+        current = git_out(path, ["symbolic-ref", "-q", "--short", "HEAD"]) or ""
+        others = [b for b, _ in branches if b != current and b != "HEAD"]
         raise ValueError(f"Push it first: {u} commit{'s' if u > 1 else ''} on {name}'s local branches {'are' if u > 1 else 'is'} not on "
-                         f"GitHub ({st['repo']}). Push {'them' if u > 1 else 'it'} (`git push origin <branch>`), then close it out again.")
+                         f"GitHub ({st['repo']}): " + ", ".join(f"{b} ({n})" for b, n in branches) + ". Push each branch ("
+                         + ", ".join(f"`git push origin {b}`" for b, _ in branches if b != "HEAD")
+                         + ("; a detached HEAD needs a branch first: `git switch -c <name>`" if any(b == "HEAD" for b, _ in branches) else "")
+                         + ")" + (", or, for a branch already merged on GitHub (a squash or rebase merge leaves its own commits "
+                                  "behind), delete it instead (" + ", ".join(f"`git branch -D {b}`" for b in others) + ")" if others else "")
+                         + ", then close it out again.")
+
+def unpushed_work(path):
+    """(commits on local branches, or a detached HEAD, that no origin ref contains; [(branch, count), ...]) for the close
+    out gate. (None, None) when git can't say (fails, times out): the gate then refuses, it never guesses 0."""
+    heads = git_out(path, ["for-each-ref", "--format=%(refname:short)", "refs/heads"])
+    total = git_out(path, ["rev-list", "--count", *local_revs(path), "--not", "--remotes=origin"])
+    if heads is None or total is None or not total.isdigit(): return None, None
+    revs = [(b, f"refs/heads/{b}") for b in heads.splitlines() if b]
+    if git_out(path, ["symbolic-ref", "-q", "HEAD"]) is None and git_out(path, ["rev-parse", "--verify", "-q", "HEAD"]) is not None:
+        revs.append(("HEAD", "HEAD"))  # detached
+    out = []
+    for b, rev in revs:
+        n = git_out(path, ["rev-list", "--count", rev, "--not", "--remotes=origin"])
+        if n is None or not n.isdigit(): return None, None
+        if int(n): out.append((b, int(n)))
+    return int(total), out
 
 def _status_edit(text, req, name):
     """The new text, label and message for a project status action (shipped / extend / kill)."""

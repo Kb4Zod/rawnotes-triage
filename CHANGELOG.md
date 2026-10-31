@@ -124,6 +124,10 @@ Flow gaps (plan and tickets in `.scratch/flow-gaps/`; Hugh approved all 13 recom
   - **Create private GitHub repo** holds the lock (read side) across its checks and `gh repo create`: an undo of the
     promote sent meanwhile used to delete the folder under `gh` (orphaning the new GitHub repo); now it waits, finds the
     remote and refuses. A close out waits the same way. The push runs after the lock is released.
+  - The close-out gate's "not on GitHub yet" check fails closed: if git can't count the unpushed commits (an error or a
+    timeout) the move is refused, where it used to count 0 and let it through. The refusal names each branch with its
+    count and gives both ways out: `git push origin <branch>`, or `git branch -D <branch>` for a side branch already
+    merged on GitHub (a squash or rebase merge leaves its own commits behind).
 - **Test fix.** `test_runtime.HttpLimits` reads the 413 right after the headers and tolerates the server closing
   before the oversized body is sent (it was flaky with BrokenPipe under load); it now also asserts no file changed
   and no undo step was added.
