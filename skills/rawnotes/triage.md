@@ -39,3 +39,6 @@ Your job is to make decisions happen, not to do more research. Every decision go
    `rawtriage project kill <name> --reason "<why>"`. Pushing the ship-by needs a reason too (at least 10 characters)
    and is allowed at most twice: `rawtriage project extend <name> --reason "<why more time>" [--days N]`. After two
    extensions the server refuses: the only choices left are ship or kill, so ask the user which.
+   Shipping an `active` or `templates` project is refused until it is on GitHub ("Push it first"). Tell the user, and
+   offer `rawtriage project github <name>` (creates a **private** repo and pushes `main`; only on the server's own
+   machine; it never makes anything public, that is the user's `gopublic`). Run it only when they say yes.

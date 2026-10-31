@@ -19,6 +19,7 @@ from testkit import isolate_git
 class ApiTestCase(unittest.TestCase):
     def setUp(self):
         isolate_git(self)  # promote runs git: never with the real global config or hooks
+        p = unittest.mock.patch.object(server, "SHIP_NEEDS_GITHUB", ()); p.start(); self.addCleanup(p.stop)  # the GitHub gate on Ship has its own tests (test_github_push.py)
         self.tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self.notes = os.path.join(self.tmp, "RawNotes")
@@ -468,11 +469,11 @@ class ApiTestCase(unittest.TestCase):
         self.git(ahead, "commit", "-q", "--allow-empty", "-m", "one"); self.git(ahead, "update-ref", "refs/remotes/origin/main", "HEAD")
         self.git(ahead, "commit", "-q", "--allow-empty", "-m", "two"); self.git(ahead, "commit", "-q", "--allow-empty", "-m", "three")
         states = {p["name"]: p["gh"] for p in self.get("/api/projects")["projects"]}
-        self.assertEqual(states["folder"], {"git": False, "repo": "", "pushed": False, "unpushed": 0})
-        self.assertEqual(states["local"], {"git": True, "repo": "", "pushed": False, "unpushed": 0})  # git, never on GitHub
-        self.assertEqual(states["fresh"], {"git": True, "repo": "me/fresh", "pushed": False, "unpushed": 0})  # remote set, nothing pushed
-        self.assertEqual(states["pushed"], {"git": True, "repo": "me/pushed", "pushed": True, "unpushed": 0})
-        self.assertEqual(states["ahead"], {"git": True, "repo": "me/ahead", "pushed": True, "unpushed": 2})
+        self.assertEqual(states["folder"], {"git": False, "repo": "", "pushed": False, "unpushed": 0, "after_skeleton": 0, "not_on_github": False})
+        self.assertEqual(states["local"], {"git": True, "repo": "", "pushed": False, "unpushed": 0, "after_skeleton": 0, "not_on_github": False})  # git, never on GitHub
+        self.assertEqual(states["fresh"], {"git": True, "repo": "me/fresh", "pushed": False, "unpushed": 0, "after_skeleton": 0, "not_on_github": False})  # remote set, nothing pushed
+        self.assertEqual(states["pushed"], {"git": True, "repo": "me/pushed", "pushed": True, "unpushed": 0, "after_skeleton": 0, "not_on_github": False})
+        self.assertEqual(states["ahead"], {"git": True, "repo": "me/ahead", "pushed": True, "unpushed": 2, "after_skeleton": 0, "not_on_github": False})
 
     def test_project_with_ssh_443_remote_gets_repo_link_and_state(self):
         path = self.make_project("viaport"); self.git(path, "init", "-q")

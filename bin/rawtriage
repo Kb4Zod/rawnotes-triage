@@ -20,6 +20,7 @@
   rawtriage project ship <name> [--kind KIND]
   rawtriage project extend <name> --reason TEXT [--days N] [--kind KIND]   at most twice; the reason is required
   rawtriage project kill <name> --reason TEXT [--kind KIND]
+  rawtriage project github <name> [--kind KIND]   first push: private GitHub repo + push main (this machine only)
 
 Every command goes through the running server, so a decision made here is logged, undoable in the page and counted
 in Pulse exactly like one made in the page. If the server is down it is started (the systemd unit if installed, else
@@ -160,7 +161,7 @@ def make_parser():
     add("merge", "merge notes into one", (("files",), {"nargs": "+"}), (("--title",), {"required": True}),
         (("--then",), {"choices": ["inbox", "promote", "reference"], "default": "inbox"}), (("--question",), {"default": ""}), *promo)
     add("undo", "undo the newest change")
-    pr = add("project", "ship, push or kill a project", (("action",), {"choices": ["ship", "extend", "kill"]}), (("name",), {}),
+    pr = add("project", "ship, push, kill or put a project on GitHub", (("action",), {"choices": ["ship", "extend", "kill", "github"]}), (("name",), {}),
              (("--kind",), {"choices": ["active", "experiments", "learning", "templates"]}),
              (("--reason", "--note"), {"dest": "reason", "default": "", "help": "why: required to extend or kill"}), (("--days",), {"type": int}))
     return p
@@ -200,6 +201,7 @@ def check_project(args):
 
 
 def project_body(args):
+    if args.action == "github": return {"name": args.name, "kind": args.kind or "active"}
     action = {"ship": "shipped"}.get(args.action, args.action)
     body = {"action": action, "note": args.reason}
     if args.days is not None: body["days"] = args.days
@@ -239,7 +241,7 @@ def run(args):
     if c == "undo":
         r = api("/api/undo", {}); return out(args, r, r["msg"])
     if c == "project":
-        r = api("/api/project/status", project_body(args)); return out(args, r, r["msg"])
+        r = api("/api/project/github" if args.action == "github" else "/api/project/status", project_body(args)); return out(args, r, r["msg"])
     if c == "merge":
         body = {"files": [note_name(f) for f in args.files], "title": args.title, "then": args.then, "question": args.question}
         if args.then == "promote": body.update(promote_body(args))

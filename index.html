@@ -815,7 +815,7 @@ function ring(f){if(!f||f.days_left===null)return'';const l=f.days_left;
   let total=7;if(f.promoted&&f.due){const t=(new Date(f.due)-new Date(f.promoted))/864e5;if(t>0)total=t}
   const p=l<0?1:Math.min(1,Math.max(.04,1-l/total)),c=l<0?'var(--rust)':l<=2?'var(--gold)':'var(--green)';
   return `<div class="ring" style="background:conic-gradient(${c} ${p*360}deg,var(--sunk) 0)" title="${l<0?-l+' days late':l+' days left'}"><span><span>${Math.abs(l)}d<small>${l<0?'LATE':'LEFT'}</small></span></span></div>`}
-function ghChip(g){if(!g)return'';return g.pushed?(g.unpushed?st('soon','GH ↑'+g.unpushed):st('ok','On GitHub')):g.repo?st('late','Not pushed'):g.git?st('plain','Local git'):st('plain','No git')}
+function ghChip(g){if(!g)return'';if(g.not_on_github)return st('late','Not on GitHub');return g.pushed?(g.unpushed?st('soon','GH ↑'+g.unpushed):st('ok','On GitHub')):g.repo?st('late','Not pushed'):g.git?st('plain','Local git'):st('plain','No git')}
 function renderProjects(){
   if(!S.projects){const sc=scope('projects'),fresh=S.freshProjects;S.freshProjects=false;
     $('#main').innerHTML='<div class="scroll"><div class="pane-h" style="padding-left:0"><h1>Projects</h1><div class="sub">Loading projects…</div></div></div>';
@@ -861,7 +861,8 @@ async function renderDrawer(){const d=$('#drawer');if(!d)return;const c=projectC
      ${!f.done&&f.days_left!==null?`<div class="clockbar"><i style="width:${f.days_left<0?100:Math.max(4,100-f.days_left/Math.max(7,f.days_left)*100)}%;background:${f.days_left<0?'var(--rust)':f.days_left<=2?'var(--gold)':'var(--green)'}"></i></div>`:''}</div>`
     :c.exp?`<h3 class="sec label">Clock</h3><div class="muted" style="font-size:13px">Open-ended experiment in <span class="mono">experiments/</span>, no ship-by date.</div>`
     :`<h3 class="sec label">Clock</h3><div class="muted" style="font-size:13px">Not on the clock. Add a <span class="mono">- due: YYYY-MM-DD</span> line to the header at the top of its NOTES.md to give it a ship-by date.</div>`;
-  const open=`<button class="btn" id="openf">${I.folder}Open folder</button>`;
+  const mk=p&&!linked&&p.gh&&p.gh.git&&!p.gh.repo&&isLocalPage()&&!narrow()?`<button class="btn" id="ghmake">${I.gh}Create private GitHub repo</button>`:'';  // this machine only: the server refuses anywhere else
+  const open=`<button class="btn" id="openf">${I.folder}Open folder</button>`+mk;
   const acts=linked?`<div class="acts">${p.gh&&p.gh.repo?`<button class="btn" id="browse">${I.gh}Browse repo</button>`:''}${open}</div>`
     :!c.closed?`<div class="acts"><button class="btn primary" data-pa="shipped">${I.check}Mark shipped</button>${!f||f.open_ended?'':f.extensions>=f.max_extensions?`<button class="btn" disabled>${I.clock}No more extensions</button>`:`<button class="btn" data-pa="extend">${I.clock}+7 days</button>`}
      ${p&&p.gh&&p.gh.repo?`<button class="btn" id="browse">${I.gh}Browse repo</button>`:open}<button class="btn" data-pa="kill" style="color:var(--rust-ink)">${I.x}Kill</button></div>`
@@ -874,6 +875,9 @@ async function renderDrawer(){const d=$('#drawer');if(!d)return;const c=projectC
   wireCopy(d);
   d.querySelectorAll('[data-pa]').forEach(b=>b.onclick=()=>projectAction(c,b.dataset.pa,b));
   $('#browse')&&($('#browse').onclick=()=>openRepo(p.gh.repo,'','projects'));
+  $('#ghmake')&&($('#ghmake').onclick=async ev=>{const b=ev.currentTarget,pe=$('#perr');pe&&(pe.textContent='');b.disabled=true;b.textContent='Creating…';
+    try{const r=await api('/api/project/github',{name:p.name,kind:p.kind});await changed();render();toast(r.msg)}
+    catch(e){b.disabled=false;b.innerHTML=I.gh+'Create private GitHub repo';pe&&(pe.textContent=e.message)}});
   $('#openf')&&($('#openf').onclick=()=>api('/api/open',p?{name:p.name,kind:p.kind}:{path:f.path}).catch(e=>toast(e.message,{bad:true})));
   if(narrow()&&$('#openf'))$('#openf').style.display='none';
   if(!p){box.innerHTML='';return}

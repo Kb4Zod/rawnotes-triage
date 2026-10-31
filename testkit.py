@@ -67,6 +67,7 @@ class Fixture(unittest.TestCase):
         server.CONFIG_DIR = os.path.join(self.tmp, "config")  # never read or write the real config.json or saved GitHub token
         p = mock.patch.dict(os.environ, {"RAWTRIAGE_CONFIG_DIR": server.CONFIG_DIR}); p.start(); self.addCleanup(p.stop)  # nor a server a test spawns
         server.forget_github()
+        p = mock.patch.object(server, "SHIP_NEEDS_GITHUB", ()); p.start(); self.addCleanup(p.stop)  # the GitHub gate on Ship has its own tests (test_github_push.py)
         if self.relax_limits:  # fixtures use fixed 2026-10 dates: keep the Inbox limits from expiring them as the real date moves on
             p = unittest.mock.patch.dict(server.LIMIT_DEFAULTS, {"inbox_limit_days": 36500, "max_keeps": 1000}); p.start(); self.addCleanup(p.stop)
         server.NOTES, server.PROJECTS = self.notes, self.tmp

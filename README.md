@@ -170,6 +170,7 @@ rawtriage undo                     # the newest change, whoever made it (the pag
 rawtriage project ship <name> [--kind active|experiments|learning|templates]
 rawtriage project extend <name> --reason "why more time" [--days N] [--kind ...]   # at most twice
 rawtriage project kill <name> --reason "why" [--kind ...]
+rawtriage project github <name> [--kind ...]       first push: private GitHub repo, then push main
 ```
 
 - `<file>` is a name in the Inbox, an absolute path, or any part of a name that matches one note (`rawtriage kill dns-slow --reason ...`).
@@ -368,7 +369,25 @@ sideways. Each dated card shows a countdown ring (red = late, amber = 2 days
 or less). Folder cards show Git state: **On GitHub** (an `origin` tracking
 ref exists), **GH ↑N** (commits on `HEAD` not on any `origin` ref), **Not
 pushed**, **Local git** or **No git**. These are read from the local clone,
-never from GitHub. Header tiles count overdue, due this week, active folders
+never from GitHub. A project with no GitHub origin shows a red **Not on
+GitHub** instead, once it has a commit after Promote's own first commit or
+was promoted 2 or more days ago (a project made before the skeleton existed is
+judged by the `promoted:` date alone).
+
+**Shipped means it's on GitHub.** Mark shipped is refused (400, "Push it
+first: shipped means it's on GitHub.", nothing changes) for an `active` or
+`templates` project whose repo has no GitHub origin. Experiments and learning
+may ship without one (the chip stays red). The panel of a project that has a
+local repo and no origin has a **Create private GitHub repo** button (also
+`rawtriage project github <name>`; `POST /api/project/github {name, kind}`). It
+only works from the machine running the server (the button is hidden on a
+phone or any non-`localhost` page) and refuses if an `origin` exists, the tree
+isn't clean, the branch isn't `main`, or `gh` isn't signed in. It runs exactly
+`gh repo create <your login>/<folder> --private --source <folder> --remote
+origin`, then `git push -u origin main` with `ALLOW_PUSH_MAIN=1` in that one
+process's environment (never `--no-verify`). The repo is always private; going
+public is `gopublic`'s job. If the push fails after the repo was created, the
+error says so and what to run by hand. Header tiles count overdue, due this week, active folders
 without "done means", and active folders on GitHub.
 
 Select a card to open its panel in a column beside it (select it again, or
