@@ -437,17 +437,33 @@ def close_target(path, outcome):
     base, suffix = CLOSE_DEST[outcome]
     return unique_dir(os.path.join(PROJECTS, base, os.path.basename(path) + suffix))
 
-def project_deps(name, kind=None, to=None):
+def project_deps(name, kind=None, to=None, local=True):
     """GET /api/project/deps: what points at a project folder (blockers and to-dos, each with its fix), for a move to
-    `to` (maintained, archive or abandoned; default the suggestion). Reads only."""
+    `to` (maintained, archive or abandoned; default the suggestion). Reads only. local=False (a browser that is not
+    on this machine, e.g. a phone on a --host 0.0.0.0 bind, or a rebound DNS name): the same hits, redacted."""
     path, kind = project_dir(name, kind)
     suggest = close_suggestion(path); to = to or suggest
     if to not in CLOSE_DEST: raise ValueError("to must be maintained, archive or abandoned")
     with _lock.read():
         dest = close_target(path, to)
-        found = depcheck.check(path, dep_sources(), dest)
+        sources = dep_sources(); found = depcheck.check(path, sources, dest)
+    if not local: found = redact_deps(found, sources.home)
     return {"name": name, "kind": kind, "path": f"{kind}/{name}", "suggest": suggest, "to": to,
             "dest": os.path.relpath(dest, PROJECTS), **found}
+
+PRIVATE_HITS = ("process", "crontab")  # their detail is a command line or a crontab line: never sent off this machine
+
+def redact_deps(found, home):
+    """The dependency check as a browser off this machine sees it: every hit keeps its kind and fix, but a running
+    process's command line and a crontab line (`detail`) are dropped, and the home folder is spelled ~ everywhere."""
+    homes = sorted({h for h in (home, os.path.realpath(home)) if h and h != os.sep}, key=len, reverse=True)
+    def scrub(text):
+        for h in homes: text = re.sub(re.escape(h.rstrip(os.sep)) + r"(?=/|$|[^\w.-])", "~", text)
+        return text
+    def one(hit):
+        return {**hit, "where": scrub(hit["where"]), "fix": scrub(hit["fix"]),
+                "detail": "" if hit["kind"] in PRIVATE_HITS else scrub(hit["detail"])}
+    return {"blockers": [one(h) for h in found["blockers"]], "todos": [one(h) for h in found["todos"]], "redacted": True}
 
 GITHUB_REMOTE = re.compile(r"(?:https://(?:www\.)?github\.com/|git@(?:ssh\.)?github\.com:|ssh://git@(?:ssh\.)?github\.com(?::\d+)?/)([\w.-]+/[\w.-]+?)(?:\.git)?/?")
 
@@ -1786,13 +1802,13 @@ def _status_edit(text, req, name):
         return text, f"kill {name}", f"Killed {name}"
     raise ValueError("unknown project action")
 
-def project_status(req):
+def project_status(req, local=True):
     """On a promoted project file (a due: line, or an open-ended experiment): mark it shipped, push the ship-by
     date (not on open-ended experiments), or kill it.
     A project folder with no promoted file ({name, kind} instead of path) can be shipped or killed through its NOTES.md.
     Shipping or killing a project folder on the board is a close out (close_project): it needs an outcome, and moves."""
     folder = _folder_of(req) if req.get("action") in ("shipped", "kill") else None
-    if folder: return close_project(req, folder)
+    if folder: return close_project(req, folder, local)
     if req.get("outcome"): raise ValueError("Only a project folder can be closed out; this project is a single file.")
     if not req.get("path"): return folder_project_status(req)
     rel = req.get("path", "")
@@ -1838,13 +1854,14 @@ def _folder_of(req):
     except ValueError: return None
     return path, kind, os.path.join(path, parts[2])
 
-def close_project(req, folder=None):
+def close_project(req, folder=None, local=True):
     """POST /api/project/close (and ship/kill of a project folder through /api/project/status). One undo step.
     outcome next: another round in place (new done means and ship-by, the finished round under ## Rounds).
     maintained / archive: shipped, then the folder moves to maintained/<slug> or archive/<slug>.
     action kill (reason required): dead, then the folder moves to archive/<slug>_abandoned.
     A move first runs the dependency check inside the change: any blocker refuses it (400, nothing changed); to-dos
-    are written under ## Moved in its notes and returned. After a move, sync-apps runs (best effort)."""
+    are written under ## Moved in its notes and returned. After a move, sync-apps runs (best effort).
+    local=False (a browser not on this machine): a move is refused before anything is read; next round still works."""
     path, kind, file = folder or _folder_of(req) or (None, None, None)
     if not path: raise ValueError("unknown project")
     path, kind = project_dir(os.path.basename(path), kind, write=True)  # a symlinked folder is refused here
@@ -1854,6 +1871,9 @@ def close_project(req, folder=None):
     if outcome not in OUTCOMES + ("abandoned",):
         raise ValueError(f"What happens to {name} now? Choose next (another round, stays in {kind}/), maintained or archive "
                          f"(suggested: {close_suggestion(path)}).")
+    if outcome != "next" and not local:
+        raise ValueError(f"Moving {name} out of {kind}/ only works from the machine running the server (a move can stop "
+                         f"services and leave things behind; check What points here there).")
     done = due = None
     if outcome == "next":
         done = " ".join(_text(req, "done").split())
@@ -2146,7 +2166,7 @@ class H(BaseHTTPRequestHandler):
             if u.path == "/api/version": return self._send(200, {"version": VERSION, "started": STARTED, "pid": os.getpid(), "app": "rawnotes-triage"})
             if u.path == "/api/projects": return self._send(200, {"projects": projects_listing(q.get("refresh") == ["1"])})
             if u.path == "/api/project": return self._send(200, project_detail(q.get("name", [""])[0], q.get("kind", [""])[0]))
-            if u.path == "/api/project/deps": return self._send(200, project_deps(q.get("name", [""])[0], q.get("kind", [""])[0], q.get("to", [""])[0]))
+            if u.path == "/api/project/deps": return self._send(200, project_deps(q.get("name", [""])[0], q.get("kind", [""])[0], q.get("to", [""])[0], self._this_machine()))
             if u.path == "/api/github": return self._send(200, github_status(q.get("refresh") == ["1"]))
             if u.path == "/api/activity": return self._send(200, github_activity(q.get("refresh") == ["1"]))
             if u.path == "/api/repo": return self._send(200, repo_overview(q.get("name", [""])[0]))
@@ -2181,8 +2201,8 @@ class H(BaseHTTPRequestHandler):
             if path == "/api/merge": return self._send(200, merge(req))
             if path == "/api/restore": return self._send(200, restore(req))
             if path == "/api/new": return self._send(200, new_note(req))
-            if path == "/api/project/status": return self._send(200, project_status(req))
-            if path == "/api/project/close": return self._send(200, close_project(req))
+            if path == "/api/project/status": return self._send(200, project_status(req, self._this_machine()))
+            if path == "/api/project/close": return self._send(200, close_project(req, local=self._this_machine()))
             if path == "/api/project/github":
                 if not self._this_machine(): raise ValueError("The GitHub repo can only be created from the machine running the server.")
                 return self._send(200, create_github_repo(req))

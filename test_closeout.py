@@ -3,6 +3,7 @@
 "movedir" Tx step with its checked inverse, fault injection around it, and sync-apps afterwards. Every test runs on a
 temp projects root with a fake dependency-check home (testkit), never the real folders."""
 import errno
+import json
 import os
 import shutil
 import subprocess
@@ -296,6 +297,54 @@ class Faults(CloseBase):
         self.assertEqual(server.tree_state(d), s1); self.assertEqual(s1[".git"], "git")
         os.symlink("f", os.path.join(d, "l")); self.assertEqual(server.tree_state(d)["l"], ("link", "f"))
         self.assertIsNone(server.tree_state(d, limit=1)); self.assertIsNone(server.tree_state(os.path.join(d, "missing")))
+
+
+class OffThisMachine(CloseBase):
+    """--host 0.0.0.0 (or a DNS name rebound to it): a browser that isn't on this machine may look, redacted, but may
+    not move a folder. Its Host name passes the guard; _this_machine() says no."""
+    def setUp(self):
+        super().setUp()
+        p = mock.patch.object(server, "BIND_HOST", "0.0.0.0"); p.start(); self.addCleanup(p.stop)
+        self.sources = depcheck.Sources(self.tmp, proc=os.path.join(self.tmp, "proc"), crontab=lambda: f"0 * * * * {self.demo}/app.py --secret-flag\n")
+        p = mock.patch.object(server, "DEPS", self.sources); p.start(); self.addCleanup(p.stop)
+        pid = os.path.join(self.tmp, "proc", "4242"); os.makedirs(pid)
+        with open(os.path.join(pid, "cmdline"), "wb") as fh: fh.write(f"python3\0{self.demo}/app.py\0--token=hunter2\0".encode())
+
+    def remote(self, path, body=None, host="192.168.1.5"):
+        import json, urllib.error, urllib.request
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}", method="GET" if body is None else "POST",
+                                     data=None if body is None else json.dumps(body).encode(),
+                                     headers={"Host": f"{host}:{self.port}", **({} if body is None else {"Content-Type": "application/json"})})
+        try:
+            with urllib.request.urlopen(req) as r: return r.status, json.loads(r.read())
+        except urllib.error.HTTPError as e: return e.code, json.loads(e.read())
+
+    def test_deps_off_this_machine_hide_command_lines_crontab_lines_and_the_home_path(self):
+        here = self.get("/api/project/deps?name=demo&kind=active")
+        self.assertIn("--token=hunter2", str(here)); self.assertIn("--secret-flag", str(here))
+        code, there = self.remote("/api/project/deps?name=demo&kind=active")
+        self.assertEqual(code, 200, there); self.assertTrue(there["redacted"])
+        self.assertEqual(sorted(h["kind"] for h in there["blockers"]), ["crontab", "process"])
+        for h in there["blockers"]: self.assertEqual(h["detail"], ""); self.assertTrue(h["fix"])
+        text = json.dumps(there)
+        for secret in ("hunter2", "--secret-flag", self.tmp): self.assertNotIn(secret, text)
+        self.assertIn("~/active/demo", text)  # the T3 to-do still names the folder, home-relative
+
+    def test_a_move_is_refused_off_this_machine_and_nothing_changes(self):
+        self.sources = depcheck.Sources(self.home, proc=os.path.join(self.tmp, "noproc"), crontab=lambda: "")
+        with mock.patch.object(server, "DEPS", self.sources):
+            before = self.snapshot(); n = len(server._undo)
+            for path, body in (("/api/project/close", {"name": "demo", "kind": "active", "outcome": "archive"}),
+                               ("/api/project/close", {"name": "demo", "kind": "active", "outcome": "maintained"}),
+                               ("/api/project/status", {"name": "demo", "kind": "active", "action": "shipped", "outcome": "archive"}),
+                               ("/api/project/status", {"path": "active/demo/NOTES.md", "action": "shipped", "outcome": "archive"}),
+                               ("/api/project/status", {"name": "demo", "kind": "active", "action": "kill", "note": "not needed"})):
+                code, r = self.remote(path, body)
+                self.assertEqual(code, 400, (path, body, r)); self.assertIn("machine running the server", r["error"]); self.assertNotIn("blockers", r)
+            self.assertEqual((self.snapshot(), len(server._undo)), (before, n))
+            code, r = self.remote("/api/project/close", {"name": "demo", "kind": "active", "outcome": "next", "done": "Round two.", "due_days": 7})
+            self.assertEqual(code, 200, r)  # a next round moves nothing: fine from the phone
+            self.assertEqual(self.close()["moved_to"], "archive/demo")  # and from this machine a move still works
 
 
 if __name__ == "__main__":

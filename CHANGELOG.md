@@ -78,6 +78,10 @@ Flow gaps (plan and tickets in `.scratch/flow-gaps/`; Hugh approved all 13 recom
 - **Review fixes (pre-PR gate).**
   - A project's `due:` reaches the board only when it is a real `YYYY-MM-DD` date (anything else counts as no ship-by
     date), and the card's `ship by` text is escaped like every other server value (a header could inject markup).
+  - Moving a project folder (close out to maintained/archive, Kill) only works from a browser on the server's own
+    machine (`_this_machine()`), like Create private GitHub repo; Next round still works from anywhere. Off this machine
+    `GET /api/project/deps` is redacted: no process command lines, no crontab lines, home spelled `~` (a `--host
+    0.0.0.0` bind or a rebound DNS name could read them before). README "Network and safety".
 - **Test fix.** `test_runtime.HttpLimits` reads the 413 right after the headers and tolerates the server closing
   before the oversized body is sent (it was flaky with BrokenPipe under load); it now also asserts no file changed
   and no undo step was added.
