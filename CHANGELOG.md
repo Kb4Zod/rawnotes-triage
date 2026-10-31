@@ -95,7 +95,7 @@ Flow gaps (plan and tickets in `.scratch/flow-gaps/`; Hugh approved all 13 recom
     worktree, or inside a learning/templates folder Promote didn't make, becomes a card.
   - `rawtriage`: a connection lost after a change was sent exits **3** ("the server may have finished it: check
     `rawtriage -l` or the page"), no longer 2 / "nothing was changed". Promote, merge, close out, ship/kill and
-    `project github` wait up to 300 s (others 60 s; `RAWTRIAGE_TIMEOUT` overrides). README, `SKILL.md`, `triage.md`.
+    `project github` (and undo, which may move a folder back and run sync-apps) wait up to 300 s (others 60 s; `RAWTRIAGE_TIMEOUT` overrides). README, `SKILL.md`, `triage.md`.
   - An Undo's commit no longer claims it "includes edits made by hand" every time: hand edits are now judged against
     what the undo started from.
   - Promote and Reference slugs (typed, from a merge, or from the note's filename) are lowercase kebab-case that starts

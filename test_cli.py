@@ -414,9 +414,10 @@ class LostAfterSending(unittest.TestCase):
         t = cli.timeout_for
         with mock.patch.dict(os.environ):
             os.environ.pop("RAWTRIAGE_TIMEOUT", None)
-            for path, body in (("/api/project/github", {}), ("/api/project/close", {}), ("/api/merge", {}), ("/api/action", {"action": "promote"})):
+            for path, body in (("/api/project/github", {}), ("/api/project/close", {}), ("/api/merge", {}), ("/api/action", {"action": "promote"}),
+                               ("/api/undo", {})):  # undo of a move: tree check, sync-apps (up to 60 s) and a commit
                 self.assertEqual(t(path, body), 300, path)
-            for path, body in (("/api/action", {"action": "kill"}), ("/api/notes", None), ("/api/undo", {})):
+            for path, body in (("/api/action", {"action": "kill"}), ("/api/notes", None)):
                 self.assertEqual(t(path, body), 60, path)
 
 

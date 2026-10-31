@@ -32,7 +32,7 @@ in Pulse exactly like one made in the page. If the server is down it is started 
 server.py --no-browser). If that fails, or something else answers on the port, rawtriage exits 2 and has changed
 nothing; do not edit notes by hand instead. Exit codes: 0 done, 1 refused (the server's reason is printed), 2 no server
 (nothing changed), 3 the connection was lost after a change was sent: the server may have finished it, so check
-`rawtriage -l` or the page before retrying. Slow changes (promote, merge, close out, ship/kill, project github) wait up
+`rawtriage -l` or the page before retrying. Slow changes (promote, merge, close out, ship/kill, project github, undo) wait up
 to 300 s, everything else 60 s (RAWTRIAGE_TIMEOUT overrides both, in seconds).
 --json prints the server's answer. RAWTRIAGE_PORT picks another port (default 8765).
 """
@@ -67,7 +67,7 @@ class Lost(Exception):
     """The connection broke (or timed out) after a change was sent: the server may still have made it."""
 
 
-SLOW = ("/api/project/github", "/api/project/close", "/api/project/status", "/api/merge")  # git, gh, a push, a folder move
+SLOW = ("/api/project/github", "/api/project/close", "/api/project/status", "/api/merge", "/api/undo")  # git, gh, a push, a folder move (or its undo: sync-apps)
 
 
 def timeout_for(path, body=None):
