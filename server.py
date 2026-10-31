@@ -481,8 +481,11 @@ def github_repo_of(url):
     return m[1]
 
 def git_out(path, args, timeout=5):
+    """stdout of a read-only `git args` in `path` (None if it failed). Like _git: never prompts, and a GIT_DIR or
+    similar inherited from the environment is dropped, so it always reads the repo in `path`."""
+    env = {k: v for k, v in os.environ.items() if k not in GIT_ENV_DROP}
     try:
-        proc = subprocess.run(["git"] + args, cwd=path, capture_output=True, text=True, timeout=timeout, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+        proc = subprocess.run(["git"] + args, cwd=path, capture_output=True, text=True, timeout=timeout, env={**env, "GIT_TERMINAL_PROMPT": "0"})
         return proc.stdout.strip() if proc.returncode == 0 else None
     except (OSError, subprocess.TimeoutExpired): return None
 

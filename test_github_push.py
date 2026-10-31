@@ -101,6 +101,16 @@ class NotOnGithubFlag(GithubCase):
         run(path, "init", "-q", "-b", "main"); run(path, "remote", "add", "origin", "https://github.com/me/bare.git")
         self.assertEqual((self.state("bare")["not_on_github"], self.state("bare")["repo"]), (False, "me/bare"))
 
+    def test_an_inherited_git_dir_does_not_redirect_the_git_facts(self):
+        """A server started from a git hook or a `git -C` alias inherits GIT_DIR: every read must still be of the project's own repo."""
+        path = self.promoted(); other = os.path.join(self.tmp, "other"); os.makedirs(other); run(other, "init", "-q", "-b", "main")
+        run(other, "remote", "add", "origin", "https://github.com/me/other.git")
+        with mock.patch.dict(os.environ, {"GIT_DIR": os.path.join(other, ".git"), "GIT_WORK_TREE": other}):
+            self.assertEqual(server.git_out(path, ["rev-parse", "--show-toplevel"]), path)
+            s = server.github_state(path, fresh=True)
+        self.assertEqual((s["repo"], s["after_skeleton"]), ("", 0))
+        self.assertEqual(server.work_commits(path), 0)
+
     def test_a_project_with_no_promoted_line_is_never_flagged_by_age(self):
         self.project("plain", notes="# plain\n\n- status: promoted\n")
         self.assertFalse(self.state("plain")["not_on_github"])
