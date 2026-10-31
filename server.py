@@ -1449,11 +1449,12 @@ def undo(local=True):
         if not local and any(op[0] in UNDO_LOCAL_ONLY for op in ops):
             raise ValueError(f"Undoing “{entry['label']}” only works from the machine running the server (it moves a project "
                              f"folder back or removes a repo). Nothing was changed.")
-        _plan_inverse(ops)
+        _plan_inverse(ops); todos = []
         for op in reversed(ops):
             if op[0] == "movedir":
                 found = depcheck.check(op[2], dep_sources(), op[1])
                 if found["blockers"]: raise Blocked(blocked_message(f"Can't move {os.path.basename(op[2])} back", found["blockers"]), found)
+                todos += found["todos"]  # the reverse of close out's: memory folder back, T3 Code path back
         taken = []  # reversed so far, newest first
         try:
             for op in reversed(ops): _apply_inverse(op); taken.append(op)
@@ -1468,7 +1469,7 @@ def undo(local=True):
                 raise MutationFailed(f"Undo stopped half-way ({e}) and {len(stuck)} step(s) could not be put back; check {os.path.basename(stuck[0][1])}.") from e
             raise MutationFailed(f"Undo failed ({e}); nothing was changed.") from e
         _undo.pop(); _log(f"undo {entry['label']}")
-        res = {"ok": True, "msg": f"Undone: {entry['label']}", "select": entry["select"], "left": len(_undo)}
+        res = {"ok": True, "msg": f"Undone: {entry['label']}", "select": entry["select"], "left": len(_undo), **({"todos": todos} if todos else {})}
     _note_commit(autocommit(f"undo {entry['label']}", inverse_ops(ops)))  # undo is a new change with its own commit; history is never rewritten
     if any(op[0] == "movedir" for op in ops): res["sync_apps"] = run_sync_apps()  # a folder moved back: Obsidian links follow
     return res

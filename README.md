@@ -572,7 +572,8 @@ rebound DNS name) gets a 400 and nothing moves. So does **Undo** of a change
 that moved a project folder or made a project's repo (a close out, a Kill, a
 Promote): undo of anything else still works from anywhere. Undo of a move is
 checked like the move: anything pointing at the folder in its new place blocks
-it, with the list. A **Next round** moves nothing
+it, with the list; its to-dos (the memory folder `mv` back, the T3 Code path
+back) are in the answer (`todos`), the toast and `rawtriage undo`'s output. A **Next round** moves nothing
 and works from anywhere. **What points here** (`/api/project/deps`) still
 answers off this machine, redacted: every hit keeps its kind and fix, but the
 command line of a running process and the text of a crontab line are left out,

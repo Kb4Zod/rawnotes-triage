@@ -297,6 +297,14 @@ def closed_text(r):
     return "\n".join(lines)
 
 
+def undone_text(r):
+    """The server's message, plus what is left to do by hand after a folder moved back (the reverse of close out's)."""
+    lines = [r["msg"]]
+    if r.get("todos"): lines += ["Now that it is back, by hand:"] + [f"- {t['fix']}" for t in r["todos"]]
+    if r.get("sync_apps") == "failed": lines.append("sync-apps failed (see the server's log); run it yourself so Obsidian's Apps/ links follow.")
+    return "\n".join(lines)
+
+
 def deps_text(r):
     lines = [f"{r['path']} → {r['dest']} (suggested: {r['suggest']})"]
     lines += ([f"BLOCKED: {len(r['blockers'])} thing(s) would break; fix each first:"] + [f"- {b['where']}: {b['detail'].splitlines()[0]}\n  fix: {b['fix']}" for b in r["blockers"]]
@@ -331,7 +339,7 @@ def run(args):
     if c == "index":
         r = api("/api/reference/index", {"file": os.path.basename(args.file), "section": args.section, "blurb": args.blurb}); return out(args, r, r["msg"])
     if c == "undo":
-        r = api("/api/undo", {}); return out(args, r, r["msg"])
+        r = api("/api/undo", {}); return out(args, r, undone_text(r))
     if c == "project" and args.action == "deps":
         kind = folder_kind(args)
         r = api(f"/api/project/deps?name={urllib.parse.quote(args.name)}&kind={kind}" + (f"&to={args.to}" if args.to else ""))

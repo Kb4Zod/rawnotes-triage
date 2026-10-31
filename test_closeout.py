@@ -53,6 +53,18 @@ class CloseBase(Fixture):
 
 
 class Outcomes(CloseBase):
+    def test_undo_lists_the_reverse_to_dos(self):
+        """Close out lists the memory-folder mv and the T3 path as to-dos; its undo lists the way back."""
+        mem = self.memory(); self.close(); moved = os.path.join(self.tmp, "archive", "demo")
+        new_mem = os.path.join(self.sources.claude_projects, depcheck.claude_key(moved))
+        os.rename(mem, new_mem)  # the user did the to-do
+        r = self.post("/api/undo", {})
+        self.assertEqual([x["kind"] for x in r["todos"]], ["agent-memory", "t3"])
+        self.assertIn(f"mv {new_mem} {mem}", r["todos"][0]["fix"])
+        self.assertIn(f"{moved} to {self.demo}", r["todos"][1]["fix"])
+        self.note("2026-10-01-x.md"); self.post("/api/action", {"file": "2026-10-01-x.md", "action": "kill", "note": "Not needed now."})
+        self.assertNotIn("todos", self.post("/api/undo", {}))  # a note's undo has none
+
     def test_archive_moves_the_folder_and_writes_shipped_closed_and_moved(self):
         before = self.snapshot(); mem = self.memory(); t = server.today().isoformat()
         r = self.close()

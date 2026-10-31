@@ -455,10 +455,10 @@ function md(src,min=2){ // small markdown renderer: headings, lists, code, bold/
 
 /* ---------- toast + undo ---------- */
 let toastTimer,toastClear;
-function toast(msg,{undo=false,bad=false,list=null}={}){
+function toast(msg,{undo=false,bad=false,list=null,listHead='Left to do by hand (also under ## Moved in its NOTES.md):'}={}){
   const t=$('#toast');t.className=bad?'bad':'';clearTimeout(toastClear);
   const warn=bad?'':commitWarn;commitWarn=null;
-  t.innerHTML=`<span>${bad?'':I.check} ${esc(msg)}${list&&list.length?`<span class="tlist">Left to do by hand (also under ## Moved in its NOTES.md):${list.map(x=>`<span class="mono">${esc(x)}</span>`).join('')}</span>`:''}${warn?`<span class="cwarn">⚠ ${esc(warn)}</span>`:''}</span>${undo?`<button type="button" id="tUndo">${I.undo}Undo ${kbh('Z')}</button>`:''}`;
+  t.innerHTML=`<span>${bad?'':I.check} ${esc(msg)}${list&&list.length?`<span class="tlist">${esc(listHead)}${list.map(x=>`<span class="mono">${esc(x)}</span>`).join('')}</span>`:''}${warn?`<span class="cwarn">⚠ ${esc(warn)}</span>`:''}</span>${undo?`<button type="button" id="tUndo">${I.undo}Undo ${kbh('Z')}</button>`:''}`;
   if(undo)$('#tUndo').onclick=doUndo;
   requestAnimationFrame(()=>t.classList.add('show'));
   const hide=()=>{t.classList.remove('show');toastClear=setTimeout(()=>{if(!t.classList.contains('show'))t.innerHTML=''},300)};  // an invisible Undo must not stay tabbable
@@ -471,7 +471,7 @@ async function doUndo(){
   try{const r=await api('/api/undo',{});S.undoCount=r.left;
     await changed();
     if(r.select){if(r.select.startsWith('done/')){if(S.notes.live.some(n=>n.file===r.select.slice(5)))S.sel=r.select.slice(5)}else if(S.notes.live.some(n=>n.file===r.select)){S.sel=r.select;S.expanded=null}}
-    render();toast(r.msg,{undo:r.left>0})}
+    render();toast(r.msg,{undo:r.left>0,list:(r.todos||[]).map(t=>t.fix),listHead:'Now that it is back, by hand:'})}
   catch(e){toast(e.message,{bad:true})}}
 
 /* ---------- data ---------- */

@@ -295,7 +295,9 @@ class Projects(CliBase):
         r = self.ok("project", "ship", "spike", "--outcome", "archive").stdout
         self.assertIn("→ archive/spike", r); self.assertIn("Left to do by hand", r)
         self.assertTrue(os.path.isdir(os.path.join(self.tmp, "archive", "spike")))
-        self.ok("undo"); self.assertTrue(os.path.isdir(os.path.join(self.tmp, "experiments", "spike")))
+        r = self.ok("undo").stdout; self.assertTrue(os.path.isdir(os.path.join(self.tmp, "experiments", "spike")))
+        self.assertIn("Now that it is back, by hand:", r)
+        self.assertIn(f"{self.tmp}/archive/spike to {self.tmp}/experiments/spike", r)  # the T3 Code path, back
 
     def test_extend_needs_a_ship_by(self):
         self.project("alpha", notes="# Alpha\n\n- status: promoted\n- promoted: 2026-10-01\n- due: 2099-01-01\n")

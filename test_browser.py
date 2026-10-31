@@ -296,6 +296,8 @@ class Flows(BrowserCase):
         self.page.click("#tUndo"); self.settle(0.6)
         self.assertEqual(open(os.path.join(demo, "NOTES.md"), "rb").read(), original)
         self.assertFalse(os.path.exists(os.path.join(self.tmp, "archive")))
+        toast = self.text("#toast"); self.assertIn("Now that it is back, by hand:", toast)  # the reverse T3 to-do
+        self.assertIn(f"{os.path.join(self.tmp, 'archive', 'demo')} to {demo}", toast); self.assertNotIn("## Moved", toast)
 
     def test_the_close_out_form_warns_when_the_move_cannot_be_undone(self):
         with mock.patch.object(server, "TREE_LIMIT", 0):  # the fixture's demo holds just NOTES.md

@@ -170,6 +170,9 @@ Flow gaps (plan and tickets in `.scratch/flow-gaps/`; Hugh approved all 13 recom
     dependency check.
   - The "can't be undone from here" warning before a move also shows for a folder with an entry the app can list but
     not stat (a folder you can read but not enter): Undo refused such a move, and the warning didn't say so.
+  - Undo of a close out (or a Kill) lists the to-dos for the way back, as close out lists them for the way there: the
+    memory folder `mv` back (if you had moved it) and the T3 Code path back, in the answer (`todos`), the toast and
+    `rawtriage undo`'s output.
 - **Test fix.** `test_runtime.HttpLimits` reads the 413 right after the headers and tolerates the server closing
   before the oversized body is sent (it was flaky with BrokenPipe under load); it now also asserts no file changed
   and no undo step was added.
