@@ -123,6 +123,24 @@ class Situation(Fixture):
         self.assertIn("python3 server.py --service", r[0]["detail"]); self.assertIn("kill 100", r[0]["fix"])
         self.assertEqual(depcheck.scan_processes(self.folder, os.path.join(self.tmp, "no-proc"), self.home), [])
 
+    def test_the_apps_own_git_and_gh_children_are_not_blockers(self):
+        fake_proc(self.proc, {
+            700: ("/", ["python3", "/elsewhere/server.py"]),                         # the app itself, running elsewhere
+            701: (self.folder, ["git", "push", "-u", "origin", "main"]),            # its git push, in the folder
+            702: (self.folder, ["/usr/lib/git-core/git-remote-https", "origin"]),   # started by that git
+            703: (self.folder, ["gh", "repo", "create"]),                         # its gh
+            704: (self.folder, ["git", "status"]),                                 # your own git in a terminal: blocks
+            705: (self.folder, ["python3", "app.py"]),                             # something the app started that isn't git: blocks
+        })
+        for pid, ppid in ((700, 1), (701, 700), (702, 701), (703, 700), (704, 900), (705, 700)):
+            with open(os.path.join(self.proc, str(pid), "stat"), "w") as fh: fh.write(f"{pid} (x (y)) S {ppid} 0 0\n")
+        r = depcheck.scan_processes(self.folder, self.proc, self.home, own_pid=700)
+        self.assertEqual([h["where"] for h in r], ["pid 704", "pid 705"])
+        self.assertEqual(len(depcheck.scan_processes(self.folder, self.proc, self.home)), 6 - 1)  # no own pid: every one in the folder
+        self.assertEqual([h["where"] for h in depcheck.check(self.folder, depcheck.Sources(self.home, self.proc, lambda: "", own_pid=700))["blockers"]
+                          if h["kind"] == "process"], ["pid 704", "pid 705"])
+        self.assertEqual(depcheck.Sources.default().own_pid, os.getpid())
+
     def test_crontab_lines_block_but_comments_do_not(self):
         self.crontab = f"# {self.folder}/old\n0 * * * * {self.folder}/run.sh\n5 * * * * ~/Projects/active/rawnotes-triage/x\n0 1 * * * {self.wt}/y\n"
         r = depcheck.check(self.folder, self.sources)

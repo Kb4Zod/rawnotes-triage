@@ -27,12 +27,13 @@ def _crontab_l():
 
 class Sources:
     """Where the scanners look. home: the folder holding .config/systemd/user, .local/bin and .claude/projects;
-    proc: a /proc-like folder (<pid>/cwd link, <pid>/cmdline); crontab: a function returning the crontab text."""
-    def __init__(self, home, proc="/proc", crontab=_crontab_l):
-        self.home, self.proc, self.crontab = os.path.abspath(home), proc, crontab
+    proc: a /proc-like folder (<pid>/cwd link, <pid>/cmdline, <pid>/stat); crontab: a function returning the crontab
+    text; own_pid: the app's own process, whose git/gh children are its own work, not something pointing at the folder."""
+    def __init__(self, home, proc="/proc", crontab=_crontab_l, own_pid=None):
+        self.home, self.proc, self.crontab, self.own_pid = os.path.abspath(home), proc, crontab, own_pid
 
     @classmethod
-    def default(cls): return cls(os.path.expanduser("~"))
+    def default(cls): return cls(os.path.expanduser("~"), own_pid=os.getpid())
 
     @property
     def unit_dirs(self): return [os.path.join(self.home, ".config", "systemd", "user")]
@@ -108,8 +109,30 @@ def scan_units(path, unit_dirs, home, dest=None):
     return out
 
 
-def scan_processes(path, proc, home):
-    """Running processes whose working folder or command line is inside the folder."""
+OWN_TOOLS = re.compile(r"git(-[\w-]+)?|gh")  # what the app itself runs in a project folder (git, its helpers, gh)
+
+
+def _ppid(proc, pid):
+    """The parent pid from <proc>/<pid>/stat ("pid (comm) state ppid ..."; comm may hold spaces or parens), else None."""
+    try:
+        with open(os.path.join(proc, str(pid), "stat"), "rb") as fh: rest = fh.read(4096).decode("utf-8", "replace").rsplit(")", 1)[1].split()
+        return int(rest[1])
+    except (OSError, IndexError, ValueError): return None
+
+
+def _own_tool(proc, pid, argv, own_pid):
+    """A git or gh process started (directly or through git) by the app itself: its own short-lived work, not a blocker."""
+    if not own_pid or not argv or not OWN_TOOLS.fullmatch(os.path.basename(argv[0])): return False
+    cur = pid
+    for _ in range(16):
+        cur = _ppid(proc, cur)
+        if cur is None or cur <= 1: return False
+        if cur == own_pid: return True
+    return False
+
+
+def scan_processes(path, proc, home, own_pid=None):
+    """Running processes whose working folder or command line is inside the folder (the app's own git/gh children aside)."""
     out = []; real = {path, os.path.realpath(path)}
     try: pids = sorted((n for n in os.listdir(proc) if n.isdigit()), key=int)
     except OSError: return out
@@ -123,6 +146,7 @@ def scan_processes(path, proc, home):
         except OSError: argv = []
         in_cwd = bool(cwd) and any(within(cwd, r) for r in real)
         if not in_cwd and not mentions("\0".join(argv), path, home): continue
+        if _own_tool(proc, pid, argv, own_pid): continue
         cmd = " ".join(argv)[:200] or "(no command line)"
         out.append(hit("process", f"pid {pid}", f"{cmd}" + (f" (working folder {cwd})" if in_cwd else ""),
                        f"stop it first: kill {pid} (or stop the service or terminal that runs it)"))
@@ -261,7 +285,7 @@ def check(path, sources, dest=None):
     """Everything that points at `path` (a project folder about to move to `dest`). Read-only."""
     path = os.path.normpath(os.path.abspath(path)); home = sources.home
     blockers = scan_units(path, sources.unit_dirs, home, dest)
-    blockers += scan_processes(path, sources.proc, home)
+    blockers += scan_processes(path, sources.proc, home, getattr(sources, "own_pid", None))
     wt_block, wt_todo = scan_worktrees(path, dest)
     blockers += wt_block
     blockers += scan_bin(path, sources.bin_dir, home, dest)
