@@ -865,10 +865,12 @@ async function renderDrawer(){const d=$('#drawer');if(!d)return;const c=projectC
     :c.exp?`<h3 class="sec label">Clock</h3><div class="muted" style="font-size:13px">Open-ended experiment in <span class="mono">experiments/</span>, no ship-by date.</div>`
     :`<h3 class="sec label">Clock</h3><div class="muted" style="font-size:13px">Not on the clock. Add a <span class="mono">- due: YYYY-MM-DD</span> line to the header at the top of its NOTES.md to give it a ship-by date.</div>`;
   const open=`<button class="btn" id="openf">${I.folder}Open folder</button>`;
+  // shipped (or done by hand) but still in its project folder, as before close out existed: it can still be closed out
+  const reopen=!!(p&&!linked&&c.closed&&['shipped','done'].includes(c.status));
   const acts=linked?`<div class="acts">${p.gh&&p.gh.repo?`<button class="btn" id="browse">${I.gh}Browse repo</button>`:''}${open}</div>`
     :!c.closed?`<div class="acts"><button class="btn primary" data-pa="shipped">${I.check}Mark shipped</button>${!f||f.open_ended?'':f.extensions>=f.max_extensions?`<button class="btn" disabled>${I.clock}No more extensions</button>`:`<button class="btn" data-pa="extend">${I.clock}+7 days</button>`}
      ${p&&p.gh&&p.gh.repo?`<button class="btn" id="browse">${I.gh}Browse repo</button>`:open}<button class="btn" data-pa="kill" style="color:var(--rust-ink)">${I.x}Kill</button></div>`
-    :`<div class="acts">${p&&p.gh&&p.gh.repo?`<button class="btn" id="browse">${I.gh}Browse repo</button>`:''}${open}</div>`;
+    :`<div class="acts">${reopen?`<button class="btn primary" data-pa="shipped" title="Next round, Maintained or Archive">${I.check}Close out…</button>`:''}${p&&p.gh&&p.gh.repo?`<button class="btn" id="browse">${I.gh}Browse repo</button>`:''}${open}</div>`;
   const head=`<h1 class="sr rh1">Projects</h1><button class="back" onclick="backToList()">‹ Projects</button><div style="display:flex;gap:6px;flex-wrap:wrap">${expChip(c)}${f&&!f.done&&f.days_left!==null?st(f.days_left<0?'late':f.days_left<=2?'soon':'ok',f.days_left<0?`${-f.days_left} days late`:`${f.days_left} days left`):''}${decide(f)}${p?ghChip(p.gh):''}</div>
     <h2>${esc(c.title)}</h2><span class="copy mono" data-copy="${esc(p?p.abs_path:S.notes.notes_dir.replace(/RawNotes$/,'')+f.path)}" tabindex="0" role="button">${I.copy}<span>~/Projects/${esc(p?p.path:f.path)}</span></span>
     ${linked?'<div class="flag" style="margin:12px 0 0"><b>Symlink.</b> This folder points somewhere else, so Triage shows it but will not edit it.</div>':''}`;
@@ -886,7 +888,7 @@ async function renderDrawer(){const d=$('#drawer');if(!d)return;const c=projectC
     const prs=j.prs&&j.prs.length?`<h3 class="sec label">Pull requests</h3><ul class="tl">${j.prs.slice(0,5).map(x=>`<li><a href="${esc(ghUrl(x.url))}" target="_blank" rel="noopener noreferrer">#${x.number} ${esc(x.title)}</a><span class="muted">${esc(x.mergedAt?'merged':x.state.toLowerCase())}</span></li>`).join('')}</ul>`:'';
     more.innerHTML=(j.commits.length?`<h3 class="sec label">Recent activity${j.branch?' · '+esc(j.branch):''}</h3><ul class="tl">${j.commits.slice(0,5).map(x=>`<li><span>${esc(x.title)}</span><span class="muted">${esc(x.date.slice(5))}</span></li>`).join('')}</ul>`:'')
       +prs+`<h3 class="sec label">From ${esc(j.summary_source||'the project')}</h3><div style="font-size:13px;color:var(--ink2);white-space:pre-wrap;max-height:9.5em;overflow:hidden">${esc(j.summary)}</div>`;
-    if(!linked&&!c.closed)loadDeps(c)}
+    if(!linked&&(!c.closed||reopen))loadDeps(c)}
   catch(e){if(aborted(e)||!sc.ok(d,box)||S.psel!==c.id)return;box.innerHTML=`<p class="err">${esc(e.message)}</p>`}}
 // "What points here": the read-only dependency check of a project folder. Blockers stop a move until fixed; to-dos are
 // what is left to do by hand after one (the app never writes outside the notes and projects folders).

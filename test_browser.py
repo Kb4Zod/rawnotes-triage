@@ -311,6 +311,14 @@ class Flows(BrowserCase):
         self.assertIn("## Rounds", text); self.assertIn("- definition of done: Round two ships", text)
         self.assertIn("Next round ships by " + due, self.text("#toast"))
 
+    def test_a_project_shipped_before_close_out_existed_can_still_be_closed_out(self):
+        self.project("legacy", notes=f"# Legacy\n\n- status: done\n- closed: {server.today().isoformat()}\n")
+        self.open("projects"); self.page.click("[data-pid='active/legacy']"); self.page.wait("document.querySelector('#drawer [data-pa=shipped]')")
+        self.assertIn("Close out", self.text("#drawer .acts")); self.assertFalse(self.exists("#drawer [data-pa=kill]"))
+        self.page.click("[data-pa=shipped]"); self.page.wait("document.querySelector('#cmove').textContent.includes('Moves to archive/legacy/')")
+        self.page.click("#cgo"); self.done_toast()
+        self.assertIn("- status: shipped", open(os.path.join(self.tmp, "archive", "legacy", "NOTES.md")).read())
+
     def test_a_blocked_close_out_cannot_be_sent_and_kill_shows_why(self):
         import depcheck
         home = os.path.join(self.tmp, "fakehome"); os.makedirs(os.path.join(home, ".local", "bin"))

@@ -56,7 +56,7 @@ Flow gaps (plan and tickets in `.scratch/flow-gaps/`; Hugh approved all 13 recom
   `## Moved` in the moved `NOTES.md` and into the toast. New Tx op `movedir` (a rename, same filesystem only): undo
   and rollback move the folder back only while nothing in it changed (`.git` internals aside) and the old name is
   free. `sync-apps` runs after a move or its undo if on `PATH` (best effort). Moved projects show in Closed for 7
-  days. New `POST /api/project/close`; `/api/project/status` ship/kill on a folder goes through it. CLI:
+  days. A folder shipped (or `done`) before this and still in `active/` gets **Close out…** in its panel. New `POST /api/project/close`; `/api/project/status` ship/kill on a folder goes through it. CLI:
   `rawtriage project close <name> --outcome next|maintained|archive`, `project ship --outcome`, `project deps`.
   Project moves are never part of a RawNotes auto-commit.
 - **Integration.** One config reader (`read_config` / `config_value` / `config_int`) behind every setting, with a

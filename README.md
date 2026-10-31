@@ -429,7 +429,8 @@ next to `rawnotes-triage`) is not a hit. The app never moves memory folders or e
 - **Archive**: the same, into `archive/<name>`. Suggested otherwise (a one-off, often just a `NOTES.md`).
 - **Kill** (reason required) always moves the folder to `archive/<name>_abandoned`.
 
-A taken name gets `-2`, `-3`…. A move runs the dependency check (**What points here**) inside the change: any blocker
+A folder already marked shipped (or `done` by hand) before close out existed, and still in its project folder, shows
+**Close out…** instead, with the same three choices. A taken name gets `-2`, `-3`…. A move runs the dependency check (**What points here**) inside the change: any blocker
 refuses it with the list and each fix (HTTP 400 with `blockers` and `todos`), and nothing changes. To-dos don't stop
 it: they are written under `## Moved` in the moved `NOTES.md` (`- <date>: moved from <old>/ to <new>/. Left to do by
 hand:` and one line per command) and shown in the toast. The status edit and the move are one undo step: **Undo**
