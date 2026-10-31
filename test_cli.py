@@ -386,5 +386,39 @@ class NoServerRunning(unittest.TestCase):
         self.assertEqual(self.listing(), ["done"])
 
 
+class LostAfterSending(unittest.TestCase):
+    """A server that takes the change and never answers: exit 3 ("may have finished"), never exit 2 / "nothing changed"."""
+    def setUp(self):
+        self.port = free_port(); hits = self.hits = []
+        class Slow(BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = json.dumps({"app": "rawnotes-triage", "version": "x", "pid": 1}).encode()
+                self.send_response(200); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+            def do_POST(self):
+                hits.append(self.path); self.rfile.read(int(self.headers.get("Content-Length", 0))); threading.Event().wait(5)
+            def log_message(self, *a): pass
+        httpd = HTTPServer(("127.0.0.1", self.port), Slow); httpd.daemon_threads = True; self.addCleanup(httpd.server_close)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start(); self.addCleanup(httpd.shutdown)
+
+    def test_a_timeout_after_sending_exits_3_and_says_check(self):
+        r = subprocess.run([sys.executable, CLI, "new", "slow-one"], capture_output=True, text=True, timeout=60,
+                           env={**os.environ, "RAWTRIAGE_PORT": str(self.port), "RAWTRIAGE_TIMEOUT": "1"})
+        self.assertEqual(r.returncode, 3, r.stderr); self.assertEqual(self.hits, ["/api/new"])
+        self.assertIn("may have finished", r.stderr); self.assertIn("rawtriage -l", r.stderr); self.assertNotIn("Nothing was changed", r.stderr)
+
+    def test_slow_routes_wait_longer(self):
+        from importlib.machinery import SourceFileLoader
+        import importlib.util
+        spec = importlib.util.spec_from_loader("rawtriage_cli", SourceFileLoader("rawtriage_cli", CLI))
+        cli = importlib.util.module_from_spec(spec); spec.loader.exec_module(cli)
+        t = cli.timeout_for
+        with mock.patch.dict(os.environ):
+            os.environ.pop("RAWTRIAGE_TIMEOUT", None)
+            for path, body in (("/api/project/github", {}), ("/api/project/close", {}), ("/api/merge", {}), ("/api/action", {"action": "promote"})):
+                self.assertEqual(t(path, body), 300, path)
+            for path, body in (("/api/action", {"action": "kill"}), ("/api/notes", None), ("/api/undo", {})):
+                self.assertEqual(t(path, body), 60, path)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -23,7 +23,8 @@ Find the folder with `rawtriage where` (it prints the notes folder and the proje
    `rawtriage` commands. Never decide by editing a note's status, moving it to `done/`, or copying it to a project folder.
 2. **If `rawtriage` exits 2, stop.** It means there is no working triage server and nothing was changed. Tell the user.
    Do not fall back to editing files. Exit 1 means the server refused: read its message, ask the user, do not work
-   around it.
+   around it. Exit 3 means the connection was lost after the change was sent: the server may have finished it. Do not
+   retry blindly; run `rawtriage -l` (or ask the user to look at the page) to see what happened, then decide.
 3. **RawNotes is local only.** Never add a remote and never push it.
 4. **Never reorganize the folder.** Flat root, dated filenames, `done/` for finished notes, no topic subfolders.
 5. Writing the user's own words and findings into a note is fine; that is capture, not a decision.

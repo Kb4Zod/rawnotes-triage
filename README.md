@@ -183,7 +183,10 @@ rawtriage project github <name> [--kind ...]       # first push: private GitHub 
 - `reference --section` adds the index line in the same undoable step as the page's Reference form (see Reference
   under **Decisions per note**); without it the note is filed but not indexed, and `reference --unindexed` lists it.
 - `--json` prints the server's answer instead of a sentence. `RAWTRIAGE_PORT` picks another port (default 8765).
-- **Exit codes:** 0 done; 1 refused (the reason is printed; bad usage too); 2 no usable server.
+- **Exit codes:** 0 done; 1 refused (the reason is printed; bad usage too); 2 no usable server (nothing was changed);
+  3 the connection was lost after a change was sent: the server may have finished it, so check `rawtriage -l` or the
+  page before retrying. Promote, merge, close out, ship/kill and `project github` wait up to 300 s for an answer,
+  everything else 60 s (`RAWTRIAGE_TIMEOUT` sets both, in seconds).
 - **Server down:** `systemctl --user start rawtriage-web` if the unit is installed, otherwise `server.py --no-browser`
   is started detached; it waits up to 5 seconds. If that fails, or something that isn't rawnotes-triage answers on the
   port, it exits 2 and says nothing was changed. Do not fall back to editing notes by hand.

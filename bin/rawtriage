@@ -30,7 +30,10 @@
 Every command goes through the running server, so a decision made here is logged, undoable in the page and counted
 in Pulse exactly like one made in the page. If the server is down it is started (the systemd unit if installed, else
 server.py --no-browser). If that fails, or something else answers on the port, rawtriage exits 2 and has changed
-nothing; do not edit notes by hand instead. Exit codes: 0 done, 1 refused (the server's reason is printed), 2 no server.
+nothing; do not edit notes by hand instead. Exit codes: 0 done, 1 refused (the server's reason is printed), 2 no server
+(nothing changed), 3 the connection was lost after a change was sent: the server may have finished it, so check
+`rawtriage -l` or the page before retrying. Slow changes (promote, merge, close out, ship/kill, project github) wait up
+to 300 s, everything else 60 s (RAWTRIAGE_TIMEOUT overrides both, in seconds).
 --json prints the server's answer. RAWTRIAGE_PORT picks another port (default 8765).
 """
 import argparse
@@ -60,8 +63,18 @@ class NoServer(Exception):
     """There is no usable server; nothing was changed."""
 
 
-class Lost(NoServer):
-    """The server went away while a request was in flight, so what happened to that request is not known."""
+class Lost(Exception):
+    """The connection broke (or timed out) after a change was sent: the server may still have made it."""
+
+
+SLOW = ("/api/project/github", "/api/project/close", "/api/project/status", "/api/merge")  # git, gh, a push, a folder move
+
+
+def timeout_for(path, body=None):
+    """Seconds to wait for an answer: 300 for the routes that run git/gh or move folders (and promote), else 60."""
+    if os.environ.get("RAWTRIAGE_TIMEOUT"): return float(os.environ["RAWTRIAGE_TIMEOUT"])
+    slow = path.split("?")[0] in SLOW or (path == "/api/action" and isinstance(body, dict) and body.get("action") == "promote")
+    return 300 if slow else 60
 
 
 def say(*a): print(*a, flush=True)
@@ -127,13 +140,20 @@ def api(path, body=None):
     req = urllib.request.Request(BASE + path, data=data, method="GET" if body is None else "POST",
                                  headers={} if body is None else {"Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=60) as r: return json.loads(r.read())
+        with urllib.request.urlopen(req, timeout=timeout_for(path, body)) as r: return json.loads(r.read())
     except urllib.error.HTTPError as e:
         try: msg = json.loads(e.read()).get("error") or f"HTTP {e.code}"
         except (ValueError, AttributeError): msg = f"HTTP {e.code}"
         raise Refused(msg)
+    except urllib.error.URLError as e:
+        if isinstance(e.reason, (ConnectionRefusedError, FileNotFoundError)) or body is None:
+            raise NoServer(f"lost the triage server ({e.reason})")  # nothing was sent (or it was only a read)
+        raise Lost(f"lost the triage server after sending the change ({e.reason}); the server may have finished it: "
+                   f"check `rawtriage -l` or the page before retrying")
     except (OSError, ValueError) as e:
-        raise Lost(f"lost the triage server ({e}); check the state with `rawtriage -l` before retrying")
+        if body is None: raise NoServer(f"lost the triage server ({e or type(e).__name__})")
+        raise Lost(f"lost the triage server after sending the change ({e or type(e).__name__}); the server may have finished it: "
+                   f"check `rawtriage -l` or the page before retrying")
 
 
 class Parser(argparse.ArgumentParser):
@@ -354,5 +374,5 @@ def main(argv):
 if __name__ == "__main__":
     try: main(sys.argv[1:])
     except Refused as e: print(f"rawtriage: {e}", file=sys.stderr); sys.exit(1)
-    except Lost as e: print(f"rawtriage: {e}", file=sys.stderr); sys.exit(2)
+    except Lost as e: print(f"rawtriage: {e}", file=sys.stderr); sys.exit(3)
     except NoServer as e: print(f"rawtriage: {e}. Nothing was changed.", file=sys.stderr); sys.exit(2)

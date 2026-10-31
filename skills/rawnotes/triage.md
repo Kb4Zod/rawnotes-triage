@@ -32,7 +32,8 @@ Your job is to make decisions happen, not to do more research. Every decision go
    one-sentence reason and act on it once they confirm.
 4. **Mistakes.** `rawtriage undo` reverses the newest change (the page's undo list is the same list). Say what it undid.
 5. **Never edit a note to decide it.** No status edits, no moving files, no copying into project folders. If a command
-   exits 1, read its message and ask the user; if it exits 2, stop and tell the user (see `SKILL.md`).
+   exits 1, read its message and ask the user; if it exits 2, stop and tell the user; if it exits 3, check with
+   `rawtriage -l` before retrying (see `SKILL.md`).
 6. **Finish with a summary.** Run `rawtriage -l` again. Report how many were promoted, kept, killed and merged, and what
    is still open.
 7. **Projects that are due.** When done means is met, a project folder is **closed out**: ask the user what happens
