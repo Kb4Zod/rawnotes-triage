@@ -201,5 +201,25 @@ class SkillFiles(unittest.TestCase):
         for rule in ("what done means", "ship-by", "`experiments`", "`[expired]`", "do not offer keep", "Never edit a note to decide it", "exits 2, stop"): self.assertIn(rule, tri)
 
 
+class NoPersonalPathsInTheRepo(unittest.TestCase):
+    """The repo is public: no tracked file may hold this machine's home path, its agent-memory key (~/.claude/projects
+    names folders by path with / -> -) or a numeric GitHub noreply id. Paths in tests and docs use /home/me or ~."""
+
+    def test_tracked_files_hold_no_home_path_memory_key_or_noreply_id(self):
+        import getpass, re
+        try:
+            files = subprocess.run(["git", "-C", HERE, "ls-files", "-z"], capture_output=True, text=True, check=True).stdout.split("\0")
+        except (OSError, subprocess.CalledProcessError): self.skipTest("not a git checkout")
+        me = re.escape(getpass.getuser())
+        bad = re.compile(rf"/home/{me}\b|-home-{me}-|/Users/{me}\b|\b\d{{5,}}\+[\w-]+@users\.noreply\.github\.com", re.I)
+        hits = []
+        for f in filter(None, files):
+            path = os.path.join(HERE, f)
+            if os.path.islink(path) or not os.path.isfile(path): continue
+            with open(path, "rb") as fh: text = fh.read().decode("utf-8", "replace")
+            hits += [f"{f}:{n}" for n, line in enumerate(text.splitlines(), 1) if bad.search(line)]
+        self.assertEqual(hits, [])
+
+
 if __name__ == "__main__":
     unittest.main()

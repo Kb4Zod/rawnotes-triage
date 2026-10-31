@@ -44,7 +44,7 @@ class Header(unittest.TestCase):
         self.assertEqual(out.count("- status: quoted"), 1); self.assertIn("- due: 2026-10-30", out)
         self.assertLess(out.index("- due: 2027-01-01"), out.index("## What's"))
 
-    def test_header_after_a_subtitle_paragraph_still_counts(self):  # real notes look like this (eight-rings handoff)
+    def test_header_after_a_subtitle_paragraph_still_counts(self):  # real notes look like this (a handoff note)
         t = "# The Eight Rings\n\n*A subtitle.*\n\n- date: 2026-10-17\n- due: 2026-10-25\n- status: promoted\n\n## Q\n"
         self.assertEqual((field(t, "due"), field(t, "status")), ("2026-10-25", "promoted"))
 
