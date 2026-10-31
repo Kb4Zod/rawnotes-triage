@@ -660,6 +660,16 @@ class DecisionTestCase(DecisionBase):
         self.assertEqual(err, "Pushed twice already: ship it or kill it."); self.assertEqual(self.snapshot(), before)
         self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "shipped", "outcome": "archive"})  # shipping is still allowed
 
+    def test_the_refusal_says_the_configured_number_of_pushes(self):
+        os.makedirs(server.CONFIG_DIR, exist_ok=True)
+        for limit, words in ((3, "Pushed 3 times already"), (1, "Pushed once already")):
+            with self.subTest(limit=limit):
+                with open(server.config_path(), "w") as fh: json.dump({"max_extensions": limit}, fh)
+                path = self._promoted() if limit == 3 else path
+                with open(path) as fh: text = fh.read()
+                with open(path, "w") as fh: fh.write(server.set_field(text, "extensions", str(limit)))
+                self.assertEqual(self.post("/api/project/status", self._push(), ok=False)["error"], f"{words}: ship it or kill it.")
+
     def test_missing_extensions_counts_as_zero_and_undo_restores_exactly(self):
         path = self._promoted(); original = open(path, "rb").read()
         self.assertNotIn(b"extensions", original)

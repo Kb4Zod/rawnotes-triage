@@ -140,6 +140,8 @@ Flow gaps (plan and tickets in `.scratch/flow-gaps/`; Hugh approved all 13 recom
     round is never gated (a change from user story 22, noted in `spec.md`).
   - Auto-commit names hand edits also when the notes folder is a subfolder of a bigger repo (it looked the note up from
     the repo's top, found nothing and never said so).
+  - "Pushed twice already" and the CLI's extend hint say the configured `max_extensions` ("once", "twice", "3 times"),
+    not always "twice".
 - **Test fix.** `test_runtime.HttpLimits` reads the 413 right after the headers and tolerates the server closing
   before the oversized body is sent (it was flaky with BrokenPipe under load); it now also asserts no file changed
   and no undo step was added.

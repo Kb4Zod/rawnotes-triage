@@ -18,7 +18,8 @@
   rawtriage merge <file> <file>... --title TEXT [--then inbox|promote|reference] [promote options]
   rawtriage undo                     reverse the newest change (the page's undo list is the same one)
   rawtriage project ship <name> [--kind KIND]           a single-file project; a folder needs --outcome (see close)
-  rawtriage project extend <name> --reason TEXT [--days N] [--kind KIND]   at most twice; the reason is required
+  rawtriage project extend <name> --reason TEXT [--days N] [--kind KIND]   at most max_extensions times (config.json,
+                                     default 2); the reason is required
   rawtriage project kill <name> --reason TEXT [--kind KIND]   a folder moves to archive/<name>_abandoned
   rawtriage project close <name> --outcome next|maintained|archive [--kind KIND]
                     next: --done TEXT and --due YYYY-MM-DD | --due-days N (experiments may skip the ship-by)
@@ -235,7 +236,20 @@ def check_project(args):
         raise Refused("A next round needs --done \"what done means\" and a ship-by (--due YYYY-MM-DD or --due-days N)")
     if args.action in ("extend", "kill") and not args.reason.strip():
         raise Refused(f"Say why: rawtriage project {args.action} {args.name} --reason \"...\"" +
-                      (" (at least 10 characters; a ship-by date can be pushed twice)" if args.action == "extend" else ""))
+                      (f" (at least 10 characters; a ship-by date can be pushed {times(max_extensions())})" if args.action == "extend" else ""))
+
+
+def max_extensions():
+    """config.json's max_extensions (the server's limit on pushing a ship-by date), else 2. Read from the same file the
+    server reads (RAWTRIAGE_CONFIG_DIR, else ~/.config/rawnotes-triage), so the hint can be given before any server runs."""
+    d = os.environ.get("RAWTRIAGE_CONFIG_DIR") or os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "rawnotes-triage")
+    try:
+        with open(os.path.join(d, "config.json"), encoding="utf-8") as fh: v = json.load(fh).get("max_extensions")
+    except (OSError, ValueError, AttributeError): v = None
+    return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else 2
+
+
+def times(n): return {1: "once", 2: "twice"}.get(n, f"{n} times")
 
 
 def project_body(args):

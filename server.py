@@ -1894,6 +1894,8 @@ def unpushed_work(path):
         if int(n): out.append((b, int(n)))
     return int(total), out
 
+def times(n): return {1: "once", 2: "twice"}.get(n, f"{n} times")
+
 def _status_edit(text, req, name):
     """The new text, label and message for a project status action (shipped / extend / kill)."""
     t = today().isoformat(); action = req.get("action")
@@ -1904,7 +1906,8 @@ def _status_edit(text, req, name):
         why = _text(req, "note")
         if len(why) < REASON_MIN: raise ValueError(f"Say why you need more time (at least {REASON_MIN} characters).")
         done = _count(field(text, "extensions"))
-        if done >= config_int("max_extensions", MAX_EXTENSIONS): raise ValueError("Pushed twice already: ship it or kill it.")
+        limit = config_int("max_extensions", MAX_EXTENSIONS)
+        if done >= limit: raise ValueError(f"Pushed {times(limit)} already: ship it or kill it.")
         try: days = int(7 if req.get("days") is None else req.get("days"))
         except (TypeError, ValueError): raise ValueError("days must be a number")
         if not 1 <= days <= EXTEND_MAX_DAYS: raise ValueError(f"days must be 1 to {EXTEND_MAX_DAYS}")

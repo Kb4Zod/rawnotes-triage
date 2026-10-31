@@ -46,8 +46,9 @@ Your job is to make decisions happen, not to do more research. Every decision go
      `rawtriage project close <name> --outcome maintained|archive`.
    Killing needs a reason and moves the folder to `archive/<name>_abandoned`:
    `rawtriage project kill <name> --reason "<why>"`. Pushing the ship-by needs a reason too (at least 10 characters)
-   and is allowed at most twice: `rawtriage project extend <name> --reason "<why more time>" [--days N]`. After two
-   extensions the server refuses: the only choices left are ship or kill, so ask the user which.
+   and is allowed a limited number of times (twice unless the server's `max_extensions` says otherwise):
+   `rawtriage project extend <name> --reason "<why more time>" [--days N]`. Once they are used up the server refuses
+   ("Pushed … already"): the only choices left are ship or kill, so ask the user which.
 8. **Moves.** A move is refused while anything points at the folder (systemd unit, running process, git worktree,
    a link or script in the local bin folder, crontab line): show the user each blocker and its fix from `rawtriage project deps`,
    and let them fix it; never fix it silently. Never run a blocker's fix yourself (`kill <pid>`, `systemctl … disable`,

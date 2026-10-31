@@ -295,6 +295,12 @@ class Projects(CliBase):
         self.assertIn("ship it or kill it", self.refused("project", "extend", "alpha", "--reason", "waiting on parts"))
         self.assertIn("no ship-by", self.refused("project", "extend", "beta", "--reason", "waiting on parts"))
 
+    def test_the_extend_hint_says_the_configured_number_of_pushes(self):
+        self.assertIn("can be pushed twice", self.refused("project", "extend", "alpha"))
+        os.makedirs(server.CONFIG_DIR, exist_ok=True)
+        with open(server.config_path(), "w") as fh: json.dump({"max_extensions": 3}, fh)
+        self.assertIn("can be pushed 3 times", self.refused("project", "extend", "alpha"))
+
 
 class Usage(CliBase):
     def test_bad_usage_exits_1_not_2(self):
