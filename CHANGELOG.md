@@ -144,6 +144,8 @@ Flow gaps (plan and tickets in `.scratch/flow-gaps/`; Hugh approved all 13 recom
     not always "twice".
   - A Promote or Reference slug (and a merged note's name) cut to its maximum length no longer ends in `-`; Create
     private GitHub repo refuses a folder name with non-ASCII letters up front (GitHub accepts only `A-Z a-z 0-9 _ . -`).
+  - **Create private GitHub repo** shows only for a repo with no `origin` at all: a folder whose origin is somewhere
+    else (a self-hosted git) got the button and then a refusal. `github_state()` gains `origin`.
 - **Test fix.** `test_runtime.HttpLimits` reads the 413 right after the headers and tolerates the server closing
   before the oversized body is sent (it was flaky with BrokenPipe under load); it now also asserts no file changed
   and no undo step was added.

@@ -554,7 +554,7 @@ def _promoted_days(path):
     except (OSError, ValueError): return None
 
 def github_state(path, fresh=False):
-    """Is this project on GitHub? git: has a repo; repo: 'owner/name' of a GitHub origin; pushed: that remote has
+    """Is this project on GitHub? git: has a repo; origin: it has an `origin` remote (GitHub or not); repo: 'owner/name' of a GitHub origin; pushed: that remote has
     received something (a remote-tracking ref exists); unpushed: commits on any local branch that no origin ref contains;
     after_skeleton: commits (on any local branch) made after Promote's own first commit (0 when the repo has none, i.e. it predates it);
     not_on_github: no GitHub origin and (after_skeleton > 0 or promoted 2+ days ago): the red chip and the Ship gate.
@@ -572,11 +572,11 @@ def local_revs(path):
     return ["--branches"] + (["HEAD"] if git_out(path, ["rev-parse", "--verify", "-q", "HEAD"]) is not None else [])
 
 def _git_facts(path, fresh):
-    if not os.path.exists(os.path.join(path, ".git")): return {"git": False, "repo": "", "pushed": False, "unpushed": 0, "after_skeleton": 0}
+    if not os.path.exists(os.path.join(path, ".git")): return {"git": False, "origin": False, "repo": "", "pushed": False, "unpushed": 0, "after_skeleton": 0}
     fp = _git_fingerprint(path)
     with _git_lock: hit = _git_cache.get(path)
     if hit and not fresh and hit[0] == fp and time.time() - hit[1] < GIT_TTL: return dict(hit[2])
-    repo = github_repo_of(git_out(path, ["remote", "get-url", "origin"]))
+    url = git_out(path, ["remote", "get-url", "origin"]); repo = github_repo_of(url)
     pushed = bool(repo and git_out(path, ["for-each-ref", "--count=1", "refs/remotes/origin"]))
     local = local_revs(path)
     ahead = git_out(path, ["rev-list", "--count", *local, "--not", "--remotes=origin"]) if pushed else None
@@ -584,7 +584,7 @@ def _git_facts(path, fresh):
     if not repo:
         total = git_out(path, ["rev-list", "--count", *local]); roots = (git_out(path, ["log", "--max-parents=0", "--format=%s", *local]) or "").splitlines()
         if total and total.isdigit() and len(roots) == 1 and SKELETON_SUBJECT.fullmatch(roots[0]): after = int(total) - 1
-    state = {"git": True, "repo": repo, "pushed": pushed, "unpushed": int(ahead) if ahead and ahead.isdigit() else 0, "after_skeleton": after}
+    state = {"git": True, "origin": url is not None, "repo": repo, "pushed": pushed, "unpushed": int(ahead) if ahead and ahead.isdigit() else 0, "after_skeleton": after}
     with _git_lock:
         if len(_git_cache) > 500: _git_cache.clear()
         _git_cache[path] = (fp, time.time(), state)
@@ -599,7 +599,7 @@ def project_detail(name, kind=None):
     path, kind = project_dir(name, kind)
     result = {"name": name, "kind": kind, "path": f"{kind}/{name}", "abs_path": path, "summary": "No README or project notes yet.",
               "summary_source": None, "commits": [], "features": [], "prs": [],
-              "pr_status": "No Git repository in this project.", "branch": "", "remote": "", "repo": "", "gh": {"git": False, "repo": "", "pushed": False, "unpushed": 0, "after_skeleton": 0, "not_on_github": False},
+              "pr_status": "No Git repository in this project.", "branch": "", "remote": "", "repo": "", "gh": {"git": False, "origin": False, "repo": "", "pushed": False, "unpushed": 0, "after_skeleton": 0, "not_on_github": False},
               "linked": os.path.islink(path), "done": definition_of_done(path)}
     files = {f.lower(): f for f in sorted(os.listdir(path))}
     for candidate in ("readme.md", "readme.rst", "readme.txt", "readme", "notes.md"):

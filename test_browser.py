@@ -304,6 +304,17 @@ class Flows(BrowserCase):
             self.assertIn("can't be undone", self.text("#cmove"))
             self.page.click("[data-seg=outcome] [data-v=next]"); self.page.wait("!document.querySelector('#cmove').textContent.includes(\"can't be undone\")")
 
+    def test_create_github_repo_is_offered_only_with_no_origin_at_all(self):
+        import subprocess
+        for name, origin in (("fresh-repo", None), ("selfhosted", "https://git.example.com/me/selfhosted.git")):
+            path = self.project(name, notes=f"# {name}\n\n- status: promoted\n- promoted: 2026-10-01\n")
+            for args in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-qm", "start"]) + ((["remote", "add", "origin", origin],) if origin else ()):
+                subprocess.run(["git", *args], cwd=path, check=True, capture_output=True)
+        self.open("projects")
+        for name, offered in (("fresh-repo", True), ("selfhosted", False)):
+            self.page.click(f"[data-pid='active/{name}']"); self.page.wait(f"document.querySelector('#drawer #openf') && document.querySelector('#drawer h2,#drawer h3')")
+            self.settle(0.2); self.assertEqual(self.exists("#ghmake"), offered, name)
+
     def test_close_out_next_round_asks_for_done_means_and_stays(self):
         nodod = os.path.join(self.tmp, "active", "nodod", "NOTES.md")
         self.open("projects"); self.page.click("[data-pid='active/nodod/NOTES.md']"); self.page.wait("document.querySelector('[data-pa=shipped]')")

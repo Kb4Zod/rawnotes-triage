@@ -469,11 +469,11 @@ class ApiTestCase(unittest.TestCase):
         self.git(ahead, "commit", "-q", "--allow-empty", "-m", "one"); self.git(ahead, "update-ref", "refs/remotes/origin/main", "HEAD")
         self.git(ahead, "commit", "-q", "--allow-empty", "-m", "two"); self.git(ahead, "commit", "-q", "--allow-empty", "-m", "three")
         states = {p["name"]: p["gh"] for p in self.get("/api/projects")["projects"]}
-        self.assertEqual(states["folder"], {"git": False, "repo": "", "pushed": False, "unpushed": 0, "after_skeleton": 0, "not_on_github": False})
-        self.assertEqual(states["local"], {"git": True, "repo": "", "pushed": False, "unpushed": 0, "after_skeleton": 0, "not_on_github": False})  # git, never on GitHub
-        self.assertEqual(states["fresh"], {"git": True, "repo": "me/fresh", "pushed": False, "unpushed": 0, "after_skeleton": 0, "not_on_github": False})  # remote set, nothing pushed
-        self.assertEqual(states["pushed"], {"git": True, "repo": "me/pushed", "pushed": True, "unpushed": 0, "after_skeleton": 0, "not_on_github": False})
-        self.assertEqual(states["ahead"], {"git": True, "repo": "me/ahead", "pushed": True, "unpushed": 2, "after_skeleton": 0, "not_on_github": False})
+        self.assertEqual(states["folder"], {"git": False, "origin": False, "repo": "", "pushed": False, "unpushed": 0, "after_skeleton": 0, "not_on_github": False})
+        self.assertEqual(states["local"], {"git": True, "origin": False, "repo": "", "pushed": False, "unpushed": 0, "after_skeleton": 0, "not_on_github": False})  # git, never on GitHub
+        self.assertEqual(states["fresh"], {"git": True, "origin": True, "repo": "me/fresh", "pushed": False, "unpushed": 0, "after_skeleton": 0, "not_on_github": False})  # remote set, nothing pushed
+        self.assertEqual(states["pushed"], {"git": True, "origin": True, "repo": "me/pushed", "pushed": True, "unpushed": 0, "after_skeleton": 0, "not_on_github": False})
+        self.assertEqual(states["ahead"], {"git": True, "origin": True, "repo": "me/ahead", "pushed": True, "unpushed": 2, "after_skeleton": 0, "not_on_github": False})
 
     def test_project_with_ssh_443_remote_gets_repo_link_and_state(self):
         path = self.make_project("viaport"); self.git(path, "init", "-q")

@@ -368,6 +368,15 @@ class CreateRepo(GithubCase):
         self.assertFalse(any(c.startswith("gh repo create") for c in self.gh_calls()))
         return err
 
+    def test_any_origin_counts_not_only_a_github_one(self):
+        """The page offers Create private GitHub repo only with no origin at all (the server refuses any origin)."""
+        path = self.promoted(); self.assertFalse(self.state("demo")["origin"])
+        run(path, "remote", "add", "origin", "https://git.example.com/me/demo.git")
+        s = self.state("demo"); self.assertEqual((s["origin"], s["repo"]), (True, ""))
+        self.refused(contains="already has an origin")
+        self.assertEqual(self.get("/api/project?name=demo&kind=active")["gh"]["origin"], True)
+        self.project("plain", notes="# p\n\n- status: promoted\n"); self.assertFalse(self.state("plain")["origin"])
+
     def test_refuses_when_an_origin_already_exists(self):
         path = self.promoted(); run(path, "remote", "add", "origin", "https://github.com/me/demo.git")
         self.refused(contains="already has an origin")
