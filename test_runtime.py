@@ -44,10 +44,10 @@ class ReadsBesideWrites(Fixture):
     def test_a_note_edited_or_removed_by_hand_while_listing_is_tolerated(self):
         for i in range(30): self.note(f"2026-10-0{i % 9 + 1}-n{i}.md", f"n{i}")
         real = server.summarize; calls = []
-        def flaky(path, sub=""):
+        def flaky(path, *rest):
             calls.append(path)
             if len(calls) % 7 == 0: os.remove(path)  # a hand edit removes it between listing and reading
-            return real(path, sub)
+            return real(path, *rest)
         with mock.patch.object(server, "summarize", flaky):
             d = self.get("/api/notes")
         self.assertGreater(len(d["live"]), 20); self.assertLess(len(d["live"]), 30)
