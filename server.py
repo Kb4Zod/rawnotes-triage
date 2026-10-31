@@ -1212,17 +1212,10 @@ def tree_state(path, limit=None):
 def _raise(e): raise e
 
 def tree_too_big(path, limit=None):
-    """Would tree_state(path) give up (more than `limit` entries, or unreadable)? Counted without a stat per entry, so
-    the close-out form can warn, before a move, that its undo won't be possible."""
-    n = 0; limit = TREE_LIMIT if limit is None else limit
-    try:
-        for root, dirs, files in os.walk(path, onerror=_raise):
-            if ".git" in dirs and os.path.isdir(os.path.join(root, ".git")) and not os.path.islink(os.path.join(root, ".git")):
-                dirs.remove(".git"); n += 1
-            n += len(dirs) + len(files)
-            if n > limit: return True
-    except OSError: return True
-    return False
+    """Would tree_state(path) give up (more than `limit` entries, or an entry it can't read or stat)? It is tree_state
+    itself, so the close-out form's warning, before a move, that its undo won't be possible always agrees with what
+    undo will find."""
+    return tree_state(path, limit) is None
 
 class Tx:
     """One change to the files, applied step by step. Each step that succeeds is recorded, so the whole change can be

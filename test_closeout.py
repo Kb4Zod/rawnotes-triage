@@ -308,6 +308,16 @@ class Faults(CloseBase):
         self.assertIn("can't be undone", d["undo_warning"]); self.assertIn("mv ", d["undo_warning"])
         self.assertNotIn(self.tmp, d["undo_warning"])  # it may go to a phone: no absolute path
 
+    def test_tree_too_big_agrees_with_tree_state_on_entries_it_cannot_stat(self):
+        """A folder that can be listed but not entered (r, no x): its names show, lstat of them fails. tree_state gives
+        up, so the warning must say undo can't check it."""
+        d = os.path.join(self.tmp, "t"); sub = os.path.join(d, "locked"); os.makedirs(sub); open(os.path.join(sub, "f"), "w").close()
+        os.chmod(sub, 0o644); self.addCleanup(os.chmod, sub, 0o755)
+        self.assertIsNone(server.tree_state(d))
+        self.assertTrue(server.tree_too_big(d))
+        os.chmod(sub, 0o755)
+        self.assertIsNotNone(server.tree_state(d)); self.assertFalse(server.tree_too_big(d))
+
     def test_tree_state_ignores_git_internals_and_gives_up_on_huge_folders(self):
         d = os.path.join(self.tmp, "t"); os.makedirs(os.path.join(d, ".git", "objects")); open(os.path.join(d, "f"), "w").close()
         s1 = server.tree_state(d); open(os.path.join(d, ".git", "index"), "w").close()

@@ -168,6 +168,8 @@ Flow gaps (plan and tickets in `.scratch/flow-gaps/`; Hugh approved all 13 recom
     projects root reached through a symlink is covered too, and is left out for a parent whose path has a `:` (the
     variable's separator would split it into nonsense). One `git_env` in `depcheck.py` for the server and the
     dependency check.
+  - The "can't be undone from here" warning before a move also shows for a folder with an entry the app can list but
+    not stat (a folder you can read but not enter): Undo refused such a move, and the warning didn't say so.
 - **Test fix.** `test_runtime.HttpLimits` reads the 413 right after the headers and tolerates the server closing
   before the oversized body is sent (it was flaky with BrokenPipe under load); it now also asserts no file changed
   and no undo step was added.
