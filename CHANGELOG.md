@@ -153,6 +153,9 @@ Flow gaps (plan and tickets in `.scratch/flow-gaps/`; Hugh approved all 13 recom
     ("couldn't check with git"), and Create refused with "Switch to the main branch first". Full ref names are used now.
   - The close-out gate's suggested `git push origin <branch>` and `git branch -D <branch>` quote the branch name for
     the shell (a branch may legally be called `x$(id)`).
+  - **Create private GitHub repo** asks GitHub who you're signed in as before it takes the lock: that check can wait on
+    the network for a long while, and holding the lock meanwhile froze every change. The repo checks run again under
+    the lock, around `gh repo create`.
 - **Test fix.** `test_runtime.HttpLimits` reads the 413 right after the headers and tolerates the server closing
   before the oversized body is sent (it was flaky with BrokenPipe under load); it now also asserts no file changed
   and no undo step was added.

@@ -2082,24 +2082,28 @@ def create_github_repo(req):
     --source <path> --remote origin`, then `git push -u origin main`. Always private (going public is gopublic's job);
     the push has ALLOW_PUSH_MAIN=1 in its own environment only (the global hook allows a first push to main with it);
     never --no-verify. Refuses an existing origin, a dirty tree, a branch other than main or no gh sign-in.
-    The checks and `gh repo create` (which adds the remote) hold the read side of the lock: an undo of the promote or a
-    close out sent meanwhile waits, then finds the remote (undo refuses; close out wants the push). The push runs after."""
+    The sign-in check runs first, without the lock (it can wait on the network). The repo checks, run again, and
+    `gh repo create` (which adds the remote) hold the read side of the lock: an undo of the promote or a close out sent
+    meanwhile waits, then finds the remote (undo refuses; close out wants the push). The push runs after."""
     path, kind = project_dir(req.get("name", ""), req.get("kind"), write=True); name = os.path.basename(path)
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", name) or not name.strip("."): raise ValueError(f"“{name}” is not a name GitHub accepts for a repo.")
     if not shutil.which("git"): raise ValueError("git is not installed.")
     if not _gh_create_lock.acquire(blocking=False): raise ValueError("A GitHub repo is already being created.")
+    def ready(path):
+        if not os.path.exists(os.path.join(path, ".git")): raise ValueError("This project has no git repo yet.")
+        if "origin" in _git(path, ["remote"])[1].split(): raise ValueError("It already has an origin remote.")
+        if current_branch(path) != "main": raise ValueError("Switch to the main branch first: the first push is `main`.")
+        if _git(path, ["rev-parse", "--verify", "-q", "HEAD"])[0]: raise ValueError("Make a first commit before creating the repo.")
+        if _git(path, ["status", "--porcelain"])[1]: raise ValueError("Commit or stash your changes first: the working tree isn't clean.")
     try:
+        ready(path)  # fail fast, before asking GitHub
+        st = github_status(True)  # may wait on the network for a while: never under the lock, which would freeze listings
+        if st["state"] == "signed_out": raise ValueError("Not signed in to GitHub: run `gh auth login`." + (f" ({st['error']})" if st.get("error") else ""))
+        if st["state"] != "signed_in": raise ValueError(st.get("error") or "GitHub isn't reachable through gh right now.")
+        slug = f"{st['login']}/{name}"
         with _lock.read():
             path, kind = project_dir(name, kind, write=True)  # again under the lock: it may have moved or been undone since
-            if not os.path.exists(os.path.join(path, ".git")): raise ValueError("This project has no git repo yet.")
-            if "origin" in _git(path, ["remote"])[1].split(): raise ValueError("It already has an origin remote.")
-            if current_branch(path) != "main": raise ValueError("Switch to the main branch first: the first push is `main`.")
-            if _git(path, ["rev-parse", "--verify", "-q", "HEAD"])[0]: raise ValueError("Make a first commit before creating the repo.")
-            if _git(path, ["status", "--porcelain"])[1]: raise ValueError("Commit or stash your changes first: the working tree isn't clean.")
-            st = github_status(True)
-            if st["state"] == "signed_out": raise ValueError("Not signed in to GitHub: run `gh auth login`." + (f" ({st['error']})" if st.get("error") else ""))
-            if st["state"] != "signed_in": raise ValueError(st.get("error") or "GitHub isn't reachable through gh right now.")
-            slug = f"{st['login']}/{name}"
+            ready(path)
             try: _gh(["repo", "create", slug, "--private", "--source", path, "--remote", "origin"], timeout=60)
             except RuntimeError as e: raise ValueError(f"gh repo create failed: {e}")
         try:

@@ -386,6 +386,14 @@ class CreateRepo(GithubCase):
         self.assertTrue(os.path.isdir(os.path.join(path, ".git"))); self.assertEqual(run(path, "remote"), "origin")
         self.assertEqual(len(server._undo), 1)
 
+    def test_the_sign_in_check_runs_without_the_lock(self):
+        """github_status(True) can wait on the network for a minute: holding the read lock meanwhile froze every change."""
+        self.promoted(); self.bare("demo"); real = server.github_status; seen = []
+        def status(refresh=False):
+            seen.append(server._lock._readers); return real(refresh)
+        with mock.patch.object(server, "github_status", status): self.create("demo")
+        self.assertEqual(seen, [0])
+
     def test_refuses_off_this_machine(self):
         self.promoted(); self.bare("demo")
         p = mock.patch.object(server, "BIND_HOST", "0.0.0.0"); p.start(); self.addCleanup(p.stop)  # a phone on the LAN: its Host name is accepted, but it isn't this machine
