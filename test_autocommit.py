@@ -125,6 +125,17 @@ class AutoCommit(GitFixture):
         self.post("/api/action", {"file": "2026-10-01-alpha.md", "action": "keep", "status": "cooking"})
         self.assertIn("edits made by hand before this change: 2026-10-01-alpha.md", git(self.notes, "log", "-1", "--format=%b"))
 
+    def test_undo_is_not_reported_as_hand_edits(self):
+        for f in ("2026-10-01-alpha.md", "2026-10-02-beta.md"):
+            self.post("/api/action", {"file": f, "action": "keep", "status": "cooking", "note": "next"})
+        self.post("/api/undo", {})
+        self.assertEqual(self.subject(), "triage: undo keep “Beta”")
+        self.assertNotIn("by hand", git(self.notes, "log", "-1", "--format=%b"))
+        self.post("/api/batch", {"files": ["2026-10-01-alpha.md", "2026-10-03-gamma.md"], "action": "kill", "note": "x"})
+        self.post("/api/undo", {}); self.assertNotIn("by hand", git(self.notes, "log", "-1", "--format=%b"))
+        with open(os.path.join(self.notes, "2026-10-01-alpha.md"), "a") as fh: fh.write("typed after the keep\n")
+        with self.assertRaises(AssertionError): self.post("/api/undo", {})  # a real hand edit since: undo refuses, as before
+
     def test_project_only_change_has_no_commit(self):
         self.project("demo", notes="# Demo\n\n- status: promoted\n- promoted: 2026-10-01\n- due: 2026-12-01\n")
         r = self.post("/api/project/status", {"path": "active/demo/NOTES.md", "action": "extend", "note": "Waiting on the parts."})

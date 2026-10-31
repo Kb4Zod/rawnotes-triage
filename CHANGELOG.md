@@ -95,6 +95,8 @@ Flow gaps (plan and tickets in `.scratch/flow-gaps/`; Hugh approved all 13 recom
   - `rawtriage`: a connection lost after a change was sent exits **3** ("the server may have finished it: check
     `rawtriage -l` or the page"), no longer 2 / "nothing was changed". Promote, merge, close out, ship/kill and
     `project github` wait up to 300 s (others 60 s; `RAWTRIAGE_TIMEOUT` overrides). README, `SKILL.md`, `triage.md`.
+  - An Undo's commit no longer claims it "includes edits made by hand" every time: hand edits are now judged against
+    what the undo started from.
 - **Test fix.** `test_runtime.HttpLimits` reads the 413 right after the headers and tolerates the server closing
   before the oversized body is sent (it was flaky with BrokenPipe under load); it now also asserts no file changed
   and no undo step was added.

@@ -1390,9 +1390,20 @@ def undo():
             raise MutationFailed(f"Undo failed ({e}); nothing was changed.") from e
         _undo.pop(); _log(f"undo {entry['label']}")
         res = {"ok": True, "msg": f"Undone: {entry['label']}", "select": entry["select"], "left": len(_undo)}
-    _note_commit(autocommit(f"undo {entry['label']}", ops))  # undo is a new change with its own commit; history is never rewritten
+    _note_commit(autocommit(f"undo {entry['label']}", inverse_ops(ops)))  # undo is a new change with its own commit; history is never rewritten
     if any(op[0] == "movedir" for op in ops): res["sync_apps"] = run_sync_apps()  # a folder moved back: Obsidian links follow
     return res
+
+def inverse_ops(ops):
+    """`ops` as the change their undo made, for its commit: a write now went from the bytes the change wrote (op[3]) back
+    to the ones it replaced, and a move went the other way. So hand-edit detection compares the committed note with
+    what undo started from, not with what the original change started from (which every undo differs from)."""
+    out = []
+    for op in reversed(ops):
+        if op[0] == "write": out.append(("write", op[1], op[3], op[2], op[4]))
+        elif op[0] == "move": out.append(("move", op[2], op[1]))
+        else: out.append(op)
+    return out
 
 def to_done(src, tx):
     done_dir = os.path.join(NOTES, "done"); tx.ensure_dir(done_dir)
