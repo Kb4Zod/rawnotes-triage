@@ -194,6 +194,34 @@ class CloseOutGate(GithubCase):
             self.assertEqual(self.close(outcome="maintained")["moved_to"], "maintained/demo")
 
 
+class AllLocalBranches(GithubCase):
+    """Work counts on every local branch, not just the checked-out one (and with an unborn HEAD)."""
+    def side_work(self, path, n=1, back=True):
+        run(path, "switch", "-q", "-c", "side")
+        for i in range(n):
+            with open(os.path.join(path, f"side{i}.txt"), "w") as fh: fh.write(str(i))
+            run(path, "add", "-A"); run(path, "commit", "-qm", f"side {i}")
+        if back: run(path, "switch", "-q", "main")
+
+    def test_work_on_another_branch_flags_the_chip_and_gates_archive(self):
+        path = self.promoted(); self.side_work(path, 2)
+        s = self.state("demo"); self.assertEqual((s["after_skeleton"], s["not_on_github"]), (2, True))
+        self.assertEqual(server.work_commits(path), 2)
+        before = self.snapshot()
+        self.assertIn("has 2 commits", self.post("/api/project/close", {"name": "demo", "kind": "active", "outcome": "archive"}, ok=False)["error"])
+        self.assertEqual(self.snapshot(), before)
+
+    def test_an_unborn_head_with_commits_on_other_branches_still_counts_them(self):
+        path = self.promoted(); self.side_work(path, 1, back=False); run(path, "switch", "-q", "--orphan", "fresh")
+        self.assertEqual(server.work_commits(path), 1)  # side's work commit; main has only the skeleton
+        self.assertEqual(self.state("demo")["after_skeleton"], 1)
+
+    def test_unpushed_counts_every_local_branch(self):
+        path = self.promoted(); self.bare("demo"); run(path, "remote", "add", "origin", "https://github.com/me/demo.git")
+        run(path, "push", "-q", "-u", "origin", "main"); self.side_work(path, 2)
+        s = self.state("demo"); self.assertEqual((s["pushed"], s["unpushed"]), (True, 2))
+
+
 class CreateRepo(GithubCase):
     def hook(self, path):
         """A pre-push hook that records the environment the push saw."""

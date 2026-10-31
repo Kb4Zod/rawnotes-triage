@@ -82,6 +82,9 @@ Flow gaps (plan and tickets in `.scratch/flow-gaps/`; Hugh approved all 13 recom
     machine (`_this_machine()`), like Create private GitHub repo; Next round still works from anywhere. Off this machine
     `GET /api/project/deps` is redacted: no process command lines, no crontab lines, home spelled `~` (a `--host
     0.0.0.0` bind or a rebound DNS name could read them before). README "Network and safety".
+  - Git facts count every local branch (and a detached HEAD), not just the checked-out one: the **Not on GitHub**
+    chip, `GH ↑N`, and the work the GitHub gate protects (`work_commits`) include side branches, and a repo whose HEAD
+    is unborn still counts commits on its other branches.
 - **Test fix.** `test_runtime.HttpLimits` reads the 413 right after the headers and tolerates the server closing
   before the oversized body is sent (it was flaky with BrokenPipe under load); it now also asserts no file changed
   and no undo step was added.

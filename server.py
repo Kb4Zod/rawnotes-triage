@@ -533,8 +533,8 @@ def _promoted_days(path):
 
 def github_state(path, fresh=False):
     """Is this project on GitHub? git: has a repo; repo: 'owner/name' of a GitHub origin; pushed: that remote has
-    received something (a remote-tracking ref exists); unpushed: commits on this checkout that no origin ref contains;
-    after_skeleton: commits made after Promote's own first commit (0 when the repo has none, i.e. it predates it);
+    received something (a remote-tracking ref exists); unpushed: commits on any local branch that no origin ref contains;
+    after_skeleton: commits (on any local branch) made after Promote's own first commit (0 when the repo has none, i.e. it predates it);
     not_on_github: no GitHub origin and (after_skeleton > 0 or promoted 2+ days ago): the red chip and the Ship gate.
     The git facts are cached for GIT_TTL seconds (and until the repo's own files change): a few git processes per project add up."""
     state = _git_facts(path, fresh)
@@ -544,6 +544,11 @@ def github_state(path, fresh=False):
         state["not_on_github"] = state["after_skeleton"] > 0 or (age is not None and age >= NOT_ON_GITHUB_DAYS)
     return state
 
+def local_revs(path):
+    """What "the work in this repo" means to git: every local branch, plus HEAD when it points at a commit (a detached
+    HEAD's commits are on no branch). An unborn HEAD with commits on other branches still counts those."""
+    return ["--branches"] + (["HEAD"] if git_out(path, ["rev-parse", "--verify", "-q", "HEAD"]) is not None else [])
+
 def _git_facts(path, fresh):
     if not os.path.exists(os.path.join(path, ".git")): return {"git": False, "repo": "", "pushed": False, "unpushed": 0, "after_skeleton": 0}
     fp = _git_fingerprint(path)
@@ -551,10 +556,11 @@ def _git_facts(path, fresh):
     if hit and not fresh and hit[0] == fp and time.time() - hit[1] < GIT_TTL: return dict(hit[2])
     repo = github_repo_of(git_out(path, ["remote", "get-url", "origin"]))
     pushed = bool(repo and git_out(path, ["for-each-ref", "--count=1", "refs/remotes/origin"]))
-    ahead = git_out(path, ["rev-list", "--count", "HEAD", "--not", "--remotes=origin"]) if pushed else None
+    local = local_revs(path)
+    ahead = git_out(path, ["rev-list", "--count", *local, "--not", "--remotes=origin"]) if pushed else None
     after = 0
     if not repo:
-        total = git_out(path, ["rev-list", "--count", "HEAD"]); roots = (git_out(path, ["log", "--max-parents=0", "--format=%s", "HEAD"]) or "").splitlines()
+        total = git_out(path, ["rev-list", "--count", *local]); roots = (git_out(path, ["log", "--max-parents=0", "--format=%s", *local]) or "").splitlines()
         if total and total.isdigit() and len(roots) == 1 and SKELETON_SUBJECT.fullmatch(roots[0]): after = int(total) - 1
     state = {"git": True, "repo": repo, "pushed": pushed, "unpushed": int(ahead) if ahead and ahead.isdigit() else 0, "after_skeleton": after}
     with _git_lock:
@@ -1750,13 +1756,16 @@ def require_github_to_ship(req, folder, kind):
         raise ValueError("Push it first: shipped means it's on GitHub.")
 
 def work_commits(path):
-    """Commits in a folder's repo beyond Promote's skeleton commit (every commit when no root commit is the skeleton).
-    0 with no repo or no commits yet. A repo git can't read counts as work (1), so the gate fails closed."""
+    """Commits in a folder's repo beyond Promote's skeleton commit (every commit when no root commit is the skeleton),
+    across every local branch (local_revs). 0 with no repo or no commits yet. A repo git can't read counts as work (1),
+    so the gate fails closed."""
     if not os.path.exists(os.path.join(path, ".git")): return 0
-    if git_out(path, ["rev-parse", "--verify", "-q", "HEAD"]) is None:
-        return 0 if git_out(path, ["rev-parse", "--git-dir"]) is not None else 1  # an unborn branch: nothing committed
-    total = git_out(path, ["rev-list", "--count", "HEAD"]); roots = git_out(path, ["log", "--max-parents=0", "--format=%s", "HEAD"])
-    if not total or not total.isdigit() or roots is None: return 1
+    local = local_revs(path)
+    total = git_out(path, ["rev-list", "--count", *local])
+    if not total or not total.isdigit(): return 1
+    if total == "0": return 0  # an unborn branch and no other: nothing committed
+    roots = git_out(path, ["log", "--max-parents=0", "--format=%s", *local])
+    if roots is None: return 1
     return int(total) - (1 if any(SKELETON_SUBJECT.fullmatch(r) for r in roots.splitlines()) else 0)
 
 def require_github_to_close(path, kind, outcome):
