@@ -1149,7 +1149,7 @@ def slug_of(fname): return re.sub(r"^\d{4}-\d{2}-\d{2}-", "", fname)[:-3]
 def clean_slug(text):
     """A folder or file name for Promote/Reference: lowercase letters, digits and single dashes, starting and ending with
     a letter or digit (a leading dash reads as an option to every command that is later given the path). "" if nothing is left."""
-    return re.sub(r"-+", "-", re.sub(r"[^a-z0-9-]", "", (text or "").lower())).strip("-")[:80]
+    return re.sub(r"-+", "-", re.sub(r"[^a-z0-9-]", "", (text or "").lower())).strip("-")[:80].rstrip("-")  # cut, then no trailing dash
 
 def unique(path):
     base, ext = os.path.splitext(path); n = 2
@@ -1777,7 +1777,7 @@ def merge(req):
         srcs = _distinct_sources(files, _inbox_source)
         srcs.sort(key=os.path.basename, reverse=True)
         notes = {p: read_note(p) for p in srcs}
-        slug = re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", title.lower())).strip("-")[:60] or "merged"
+        slug = re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", title.lower())).strip("-")[:60].rstrip("-") or "merged"
         target = unique(os.path.join(NOTES, f"{t}-{slug}.md")); tname = os.path.basename(target)
         types = [field(notes[p][0], "type") for p in srcs]
         parts = [f"# {title}", "", f"- date: {t}", "- status: cooking",
@@ -2081,7 +2081,7 @@ def create_github_repo(req):
     The checks and `gh repo create` (which adds the remote) hold the read side of the lock: an undo of the promote or a
     close out sent meanwhile waits, then finds the remote (undo refuses; close out wants the push). The push runs after."""
     path, kind = project_dir(req.get("name", ""), req.get("kind"), write=True); name = os.path.basename(path)
-    if not re.fullmatch(r"[\w.-]+", name) or not name.strip("."): raise ValueError(f"“{name}” is not a name GitHub accepts for a repo.")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", name) or not name.strip("."): raise ValueError(f"“{name}” is not a name GitHub accepts for a repo.")
     if not shutil.which("git"): raise ValueError("git is not installed.")
     if not _gh_create_lock.acquire(blocking=False): raise ValueError("A GitHub repo is already being created.")
     try:

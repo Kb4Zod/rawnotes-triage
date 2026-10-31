@@ -99,6 +99,12 @@ class PromoteBase(Fixture):
 
 class Slugs(PromoteBase):
     """A promoted folder or reference file always starts (and ends) with a letter or digit."""
+    def test_a_slug_cut_to_length_never_ends_in_a_dash(self):
+        for text in ("x" * 79 + "-yyyy", "x" * 79 + " yyyy", "x" * 78 + "--yy"):
+            slug = server.clean_slug(text)
+            self.assertLessEqual(len(slug), 80); self.assertFalse(slug.endswith("-"), slug); self.assertRegex(slug, r"^[a-z0-9]")
+        self.assertEqual(self.promote(slug="a" * 79 + "-b")["target"], f"active/{'a' * 79}/NOTES.md")
+
     def test_promote_reference_and_merge_slugs_start_with_a_letter_or_digit(self):
         self.assertEqual(self.promote(slug="--x")["target"], "active/x/NOTES.md")
         self.assertEqual(self.promote("2026-10-02-b.md", slug="-")["target"], "active/b/NOTES.md")  # nothing left: the note's own slug

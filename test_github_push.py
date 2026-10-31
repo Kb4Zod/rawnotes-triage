@@ -371,6 +371,12 @@ class CreateRepo(GithubCase):
         path = self.promoted(); run(path, "switch", "-q", "-c", "side")
         self.refused(contains="main branch")
 
+    def test_refuses_a_folder_name_github_does_not_accept(self):
+        """GitHub repo names are ASCII letters, digits, `-`, `_` and `.`: a non-ASCII folder name is refused up front."""
+        path = self.project("café", notes="# c\n\n- status: promoted\n")
+        run(path, "init", "-q", "-b", "main"); run(path, "add", "-A"); run(path, "commit", "-qm", "start")
+        self.refused("café", contains="not a name GitHub accepts")
+
     def test_refuses_without_a_repo(self):
         self.project("plain", notes="# p\n\n- status: promoted\n")
         self.refused("plain", contains="no git repo")
