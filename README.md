@@ -167,9 +167,12 @@ rawtriage promote <file> --dest active|experiments|learning|templates --done "do
                   [--due-days 7 | --due YYYY-MM-DD] [--slug name]
 rawtriage merge <file> <file>... --title "..." [--then inbox|promote|reference] [promote options]
 rawtriage undo                     # the newest change, whoever made it (the page's undo list is the same list)
-rawtriage project ship <name> [--kind active|experiments|learning|templates]
+rawtriage project ship <name> [--kind active|experiments|learning|templates]   # a project folder needs --outcome
 rawtriage project extend <name> --reason "why more time" [--days N] [--kind ...]   # at most twice
-rawtriage project kill <name> --reason "why" [--kind ...]
+rawtriage project kill <name> --reason "why" [--kind ...]       # a folder moves to archive/<name>_abandoned
+rawtriage project close <name> --outcome next --done "done means" (--due-days N | --due YYYY-MM-DD)
+rawtriage project close <name> --outcome maintained|archive     # the folder moves; refused while anything blocks it
+rawtriage project deps <name> [--to maintained|archive|abandoned]   # what points at the folder (read-only)
 ```
 
 - `<file>` is a name in the Inbox, an absolute path, or any part of a name that matches one note (`rawtriage kill dns-slow --reason ...`).
@@ -184,6 +187,8 @@ rawtriage project kill <name> --reason "why" [--kind ...]
   is started detached; it waits up to 5 seconds. If that fails, or something that isn't rawnotes-triage answers on the
   port, it exits 2 and says nothing was changed. Do not fall back to editing notes by hand.
 - `GET /api/check` and `POST /api/new {slug, thought}` are the two endpoints added for it.
+- `project close` (and `project ship --outcome …`) prints what is left to do by hand after a move. `--kind` is only
+  needed when two project folders share a name.
 
 ## The rawnotes skill
 
@@ -386,7 +391,8 @@ when the project has a GitHub origin, otherwise **Open folder** (launches
 `xdg-open` on the server's machine; only for a browser on that machine, and
 hidden on the phone layout), and **Kill** (asks why; the reason goes under
 `## Outcome`). Shipping or killing a folder that has no dated file writes into its `NOTES.md`,
-creating it if needed. Shipping or killing also writes `- closed: <date>`.
+creating it if needed. Shipping or killing also writes `- closed: <date>`. On a project folder, Mark shipped and Kill
+are a **close out** (below): the folder may move.
 The **Closed** column shows only projects closed in the last 7 days
 (`closed_window_days` in `config.json`), counting folders and dated files that
 have since moved to `maintained/` or `archive/`; **Show all (N)** lists every
@@ -394,6 +400,49 @@ closed project still under `active/` or `experiments/`. A project's closed date
 is its `closed:` line, else `shipped:`, else the date in `**Killed
 YYYY-MM-DD:**` under `## Outcome`. All these writes can be undone. Git facts are cached
 for 20 seconds; **Refresh** re-reads them.
+
+**What points here** (the panel of an open project folder) is a read-only dependency check, the same one a move
+runs (see **Close out** below; `GET /api/project/deps?name=&kind=[&to=maintained|archive|abandoned]`). It looks for:
+
+| Looks at | Finds | Result |
+|---|---|---|
+| `~/.config/systemd/user/*.service`, `.timer`, `.path`, `.socket` (and `.d/*.conf` drop-ins) | the folder's path, also spelled `%h/…`, `~/…` or `$HOME/…` | **blocks** |
+| running processes (`/proc/<pid>/cwd`, `/proc/<pid>/cmdline`) | anything running from inside the folder | **blocks** |
+| `git worktree list` in the folder; a `gitdir:` `.git` file | linked worktrees, or the folder is one | **blocks** (a worktree whose folder is gone: a `git worktree prune` to-do) |
+| `~/.local/bin/*` | links into the folder; scripts under 64 KB naming it | **blocks** |
+| `crontab -l` | uncommented lines naming it | **blocks** |
+| `~/.claude/projects/<path with every non-alphanumeric as ->` (and its subfolders') | agent memory for the old path | to-do: the exact `mv` |
+| T3 Code projects | the app can't read them | to-do, always listed |
+
+Each hit comes with the command that fixes it. A path that only starts the same way (`rawnotes-triage-flow-gaps`
+next to `rawnotes-triage`) is not a hit. The app never moves memory folders or edits T3 itself.
+
+**Close out.** Mark shipped on a project folder asks *What happens to it now?*, with a suggestion preselected:
+
+- **Next round** (stays where it is): a new done means and ship-by (required; experiments may stay open-ended). The
+  header goes back to `status: promoted` with today's `promoted:`, the new `due:`, `extensions: 0`, and no `closed:` or
+  `shipped:`; the finished round is written under `## Rounds` (`- <promoted> → shipped <date> (ship by <due>, pushed
+  N×). Done means: <old>`), and the new done means replaces the old one where it was found. Use it for something still
+  being built (rawnotes-triage itself).
+- **Maintained**: `status: shipped`, `shipped:`, `closed:`, then the folder moves to `maintained/<name>`. Suggested when
+  the folder has a GitHub origin.
+- **Archive**: the same, into `archive/<name>`. Suggested otherwise (a one-off, often just a `NOTES.md`).
+- **Kill** (reason required) always moves the folder to `archive/<name>_abandoned`.
+
+A folder already marked shipped (or `done` by hand) before close out existed, and still in its project folder, shows
+**Close out…** instead, with the same three choices. A taken name gets `-2`, `-3`…. A move runs the dependency check (**What points here**) inside the change: any blocker
+refuses it with the list and each fix (HTTP 400 with `blockers` and `todos`), and nothing changes. To-dos don't stop
+it: they are written under `## Moved` in the moved `NOTES.md` (`- <date>: moved from <old>/ to <new>/. Left to do by
+hand:` and one line per command) and shown in the toast. The status edit and the move are one undo step: **Undo**
+moves the folder back and restores `NOTES.md`, but refuses (changing nothing, and saying the `mv` to do it by hand) if
+anything in the moved folder was added, removed or edited since (git's own `.git` contents don't count), the old name
+is taken again, or the folder became a symlink. The move is a `rename` on the same filesystem, never a copy. After a
+move or its undo, `sync-apps` (from `maintained/obsidian-sync-apps`) runs if it is on `PATH`, so Obsidian's `Apps/`
+link follows the folder; its output goes to stderr and a failure never fails the change (`sync_apps` in the answer
+says `ran`, `failed` or `not installed`). Moves happen only when you choose one, never on a timer. A single-file
+project (an old flat `<slug>.md`) is still just marked shipped in place. API: `POST /api/project/close {name, kind,
+outcome: next|maintained|archive, done?, due?|due_days?}` (or `action: "kill", note`); `/api/project/status` with
+`shipped` or `kill` on a folder does the same and needs `outcome` for `shipped`.
 
 **Symlinked project folders** are listed read-only with a note. Every write
 must land on a real path inside `RawNotes/` or the projects folders with no
@@ -514,7 +563,9 @@ client) against a disposable server; it is skipped when no Chromium/Chrome is
 found (`CHROMIUM=/path` to pick one) and never touches GitHub or your notes.
 No test reads your git config or runs your git hooks (`testkit.isolate_git`), and none reads or writes your
 `~/.config/rawnotes-triage` (testkit points the config folder at a temp one for the whole run;
-`test_zz_isolation.py` runs last and fails if the real folder changed).
+`test_zz_isolation.py` runs last and fails if the real folder changed). The dependency check never looks at this
+machine in tests: testkit points it at an empty fake home and `/proc` with no crontab, and a folder move never runs the
+real `sync-apps`.
 `TRIAGE_INDEX=/path/to/old/index.html` runs the same checks against another
 build of the page.
 
@@ -523,6 +574,7 @@ build of the page.
 - `server.py`: HTTP API, decisions, undo engine, project scan, GitHub access, startup and `--restart`
 - `notemeta.py`: note header and section parsing
 - `safefs.py`: symlink-safe path checks, atomic writes, read/write lock, stat cache
+- `depcheck.py`: the read-only dependency check run before a project folder moves (scanners take their roots as arguments)
 - `index.html` + `static/fonts/`: the whole UI
 - `starter/_template.md`: the note template copied into a new notes folder on first run
 - `starter/skeletons/<dest>/`: the files Promote writes into a new project folder (see **Project skeleton**)

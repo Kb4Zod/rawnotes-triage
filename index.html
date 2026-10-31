@@ -221,6 +221,7 @@ h1.title{font-size:38px;line-height:1.05;margin:16px 0 10px;overflow-wrap:anywhe
 #toast.bad{background:var(--toast-bad);color:#fff;border-color:transparent}
 #toast button{background:none;border:0;font-weight:900;color:var(--toast-acc);cursor:pointer;display:flex;gap:6px;align-items:center;white-space:nowrap;min-height:32px;padding:4px 8px;border-radius:8px}
 #toast.bad button{color:#fff}
+#toast .tlist{display:block;margin-top:6px;font-size:12.5px}#toast .tlist .mono{display:block;margin-top:3px;word-break:break-all;color:var(--toast-acc)}
 #toast .cwarn{display:block;margin-top:4px;font-size:12.5px;font-weight:700;color:var(--toast-acc)}
 #toast kbd{background:transparent;color:inherit;border-color:currentColor;opacity:.7}
 /* batch */
@@ -261,6 +262,8 @@ button.tile{cursor:pointer;font:inherit;color:inherit}
 .tl li{display:grid;grid-template-columns:12px 1fr auto;gap:8px;padding:4px 0;align-items:baseline}
 .tl li:before{content:"";width:7px;height:7px;border-radius:50%;background:var(--green);margin-top:5px}
 .tl .muted{font-size:11.5px}
+.deps{list-style:none;margin:0;padding:0;font-size:13px}.deps li{padding:6px 0;border-top:1px solid var(--line)}.deps li:first-child{border-top:0}
+.deps .fix{display:block;margin-top:3px;word-break:break-all;color:var(--green-ink);white-space:pre-wrap}.deps .det{white-space:pre-wrap}
 .acts{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px}
 .clockbar{height:8px;border-radius:4px;background:var(--sunk);margin-top:8px;overflow:hidden}
 .clockbar i{display:block;height:100%}
@@ -417,7 +420,7 @@ function cancelScopes(){for(const k in SC)SC[k].c.abort()}
 const S={route:'inbox',notes:null,projects:null,activity:null,gh:null,stats:null,
   sel:null,mode:null,expanded:null,batch:new Set(),batchMode:'merge',
   f:{q:'',status:'all',type:null},af:{q:'',fate:'all'},asel:null,
-  psel:null,pdetail:null,showAllClosed:false,repo:null,undoCount:0,
+  psel:null,pdetail:null,deps:null,showAllClosed:false,repo:null,undoCount:0,
   dods:{},   // unsaved "done means" edits by project: {mode:'edit'|'confirm', text}
   forms:{},  // unsaved decision forms by note+mode
   armed:null};  // the stack whose batch action was chosen on purpose (Enter submits only then)
@@ -452,14 +455,14 @@ function md(src,min=2){ // small markdown renderer: headings, lists, code, bold/
 
 /* ---------- toast + undo ---------- */
 let toastTimer,toastClear;
-function toast(msg,{undo=false,bad=false}={}){
+function toast(msg,{undo=false,bad=false,list=null}={}){
   const t=$('#toast');t.className=bad?'bad':'';clearTimeout(toastClear);
   const warn=bad?'':commitWarn;commitWarn=null;
-  t.innerHTML=`<span>${bad?'':I.check} ${esc(msg)}${warn?`<span class="cwarn">⚠ ${esc(warn)}</span>`:''}</span>${undo?`<button type="button" id="tUndo">${I.undo}Undo ${kbh('Z')}</button>`:''}`;
+  t.innerHTML=`<span>${bad?'':I.check} ${esc(msg)}${list&&list.length?`<span class="tlist">Left to do by hand (also under ## Moved in its NOTES.md):${list.map(x=>`<span class="mono">${esc(x)}</span>`).join('')}</span>`:''}${warn?`<span class="cwarn">⚠ ${esc(warn)}</span>`:''}</span>${undo?`<button type="button" id="tUndo">${I.undo}Undo ${kbh('Z')}</button>`:''}`;
   if(undo)$('#tUndo').onclick=doUndo;
   requestAnimationFrame(()=>t.classList.add('show'));
   const hide=()=>{t.classList.remove('show');toastClear=setTimeout(()=>{if(!t.classList.contains('show'))t.innerHTML=''},300)};  // an invisible Undo must not stay tabbable
-  clearTimeout(toastTimer);toastTimer=setTimeout(hide,bad?7000:9000);
+  clearTimeout(toastTimer);toastTimer=setTimeout(hide,bad?7000:list&&list.length?20000:9000);
   // on a phone, float above whatever is fixed to the bottom (tab bar or decision sheet) instead of covering it
   t.style.bottom=narrow()?(Math.max(0,...['#decide','#tabbar'].map(s=>{const el=$(s);return el&&getComputedStyle(el).position==='fixed'&&getComputedStyle(el).display!=='none'?innerHeight-el.getBoundingClientRect().top:0}))+12)+'px':'';
   t.onfocusin=t.onmouseenter=()=>clearTimeout(toastTimer);t.onfocusout=t.onmouseleave=()=>{clearTimeout(toastTimer);toastTimer=setTimeout(hide,3000)}}
@@ -862,14 +865,16 @@ async function renderDrawer(){const d=$('#drawer');if(!d)return;const c=projectC
     :c.exp?`<h3 class="sec label">Clock</h3><div class="muted" style="font-size:13px">Open-ended experiment in <span class="mono">experiments/</span>, no ship-by date.</div>`
     :`<h3 class="sec label">Clock</h3><div class="muted" style="font-size:13px">Not on the clock. Add a <span class="mono">- due: YYYY-MM-DD</span> line to the header at the top of its NOTES.md to give it a ship-by date.</div>`;
   const open=`<button class="btn" id="openf">${I.folder}Open folder</button>`;
+  // shipped (or done by hand) but still in its project folder, as before close out existed: it can still be closed out
+  const reopen=!!(p&&!linked&&c.closed&&['shipped','done'].includes(c.status));
   const acts=linked?`<div class="acts">${p.gh&&p.gh.repo?`<button class="btn" id="browse">${I.gh}Browse repo</button>`:''}${open}</div>`
     :!c.closed?`<div class="acts"><button class="btn primary" data-pa="shipped">${I.check}Mark shipped</button>${!f||f.open_ended?'':f.extensions>=f.max_extensions?`<button class="btn" disabled>${I.clock}No more extensions</button>`:`<button class="btn" data-pa="extend">${I.clock}+7 days</button>`}
      ${p&&p.gh&&p.gh.repo?`<button class="btn" id="browse">${I.gh}Browse repo</button>`:open}<button class="btn" data-pa="kill" style="color:var(--rust-ink)">${I.x}Kill</button></div>`
-    :`<div class="acts">${p&&p.gh&&p.gh.repo?`<button class="btn" id="browse">${I.gh}Browse repo</button>`:''}${open}</div>`;
+    :`<div class="acts">${reopen?`<button class="btn primary" data-pa="shipped" title="Next round, Maintained or Archive">${I.check}Close out…</button>`:''}${p&&p.gh&&p.gh.repo?`<button class="btn" id="browse">${I.gh}Browse repo</button>`:''}${open}</div>`;
   const head=`<h1 class="sr rh1">Projects</h1><button class="back" onclick="backToList()">‹ Projects</button><div style="display:flex;gap:6px;flex-wrap:wrap">${expChip(c)}${f&&!f.done&&f.days_left!==null?st(f.days_left<0?'late':f.days_left<=2?'soon':'ok',f.days_left<0?`${-f.days_left} days late`:`${f.days_left} days left`):''}${decide(f)}${p?ghChip(p.gh):''}</div>
     <h2>${esc(c.title)}</h2><span class="copy mono" data-copy="${esc(p?p.abs_path:S.notes.notes_dir.replace(/RawNotes$/,'')+f.path)}" tabindex="0" role="button">${I.copy}<span>~/Projects/${esc(p?p.path:f.path)}</span></span>
     ${linked?'<div class="flag" style="margin:12px 0 0"><b>Symlink.</b> This folder points somewhere else, so Triage shows it but will not edit it.</div>':''}`;
-  d.innerHTML=head+`<div id="dodbox"></div>`+clock+`<div id="pmore"></div>`+acts+`<div id="pform"></div><div class="err" id="perr" role="alert" style="margin-top:8px"></div>`;
+  d.innerHTML=head+`<div id="dodbox"></div>`+clock+`<div id="pmore"></div><div id="pdeps"></div>`+acts+`<div id="pform"></div><div class="err" id="perr" role="alert" style="margin-top:8px;white-space:pre-wrap"></div>`;
   const box=$('#dodbox'),more=$('#pmore');
   wireCopy(d);
   d.querySelectorAll('[data-pa]').forEach(b=>b.onclick=()=>projectAction(c,b.dataset.pa,b));
@@ -882,21 +887,64 @@ async function renderDrawer(){const d=$('#drawer');if(!d)return;const c=projectC
     const dr=S.dods[j.path];renderDod(j,dr&&dr.mode,dr&&dr.text);  // an unsaved edit comes back as it was left
     const prs=j.prs&&j.prs.length?`<h3 class="sec label">Pull requests</h3><ul class="tl">${j.prs.slice(0,5).map(x=>`<li><a href="${esc(ghUrl(x.url))}" target="_blank" rel="noopener noreferrer">#${x.number} ${esc(x.title)}</a><span class="muted">${esc(x.mergedAt?'merged':x.state.toLowerCase())}</span></li>`).join('')}</ul>`:'';
     more.innerHTML=(j.commits.length?`<h3 class="sec label">Recent activity${j.branch?' · '+esc(j.branch):''}</h3><ul class="tl">${j.commits.slice(0,5).map(x=>`<li><span>${esc(x.title)}</span><span class="muted">${esc(x.date.slice(5))}</span></li>`).join('')}</ul>`:'')
-      +prs+`<h3 class="sec label">From ${esc(j.summary_source||'the project')}</h3><div style="font-size:13px;color:var(--ink2);white-space:pre-wrap;max-height:9.5em;overflow:hidden">${esc(j.summary)}</div>`}
+      +prs+`<h3 class="sec label">From ${esc(j.summary_source||'the project')}</h3><div style="font-size:13px;color:var(--ink2);white-space:pre-wrap;max-height:9.5em;overflow:hidden">${esc(j.summary)}</div>`;
+    if(!linked&&(!c.closed||reopen))loadDeps(c)}
   catch(e){if(aborted(e)||!sc.ok(d,box)||S.psel!==c.id)return;box.innerHTML=`<p class="err">${esc(e.message)}</p>`}}
+// "What points here": the read-only dependency check of a project folder. Blockers stop a move until fixed; to-dos are
+// what is left to do by hand after one (the app never writes outside the notes and projects folders).
+function depsHtml(d){const li=x=>`<li><b>${esc(x.where)}</b> <span class="muted det">${esc(x.detail)}</span><span class="mono fix">${esc(x.fix)}</span></li>`;
+  return `<h3 class="sec label">What points here</h3>`+(d.blockers.length
+    ?`<div class="flag" role="note"><b>${d.blockers.length} ${d.blockers.length>1?'things':'thing'} would break</b> if this folder moved. Fix ${d.blockers.length>1?'each':'it'} first:</div><ul class="deps" id="blockers">${d.blockers.map(li).join('')}</ul>`
+    :`<div class="muted" style="font-size:13px">Nothing blocks a move to <span class="mono">${esc(d.dest)}/</span>.</div>`)
+    +(d.todos.length?`<div class="label" style="margin-top:8px">After a move, by hand</div><ul class="deps" id="todos">${d.todos.map(li).join('')}</ul>`:'')}
+async function loadDeps(c,to){const box=$('#pdeps');if(!box||!c.p)return;const sc=scope('deps');
+  if(!box.innerHTML)box.innerHTML='<h3 class="sec label">What points here</h3><div class="muted" style="font-size:13px">Checking…</div>';
+  try{const d=await api('/api/project/deps?'+pq(c.p)+(to?'&to='+enc(to):''),undefined,sc.signal);if(!sc.ok(box)||S.psel!==c.id)return;
+    S.deps={...d,id:c.id};box.innerHTML=depsHtml(d);return d}
+  catch(e){if(aborted(e)||!sc.ok(box))return;box.innerHTML=`<h3 class="sec label">What points here</h3><p class="err">${esc(e.message)}</p>`}}
+// Shipping a project folder is a close out: Next round (stays), Maintained or Archive (the folder moves), with the
+// server's suggestion preselected. A move is refused while anything in "What points here" blocks it.
+const OUTCOMES=[['next','Next round','stays, new due'],['maintained','Maintained','moves to maintained/'],['archive','Archive','moves to archive/']];
+function closeOut(c){const box=$('#pform');if(!box)return;const pe=$('#perr');pe&&(pe.textContent='');
+  const p=c.p,exp=p.kind==='experiments',known=S.deps&&S.deps.id===c.id?S.deps.suggest:null;let touched=false;
+  box.innerHTML=`<form id="pf" class="closeout" style="margin:10px 0;padding:12px;border-radius:10px;border:1px solid var(--green)"><div class="field"><span class="label" id="olab">What happens to it now?</span>
+    ${seg('outcome',OUTCOMES,known||'archive')}<div class="muted" id="osug" style="font-size:12px;margin-top:4px">${known?`Suggested: <b>${esc(known)}</b>${known==='maintained'?' (it has a GitHub origin)':' (no GitHub origin)'}`:'Checking…'}</div></div>
+    <div id="cnext"><div class="field"><label class="label" for="cdone">Done means, next round <em>required</em></label><textarea class="input" id="cdone" rows="2" maxlength="600" placeholder="What does shipped look like this time?"></textarea></div>${exp?'':shipBy([3,7,14,30])}</div>
+    <div id="cmove" style="font-size:13px"></div>
+    <div class="acts"><button class="btn primary" type="submit" id="cgo">${I.check}Ship it</button><button class="btn" type="button" id="pcancel">Cancel</button></div></form>`;
+  $('[data-seg=outcome]').setAttribute('aria-labelledby','olab');
+  const sync=()=>{const o=segVal('outcome'),next=o==='next',d=S.deps&&S.deps.id===c.id&&S.deps.to===o?S.deps:null;
+    $('#cnext').style.display=next?'':'none';
+    $('#cmove').innerHTML=next?`<span class="muted">Stays in <span class="mono">${esc(p.kind)}/</span>; this round goes under <b>## Rounds</b> in its NOTES.md.</span>`
+      :!d?'<span class="muted">Checking what points here…</span>'
+      :d.blockers.length?`<span class="err">Blocked: ${d.blockers.length} ${d.blockers.length>1?'things point':'thing points'} at this folder (see What points here). Fix ${d.blockers.length>1?'them':'it'} first.</span>`
+      :`Moves to <span class="mono">${esc(d.dest)}/</span>${d.todos.length?` · ${d.todos.length} to-do${d.todos.length>1?'s':''} for after, written to its NOTES.md`:''}`;
+    $('#cgo').disabled=!next&&!!(!d||d.blockers.length)};
+  const check=o=>{if(o==='next')return sync();loadDeps(c,o).then(()=>{if($('#pf'))sync()})};
+  wireSegs(box,()=>{touched=true;pe&&(pe.textContent='');check(segVal('outcome'))});wireShipBy(box);
+  $('#pcancel').onclick=()=>{box.innerHTML='';loadDeps(c)};
+  loadDeps(c).then(d=>{if(!d||!$('#pf'))return;
+    $('#osug').innerHTML=`Suggested: <b>${esc(d.suggest)}</b>${d.suggest==='maintained'?' (it has a GitHub origin)':' (no GitHub origin)'}`;
+    if(!touched)$$('[data-seg=outcome] button').forEach(b=>b.classList.toggle('on',b.dataset.v===d.suggest));check(segVal('outcome'))});
+  sync();
+  $('#pf').onsubmit=async ev=>{ev.preventDefault();const o=segVal('outcome'),btn=$('#cgo');
+    const body={name:p.name,kind:p.kind,action:'shipped',outcome:o,...(o==='next'?{done:$('#cdone').value.trim(),...shipBody(p.kind)}:{})};
+    btn.disabled=true;
+    try{const r=await api('/api/project/close',body);S.undoCount++;await changed();render();toast(r.msg,{undo:true,list:(r.todos||[]).map(t=>t.fix)})}
+    catch(e){btn.disabled=false;pe&&(pe.textContent=e.message);if(o!=='next')loadDeps(c,o).then(()=>{if($('#pf'))sync()})}}}
 function projectAction(c,a,btn){
-  if(a==='shipped')return sendProject(c,a,'',btn);
+  if(a==='shipped')return c.p?closeOut(c):sendProject(c,a,'',btn);
   // pushing the date and killing both ask why first; the reason is written into the project file
   const box=$('#pform');if(!box)return;const ext=a==='extend',pe=$('#perr');pe&&(pe.textContent='');
   box.innerHTML=`<form id="pf" style="margin:10px 0;padding:12px;border-radius:10px;border:1px solid ${ext?'var(--gold)':'var(--rust)'}"><div class="field"><label class="label" for="pwhy">${ext?'Why do you need more time? <em>required, 10+ characters</em>':'Why are you killing it? <em>required</em>'}</label>
-    <textarea class="input" id="pwhy" rows="2" maxlength="300"></textarea></div>
+    <textarea class="input" id="pwhy" rows="2" maxlength="300"></textarea></div>${!ext&&c.p?`<div class="muted" style="font-size:12px;margin:-4px 0 8px">The folder moves to <span class="mono">archive/${esc(c.p.name)}_abandoned/</span> (refused while anything in What points here blocks it).</div>`:''}
     <div class="acts"><button class="btn ${ext?'primary':''}" type="submit" ${ext?'':'style="color:var(--rust-ink)"'}>${ext?I.clock+'Push 7 days':I.x+'Kill it'}</button><button class="btn" type="button" id="pcancel">Cancel</button></div></form>`;
   $('#pwhy').focus();$('#pcancel').onclick=()=>{box.innerHTML=''};
   $('#pf').onsubmit=ev=>{ev.preventDefault();sendProject(c,a,$('#pwhy').value.trim(),$('#pf button[type=submit]'))}}
 async function sendProject(c,a,note,btn){
   btn.disabled=true;
-  try{const r=await api('/api/project/status',c.f?{path:c.f.path,action:a,days:7,note}:{name:c.p.name,kind:c.p.kind,action:a,note});S.undoCount++;await changed();render();toast(r.msg,{undo:true})}
-  catch(e){btn.disabled=false;const pe=$('#perr');pe&&(pe.textContent=e.message)}}
+  try{const r=await api('/api/project/status',c.f?{path:c.f.path,action:a,days:7,note}:{name:c.p.name,kind:c.p.kind,action:a,note});S.undoCount++;await changed();render();toast(r.msg,{undo:true,list:(r.todos||[]).map(t=>t.fix)})}
+  catch(e){btn.disabled=false;const pe=$('#perr');pe&&(pe.textContent=e.message);if(a==='kill'&&c.p)loadDeps(c,'abandoned')}}
 // "Done means" editor: edit -> review before/after -> confirm (writes only on confirm; refused if the file changed).
 // The text being edited lives in S.dods, so a refresh, a re-render or a trip to another page doesn't lose it.
 function renderDod(p,mode,draft){const el=$('#dodbox');if(!el)return;const d=p.done,file=d.source||'NOTES.md',old=d.defined?d.text:'',key=p.path;

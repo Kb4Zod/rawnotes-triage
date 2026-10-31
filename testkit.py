@@ -12,6 +12,7 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 from unittest import mock
 
+import depcheck
 import server
 
 
@@ -38,6 +39,14 @@ REAL_CONFIG_AT_START = config_dir_state()
 SESSION_DIR = tempfile.mkdtemp(prefix="rt-test-session-")
 atexit.register(shutil.rmtree, SESSION_DIR, ignore_errors=True)
 os.environ["RAWTRIAGE_CONFIG_DIR"] = server.CONFIG_DIR = os.path.join(SESSION_DIR, "config")
+
+# The dependency check (close out) never looks at this machine in tests: no real systemd units, ~/.local/bin, crontab,
+# ~/.claude or running processes. Every test sees an empty fake home and /proc unless it sets server.DEPS itself; a
+# folder move never runs the real sync-apps either (tests that want it point server.SYNC_APPS at a stub).
+FAKE_DEPS_HOME = os.path.join(SESSION_DIR, "deps-home"); FAKE_PROC = os.path.join(SESSION_DIR, "deps-proc")
+os.makedirs(FAKE_DEPS_HOME); os.makedirs(FAKE_PROC)
+server.DEPS = depcheck.Sources(FAKE_DEPS_HOME, proc=FAKE_PROC, crontab=lambda: "")
+server.SYNC_APPS = os.path.join(SESSION_DIR, "no-sync-apps")  # an absolute path that doesn't exist: never found on PATH
 
 
 def isolate_git(case, email=TEST_EMAIL):

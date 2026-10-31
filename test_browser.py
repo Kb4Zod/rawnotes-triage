@@ -279,11 +279,62 @@ class Flows(BrowserCase):
         self.assertTrue(os.path.exists(os.path.join(self.notes, "2026-10-01-arcane-bomb-a.md")))
 
     def test_mark_shipped_from_projects_then_undo(self):
+        """Mark shipped on a folder opens the close-out choice with the suggestion preselected; Archive moves it, Undo
+        brings it back exactly."""
+        demo = os.path.join(self.tmp, "active", "demo"); original = open(os.path.join(demo, "NOTES.md"), "rb").read()
         self.open("projects"); self.page.click("[data-pid='active/demo/NOTES.md']"); self.page.wait("document.querySelector('[data-pa=shipped]')")
-        self.page.click("[data-pa=shipped]"); self.done_toast()
-        self.assertIn("- status: shipped", open(os.path.join(self.tmp, "active", "demo", "NOTES.md")).read())
+        self.page.click("[data-pa=shipped]"); self.page.wait("document.querySelector('#pf.closeout')")
+        self.page.wait("document.querySelector('#cmove').textContent.includes('Moves to archive/demo/')")
+        self.assertEqual(self.page.eval("segVal('outcome')"), "archive"); self.assertIn("Suggested: archive", self.text("#osug"))
+        self.assertEqual(self.posts(), [])  # choosing is not doing
+        self.page.click("#cgo"); self.done_toast()
+        self.assertFalse(os.path.exists(demo))
+        moved = open(os.path.join(self.tmp, "archive", "demo", "NOTES.md")).read()
+        self.assertIn("- status: shipped", moved); self.assertIn("## Moved", moved)
+        toast = self.text("#toast"); self.assertIn("archive/demo", toast); self.assertIn("Update any T3 Code project whose folder is", toast)
+        self.page.wait("[...document.querySelectorAll('#pscroll .col')].some(c=>c.querySelector('h2').textContent.startsWith('Closed')&&c.querySelector('[data-pid=\"archive/demo/NOTES.md\"]'))")
         self.page.click("#tUndo"); self.settle(0.6)
+        self.assertEqual(open(os.path.join(demo, "NOTES.md"), "rb").read(), original)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "archive")))
+
+    def test_close_out_next_round_asks_for_done_means_and_stays(self):
+        nodod = os.path.join(self.tmp, "active", "nodod", "NOTES.md")
+        self.open("projects"); self.page.click("[data-pid='active/nodod/NOTES.md']"); self.page.wait("document.querySelector('[data-pa=shipped]')")
+        self.page.click("[data-pa=shipped]"); self.page.wait("document.querySelector('#pf.closeout') && !document.querySelector('#cmove').textContent.includes('Checking')")
+        self.page.click("[data-seg=outcome] [data-v=next]"); self.page.wait("document.querySelector('#cnext').style.display===''")
+        self.assertTrue(self.exists("#shipby"))
+        self.page.click("#cgo"); self.page.wait("document.querySelector('#perr').textContent.includes('done means')")
+        self.assertNotIn("Rounds", open(nodod).read())
+        self.focus("#cdone"); self.page.type("Round two ships"); self.page.click("[data-seg=due] [data-v='14']"); self.page.click("#cgo"); self.done_toast()
+        text = open(nodod).read(); due = (server.today() + server.dt.timedelta(days=14)).isoformat()
+        self.assertEqual((server.field(text, "status"), server.field(text, "due"), server.field(text, "extensions"), server.field(text, "closed")), ("promoted", due, "0", ""))
+        self.assertIn("## Rounds", text); self.assertIn("- definition of done: Round two ships", text)
+        self.assertIn("Next round ships by " + due, self.text("#toast"))
+
+    def test_a_project_shipped_before_close_out_existed_can_still_be_closed_out(self):
+        self.project("legacy", notes=f"# Legacy\n\n- status: done\n- closed: {server.today().isoformat()}\n")
+        self.open("projects"); self.page.click("[data-pid='active/legacy']"); self.page.wait("document.querySelector('#drawer [data-pa=shipped]')")
+        self.assertIn("Close out", self.text("#drawer .acts")); self.assertFalse(self.exists("#drawer [data-pa=kill]"))
+        self.page.click("[data-pa=shipped]"); self.page.wait("document.querySelector('#cmove').textContent.includes('Moves to archive/legacy/')")
+        self.page.click("#cgo"); self.done_toast()
+        self.assertIn("- status: shipped", open(os.path.join(self.tmp, "archive", "legacy", "NOTES.md")).read())
+
+    def test_a_blocked_close_out_cannot_be_sent_and_kill_shows_why(self):
+        import depcheck
+        home = os.path.join(self.tmp, "fakehome"); os.makedirs(os.path.join(home, ".local", "bin"))
+        with open(os.path.join(home, ".local", "bin", "demo-run"), "w") as fh: fh.write(f"#!/bin/sh\nexec {self.tmp}/active/demo/run\n")
+        with mock.patch.object(server, "DEPS", depcheck.Sources(home, proc=os.path.join(self.tmp, "noproc"), crontab=lambda: "")):
+            self.open("projects"); self.page.click("[data-pid='active/demo/NOTES.md']"); self.page.wait("document.querySelector('#pdeps #blockers')")
+            self.page.click("[data-pa=shipped]"); self.page.wait("document.querySelector('#cmove .err')")
+            self.assertIn("Blocked", self.text("#cmove")); self.assertTrue(self.page.eval("document.querySelector('#cgo').disabled"))
+            self.page.click("[data-seg=outcome] [data-v=next]"); self.page.wait("!document.querySelector('#cgo').disabled")  # a next round moves nothing
+            self.page.click("#pcancel"); self.page.click("[data-pa=kill]"); self.page.wait("document.querySelector('#pwhy')")
+            self.assertIn("archive/demo_abandoned/", self.text("#pform"))
+            self.focus("#pwhy"); self.page.type("Not needed"); self.page.click("#pf button[type=submit]")
+            self.page.wait("document.querySelector('#perr').textContent.includes(\"Can't move demo\")")
+            self.assertIn("demo-run", self.text("#perr"))
         self.assertIn("- status: promoted", open(os.path.join(self.tmp, "active", "demo", "NOTES.md")).read())
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "archive")))
 
     def test_promoted_learning_and_template_folders_are_labelled_cards(self):
         for kind, name in (("learning", "study"), ("templates", "kit")):
@@ -321,6 +372,21 @@ class Flows(BrowserCase):
         self.assertIn("Show all (2)", self.text("#closedAll"))
         self.page.click("#closedAll"); self.page.wait("document.querySelector('#closedAll').textContent.includes('Last 7')")
         self.assertEqual(sorted(col()[1]), ["active/ancient", "active/fresh"])
+
+    def test_the_drawer_shows_what_points_at_the_folder(self):
+        import depcheck
+        home = os.path.join(self.tmp, "fakehome"); os.makedirs(os.path.join(home, ".local", "bin"))
+        with open(os.path.join(home, ".local", "bin", "demo-run"), "w") as fh: fh.write(f"#!/bin/sh\nexec {self.tmp}/active/demo/run\n")
+        with mock.patch.object(server, "DEPS", depcheck.Sources(home, proc=os.path.join(self.tmp, "noproc"), crontab=lambda: "")):
+            self.open("projects"); self.page.click("[data-pid='active/demo/NOTES.md']")
+            self.page.wait("document.querySelector('#pdeps #blockers')")
+            text = self.text("#pdeps")
+            self.assertIn("What points here", text); self.assertIn("1 thing would break", text)
+            self.assertIn("demo-run", text); self.assertIn("Update any T3 Code project whose folder is", text)
+            os.remove(os.path.join(home, ".local", "bin", "demo-run"))
+            self.page.click("[data-pid='active/nodod/NOTES.md']"); self.page.wait("document.querySelector('#pdeps #todos')")
+            self.assertIn("Nothing blocks a move to archive/nodod/", self.text("#pdeps"))
+        self.assertEqual(self.posts(), [])  # looking is read-only
 
     def test_an_open_ended_experiment_is_only_under_experiments(self):
         self.project("spike", kind="experiments", notes="# Spike\n\n- date: 2026-10-01\n- status: promoted\n- promoted: 2026-10-01\n\n## Plan\n\n- definition of done: We know.\n")

@@ -17,6 +17,12 @@ class RealConfigUntouched(unittest.TestCase):
             self.assertTrue(d.startswith(testkit.SESSION_DIR), d)
             self.assertNotEqual(os.path.realpath(d), os.path.realpath(testkit.REAL_CONFIG_DIR))
 
+    def test_the_dependency_check_never_looks_at_this_machine(self):
+        self.assertTrue(server.DEPS.home.startswith(testkit.SESSION_DIR), server.DEPS.home)
+        self.assertTrue(server.DEPS.proc.startswith(testkit.SESSION_DIR), server.DEPS.proc)
+        self.assertEqual(server.DEPS.crontab(), "")
+        self.assertTrue(server.SYNC_APPS.startswith(testkit.SESSION_DIR))
+
     def test_the_real_config_folder_is_as_it_was_before_the_run(self):
         self.assertEqual(testkit.config_dir_state(), testkit.REAL_CONFIG_AT_START,
                          f"a test created or changed {testkit.REAL_CONFIG_DIR}; isolate it (testkit.Fixture / server.CONFIG_DIR)")

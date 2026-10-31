@@ -35,7 +35,20 @@ Your job is to make decisions happen, not to do more research. Every decision go
    exits 1, read its message and ask the user; if it exits 2, stop and tell the user (see `SKILL.md`).
 6. **Finish with a summary.** Run `rawtriage -l` again. Report how many were promoted, kept, killed and merged, and what
    is still open.
-7. **Projects that are due.** `rawtriage project ship <name>` when done means is met. Killing needs a reason:
+7. **Projects that are due.** When done means is met, a project folder is **closed out**: ask the user what happens
+   now, offering the suggestion from `rawtriage project deps <name>` (maintained when it has a GitHub origin, else
+   archive):
+   - **Next round** (still being built, stays where it is): ask for the new done means and ship-by, then
+     `rawtriage project close <name> --outcome next --done "<done means>" --due-days N` (or `--due YYYY-MM-DD`).
+   - **Maintained** or **Archive** (the folder moves to `maintained/<name>` or `archive/<name>`):
+     `rawtriage project close <name> --outcome maintained|archive`.
+   Killing needs a reason and moves the folder to `archive/<name>_abandoned`:
    `rawtriage project kill <name> --reason "<why>"`. Pushing the ship-by needs a reason too (at least 10 characters)
    and is allowed at most twice: `rawtriage project extend <name> --reason "<why more time>" [--days N]`. After two
    extensions the server refuses: the only choices left are ship or kill, so ask the user which.
+8. **Moves.** A move is refused while anything points at the folder (systemd unit, running process, git worktree,
+   a link or script in the local bin folder, crontab line): show the user each blocker and its fix from `rawtriage project deps`,
+   and let them fix it; never fix it silently. Never move a project folder yourself, never on a timer, only when the
+   user decides. After a move, the command prints what is left to do by hand (also written under `## Moved` in the
+   project's NOTES.md): the `mv` of its Claude Code agent memory folder (under `.claude/projects` in the home folder), and updating any T3 Code project
+   that points at the old folder. Offer to do those (with T3's own project tools for T3), with the user's OK.
