@@ -1438,6 +1438,7 @@ def _commit_paths(ops):
     for op in ops:
         if op[0] not in ("write", "move"): continue  # mkdir, gitinit
         for p in (op[1], op[2]) if op[0] == "move" else (op[1],):
+            p = os.path.realpath(p)  # Tx paths keep the notes folder's own spelling (a symlink in it, or above it): compare like with like
             if not _within(p, root) or p == root: continue
             rel = os.path.relpath(p, root)
             if rel not in out: out.append(rel); first[rel] = op if op[0] == "write" else None

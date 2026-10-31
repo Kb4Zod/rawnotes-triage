@@ -190,6 +190,19 @@ class AutoCommit(GitFixture):
         self.assertEqual(self.status(), [])
 
 
+class SymlinkedNotesPath(GitFixture):
+    """The notes folder reached through a symlink (a symlinked parent, e.g. ~/Projects -> /data/Projects): still committed."""
+    def test_a_change_is_committed_when_the_notes_path_goes_through_a_symlink(self):
+        real = os.path.join(self.tmp, "real"); os.makedirs(real); os.rename(self.notes, os.path.join(real, "RawNotes"))
+        link = os.path.join(self.tmp, "link"); os.symlink(real, link)
+        self.notes = server.NOTES = os.path.join(link, "RawNotes"); server.PROJECTS = link
+        self.init_repo(); self.note("2026-10-01-alpha.md", "Alpha"); self.snapshot_commit(); n = self.count()
+        r = self.post("/api/action", {"file": "2026-10-01-alpha.md", "action": "kill", "note": "dupe"})
+        self.assertIn("commit", r); self.assertTrue(r["commit"]["ok"], r); self.assertTrue(r["commit"].get("sha"), r)
+        self.assertEqual(self.count(), n + 1); self.assertEqual(self.changed(), ["A\tdone/2026-10-01-alpha.md", "D\t2026-10-01-alpha.md"])
+        self.assertEqual(server._commit_paths([("write", os.path.join(self.notes, "x.md"), None, b"", None)])[0], ["x.md"])
+
+
 class NotARepo(GitFixture):
     def test_change_succeeds_without_a_repo(self):
         self.note("2026-10-01-alpha.md", "Alpha")
