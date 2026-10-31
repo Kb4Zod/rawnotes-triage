@@ -85,6 +85,9 @@ Flow gaps (plan and tickets in `.scratch/flow-gaps/`; Hugh approved all 13 recom
   - Git facts count every local branch (and a detached HEAD), not just the checked-out one: the **Not on GitHub**
     chip, `GH ↑N`, and the work the GitHub gate protects (`work_commits`) include side branches, and a repo whose HEAD
     is unborn still counts commits on its other branches.
+  - The GitHub gate at close out checks that the work is on GitHub, not just that an `origin` exists: maintained (and
+    archive of a repo with work) needs a GitHub origin that has been pushed to and no commit on any local branch
+    missing from it. An origin added but never pushed, or a Create private GitHub repo whose push failed, is refused.
 - **Test fix.** `test_runtime.HttpLimits` reads the 413 right after the headers and tolerates the server closing
   before the oversized body is sent (it was flaky with BrokenPipe under load); it now also asserts no file changed
   and no undo step was added.

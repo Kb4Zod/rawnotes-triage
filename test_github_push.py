@@ -114,7 +114,8 @@ class CloseOutGate(GithubCase):
 
     def work(self, path, n=1):
         for i in range(n):
-            with open(os.path.join(path, f"work{i}.txt"), "w") as fh: fh.write(str(i))
+            self.made = getattr(self, "made", 0) + 1
+            with open(os.path.join(path, f"work{self.made}.txt"), "w") as fh: fh.write(str(i))
             run(path, "add", "-A"); run(path, "commit", "-qm", f"work {i}")
 
     def assert_refused(self, contains="Push it first", **kw):
@@ -134,8 +135,12 @@ class CloseOutGate(GithubCase):
         self.project("plain", notes="# p\n\n- status: promoted\n")
         self.assert_refused(name="plain", outcome="maintained")
 
-    def test_with_an_origin_maintained_moves(self):
-        path = self.promoted(); self.work(path); run(path, "remote", "add", "origin", "https://github.com/me/demo.git")
+    def origin(self, path, name="demo", push=True):
+        self.bare(name); run(path, "remote", "add", "origin", f"https://github.com/me/{name}.git")
+        if push: run(path, "push", "-q", "-u", "origin", "main")
+
+    def test_with_its_work_pushed_maintained_moves(self):
+        path = self.promoted(); self.work(path); self.origin(path)
         self.assertEqual(self.close(outcome="maintained")["moved_to"], "maintained/demo")
         self.assertIn("- status: shipped", open(os.path.join(self.tmp, "maintained", "demo", "NOTES.md")).read())
 
@@ -155,8 +160,24 @@ class CloseOutGate(GithubCase):
         for dest, name in (("active", "a1"), ("templates", "t1")):
             path = self.promoted(name, dest); self.work(path, 2)
             self.assertIn("has 2 commits that are not on GitHub", self.assert_refused(name=name, kind=dest))
-            run(path, "remote", "add", "origin", f"https://github.com/me/{name}.git")
+            self.origin(path, name)
             self.assertEqual(self.close(name, dest)["moved_to"], f"archive/{name}")
+
+    def test_an_origin_that_was_never_pushed_to_is_not_on_github(self):
+        path = self.promoted(); self.work(path); self.origin(path, push=False)
+        for outcome in ("maintained", "archive"):
+            self.assertIn("nothing was ever pushed", self.assert_refused(outcome=outcome))
+
+    def test_commits_missing_from_github_on_any_branch_are_refused(self):
+        path = self.promoted(); self.work(path); self.origin(path)
+        self.work(path, 2)  # two more on main, not pushed
+        for outcome in ("maintained", "archive"):
+            self.assertIn("2 commits on demo's local branches are not on GitHub", self.assert_refused(outcome=outcome))
+        run(path, "push", "-q", "origin", "main")
+        run(path, "switch", "-q", "-c", "side"); self.work(path); run(path, "switch", "-q", "main")
+        self.assertIn("1 commit on demo's local branches is not on GitHub", self.assert_refused(outcome="maintained"))
+        run(path, "push", "-q", "origin", "side")
+        self.assertEqual(self.close(outcome="maintained")["moved_to"], "maintained/demo")
 
     def test_archive_of_a_repo_without_a_skeleton_commit_counts_every_commit(self):
         path = self.project("old", notes="# old\n\n- status: promoted\n")
@@ -298,6 +319,13 @@ class CreateRepo(GithubCase):
         self.assertIn("Created private repo me/demo, but the push failed", err); self.assertIn("git push -u origin main", err)
         self.assertEqual(run(path, "remote"), "origin")
         self.assertIn("already has an origin", self.create("demo", ok=False)["error"])  # no second create
+        before = self.snapshot()  # the repo exists on GitHub but holds nothing: maintained still says push it first
+        err = self.post("/api/project/close", {"name": "demo", "kind": "active", "outcome": "maintained"}, ok=False)["error"]
+        self.assertIn("nothing was ever pushed", err); self.assertEqual(self.snapshot(), before)
+        open(os.path.join(path, "w.txt"), "w").write("w"); run(path, "add", "-A"); run(path, "commit", "-qm", "work")
+        before = self.snapshot()  # and with work in it, so does archive
+        err = self.post("/api/project/close", {"name": "demo", "kind": "active", "outcome": "archive"}, ok=False)["error"]
+        self.assertIn("nothing was ever pushed", err); self.assertEqual(self.snapshot(), before)
 
     def test_only_a_board_project_folder_is_accepted(self):
         for bad in ({"name": "../x"}, {"name": "ghost"}, {"name": "demo", "kind": "nope"}):

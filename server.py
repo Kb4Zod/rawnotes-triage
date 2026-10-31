@@ -1769,19 +1769,29 @@ def work_commits(path):
     return int(total) - (1 if any(SKELETON_SUBJECT.fullmatch(r) for r in roots.splitlines()) else 0)
 
 def require_github_to_close(path, kind, outcome):
-    """The GitHub gate at close out, for active/templates folders with no GitHub origin (read fresh). maintained:
-    refused. archive: refused only when the repo has work in it (work_commits > 0); no git, or only the skeleton
-    commit, archives freely. next and kill (abandoned) are never gated."""
-    if kind not in SHIP_NEEDS_GITHUB or outcome not in ("maintained", "archive") or github_state(path, True)["repo"]: return
-    name = os.path.basename(path)
-    if outcome == "maintained":
-        raise ValueError(f"Push it first: maintained means it's on GitHub. Create a private repo for {name} (Create private "
-                         f"GitHub repo, or `rawtriage project github {name}`), then close it out again.")
-    n = work_commits(path)
-    if n:
+    """The GitHub gate at close out, for active/templates folders (git facts read fresh). The work has to be on GitHub,
+    not just have an origin: maintained needs a GitHub origin that has received a push (`pushed`) and no commit on any
+    local branch missing from it (`unpushed` 0). archive is gated only when the repo has work in it (work_commits > 0),
+    and then needs the same. No git, or only the skeleton commit, archives freely; next and kill (abandoned) are never
+    gated."""
+    if kind not in SHIP_NEEDS_GITHUB or outcome not in ("maintained", "archive"): return
+    if outcome == "archive":
+        n = work_commits(path)
+        if not n: return
+    st = github_state(path, True); name = os.path.basename(path)
+    how = f"(Create private GitHub repo, or `rawtriage project github {name}`)"
+    if not st["repo"]:
+        if outcome == "maintained":
+            raise ValueError(f"Push it first: maintained means it's on GitHub. Create a private repo for {name} {how}, then close it out again.")
         raise ValueError(f"Push it first: {name} has {n} commit{'s' if n > 1 else ''} that {'are' if n > 1 else 'is'} not on GitHub, "
-                         f"and archive must not strand them. Create a private repo (Create private GitHub repo, or "
-                         f"`rawtriage project github {name}`), then archive it, or kill it instead.")
+                         f"and archive must not strand them. Create a private repo {how}, then archive it, or kill it instead.")
+    if not st["pushed"]:
+        raise ValueError(f"Push it first: {name} has a GitHub origin ({st['repo']}) but nothing was ever pushed to it. "
+                         f"Run `git push -u origin main` in the folder, then close it out again.")
+    if st["unpushed"]:
+        u = st["unpushed"]
+        raise ValueError(f"Push it first: {u} commit{'s' if u > 1 else ''} on {name}'s local branches {'are' if u > 1 else 'is'} not on "
+                         f"GitHub ({st['repo']}). Push {'them' if u > 1 else 'it'} (`git push origin <branch>`), then close it out again.")
 
 def _status_edit(text, req, name):
     """The new text, label and message for a project status action (shipped / extend / kill)."""

@@ -53,8 +53,8 @@ Your job is to make decisions happen, not to do more research. Every decision go
    project's NOTES.md): the `mv` of its Claude Code agent memory folder (under `.claude/projects` in the home folder), and updating any T3 Code project
    that points at the old folder. Offer to do those (with T3's own project tools for T3), with the user's OK.
 9. **GitHub before close out (`active` and `templates` only).** Closing out to **maintained** is refused until the
-   folder has a GitHub origin ("Push it first"). **Archive** is refused too when the folder is a git repo with work
-   in it (any commit after Promote's skeleton commit, or any commit at all if there is no skeleton commit); a folder
+   folder's work is on GitHub: a GitHub origin that has been pushed to, with no local branch ahead of it ("Push it
+   first"). **Archive** is refused too when the folder is a git repo with work in it, until that work is pushed (any commit after Promote's skeleton commit, or any commit at all if there is no skeleton commit); a folder
    with no git repo, or only the skeleton commit, archives without GitHub. **Next round** and **kill** are never
    gated. When refused, tell the user and offer `rawtriage project github <name>` (creates a **private** repo and
    pushes `main`; only on the server's own machine; it never makes anything public, that is the user's `gopublic`).

@@ -380,14 +380,16 @@ was promoted 2 or more days ago (a project made before the skeleton existed is
 judged by the `promoted:` date alone).
 
 **Shipped means it's on GitHub.** For an `active` or `templates` project
-folder with no GitHub origin, the gate sits in **close out** (below), so no
-route around it skips it. It is checked fresh, under the same lock as the move;
-a refusal is a 400 starting "Push it first" and nothing changes:
+folder, the gate sits in **close out** (below), so no route around it skips
+it. "On GitHub" means the work is there, not just a remote: a GitHub `origin`
+that has received a push, and no commit on any local branch that `origin`
+doesn't have. It is checked fresh, under the same lock as the move; a refusal
+is a 400 starting "Push it first" and nothing changes:
 
-| Close-out outcome | Needs a GitHub origin? |
+| Close-out outcome | Needs the work on GitHub? |
 |---|---|
 | **Maintained** | always |
-| **Archive** | only if the folder is a git repo with work in it: any commit after Promote's skeleton commit, or any commit at all when the repo has no skeleton commit. No `.git`, no commits, or only the skeleton commit: archives without GitHub |
+| **Archive** | only if the folder is a git repo with work in it (on any local branch): any commit after Promote's skeleton commit, or any commit at all when the repo has no skeleton commit. No `.git`, no commits, or only the skeleton commit: archives without GitHub |
 | **Next round** | never |
 | **Kill** (`archive/<name>_abandoned`) | never |
 
