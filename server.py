@@ -546,6 +546,11 @@ def _git_fingerprint(path):
 NOT_ON_GITHUB_DAYS = 2  # a project with no GitHub origin is flagged this long after Promote, or at its first commit after the skeleton
 SKELETON_SUBJECT = re.compile(r"Start .+ \(promoted from RawNotes\)")  # the one commit Promote makes (Tx.gitinit)
 
+def has_skeleton_root(roots):
+    """Is one of these root-commit subjects Promote's skeleton commit? The one rule for both after_skeleton (the chip) and
+    work_commits (the gate): every other commit, another root (an orphan branch) included, is work after it."""
+    return any(SKELETON_SUBJECT.fullmatch(r) for r in roots)
+
 def _promoted_days(path):
     """Days since the project's NOTES.md says it was promoted, None if it doesn't say (or the date is unreadable)."""
     try:
@@ -583,7 +588,7 @@ def _git_facts(path, fresh):
     after = 0
     if not repo:
         total = git_out(path, ["rev-list", "--count", *local]); roots = (git_out(path, ["log", "--max-parents=0", "--format=%s", *local]) or "").splitlines()
-        if total and total.isdigit() and len(roots) == 1 and SKELETON_SUBJECT.fullmatch(roots[0]): after = int(total) - 1
+        if total and total.isdigit() and has_skeleton_root(roots): after = int(total) - 1
     state = {"git": True, "origin": url is not None, "repo": repo, "pushed": pushed, "unpushed": int(ahead) if ahead and ahead.isdigit() else 0, "after_skeleton": after}
     with _git_lock:
         if len(_git_cache) > 500: _git_cache.clear()
@@ -1841,7 +1846,7 @@ def work_commits(path):
     if total == "0": return 0  # an unborn branch and no other: nothing committed
     roots = git_out(path, ["log", "--max-parents=0", "--format=%s", *local])
     if roots is None: return 1
-    return int(total) - (1 if any(SKELETON_SUBJECT.fullmatch(r) for r in roots.splitlines()) else 0)
+    return int(total) - (1 if has_skeleton_root(roots.splitlines()) else 0)
 
 def require_github_to_close(path, kind, outcome):
     """The GitHub gate at close out, for active/templates folders (git facts read fresh). The work has to be on GitHub,

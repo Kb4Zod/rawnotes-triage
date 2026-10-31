@@ -295,6 +295,15 @@ class AllLocalBranches(GithubCase):
         self.assertEqual(server.work_commits(path), 1)  # side's work commit; main has only the skeleton
         self.assertEqual(self.state("demo")["after_skeleton"], 1)
 
+    def test_a_second_root_commit_counts_the_same_for_the_chip_and_the_gate(self):
+        """An orphan branch adds a root commit of its own: the chip (after_skeleton) and the gate (work_commits) must agree
+        that it is work after the skeleton."""
+        path = self.promoted(); run(path, "switch", "-q", "--orphan", "other")
+        with open(os.path.join(path, "o.txt"), "w") as fh: fh.write("o")
+        run(path, "add", "o.txt"); run(path, "commit", "-qm", "unrelated start"); run(path, "switch", "-q", "main")
+        s = self.state("demo")
+        self.assertEqual((server.work_commits(path), s["after_skeleton"], s["not_on_github"]), (1, 1, True))
+
     def test_unpushed_counts_every_local_branch(self):
         path = self.promoted(); self.bare("demo"); run(path, "remote", "add", "origin", "https://github.com/me/demo.git")
         run(path, "push", "-q", "-u", "origin", "main"); self.side_work(path, 2)
