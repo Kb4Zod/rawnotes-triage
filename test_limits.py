@@ -123,4 +123,16 @@ class InboxLimits(Fixture):
         self.assertEqual(notemeta.note_body(t), "Body")
 
 
+class ConfigReadOncePerListing(Fixture):
+    def test_a_listing_reads_config_json_once_not_once_per_note(self):
+        for i in range(12): self.note(f"2026-10-{i + 10:02d}-n{i}.md", f"N{i}")
+        for i in range(4):
+            self.project(f"p{i}", notes=f"# p{i}\n\n- status: shipped\n- promoted: 2026-10-01\n- due: 2026-12-01\n- closed: 2026-10-20\n")
+        real = server.read_config
+        with mock.patch.object(server, "read_config", side_effect=real) as rc:
+            n = self.get("/api/notes")
+        self.assertEqual((len(n["live"]), len(n["inflight"])), (12, 4))
+        self.assertLessEqual(rc.call_count, 1, rc.call_count)
+
+
 if __name__ == "__main__": unittest.main()

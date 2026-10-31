@@ -93,9 +93,10 @@ def _summary_core(path, sub):
         **(fate_of(text) if sub == "done" else {}),
     }
 
-def limits():
-    """The four Inbox numbers: LIMIT_DEFAULTS, overridden by whole-number values >= 1 in config.json."""
-    d = read_config()
+def limits(conf=None):
+    """The four Inbox numbers: LIMIT_DEFAULTS, overridden by whole-number values >= 1 in config.json (`conf`: an
+    already-read config, so a listing reads the file once, not once per note)."""
+    d = read_config() if conf is None else conf
     return {k: config_int(k, v, minimum=1, conf=d) for k, v in LIMIT_DEFAULTS.items()}
 
 def _day(s):
@@ -124,13 +125,13 @@ def expired_message(title, state, lim):
     if state["why"] == "keeps": return f"“{title}” has used all {lim['max_keeps']} Keeps: promote, file, merge or kill it"
     return f"“{title}” is over the {lim['inbox_limit_days']}-day limit: promote, file, merge or kill it"
 
-def summarize(path, sub=""):
+def summarize(path, sub="", lim=None):
     core = _notes_cache.get(("note", path), [path], lambda _: _summary_core(path, sub))
     try: age = (today() - dt.date.fromisoformat(core["date"])).days
     except ValueError: age = None
     pub = {k: v for k, v in core.items() if not k.startswith("_")}
     if sub: return {**pub, "age": age, "stale": False}
-    st = inbox_state(core["date"], core["status"], core["_kept"], core["_restored"], core["_keeps"])
+    st = inbox_state(core["date"], core["status"], core["_kept"], core["_restored"], core["_keeps"], lim)
     return {**pub, "age": age, "stale": st["stale"], "expired": st["expired"], "expires_in": st["expires_in"], "keeps": st["keeps"]}
 
 def fate_of(text):
@@ -146,7 +147,7 @@ def fate_of(text):
     else: fate = status or "?"
     return {"fate": fate, "dest": dest}
 
-def _scan(d, sub):
+def _scan(d, sub, lim=None):
     """Summaries of the note files in `d`. A file that vanished or can't be read since the listing (edited or moved
     by hand while we look) is skipped, not an error; a symlink pointing outside the notes folder is never read."""
     try: names = sorted(f for f in os.listdir(d) if NOTE_RE.match(f))
@@ -156,14 +157,15 @@ def _scan(d, sub):
         p = os.path.join(d, f)
         try:
             if os.path.islink(p) and not _within(os.path.realpath(p), root): continue
-            out.append(summarize(p, sub))
+            out.append(summarize(p, sub, lim))
         except OSError: continue
     return out
 
-def scan_notes():
-    """Inbox and Archive summaries, read as one snapshot with respect to our own changes."""
+def scan_notes(conf=None):
+    """Inbox and Archive summaries, read as one snapshot with respect to our own changes. config.json is read once."""
+    lim = limits(conf)
     with _lock.read():
-        return {"live": _scan(NOTES, ""), "done": _scan(os.path.join(NOTES, "done"), "done")[::-1]}
+        return {"live": _scan(NOTES, "", lim), "done": _scan(os.path.join(NOTES, "done"), "done")[::-1]}
 
 def inbox_summary(live=None):
     """The one-line Inbox count the weekly nudge prints: "N open, N cooking (N stale, N expired)"."""
@@ -173,10 +175,11 @@ def inbox_summary(live=None):
 
 def list_notes(with_inflight=True):
     with _lock.read():
-        out = scan_notes()
-        return {**out, "inflight": inflight() if with_inflight else [], "limits": limits(), "summary": inbox_summary(out["live"]),
+        conf = read_config()  # once per listing: every note and project below uses this copy
+        out = scan_notes(conf)
+        return {**out, "inflight": inflight(conf) if with_inflight else [], "limits": limits(conf), "summary": inbox_summary(out["live"]),
                 "today": today().isoformat(), "notes_dir": NOTES,
-                "closed_window_days": config_int("closed_window_days", CLOSED_WINDOW_DAYS)}
+                "closed_window_days": config_int("closed_window_days", CLOSED_WINDOW_DAYS, conf=conf)}
 
 def _count(v):
     """A header count (extensions: 2) as an int; missing or junk counts as 0."""
@@ -199,14 +202,16 @@ def _meta_of(path, f):
     return {"title": title_of(text, f), "due": iso_day(field(text, "due")), "promoted": field(text, "promoted"), "status": status,
             "extensions": _count(field(text, "extensions")), "closed": closed}
 
-def in_closed_window(day):
-    """Was `day` (YYYY-MM-DD) within the last closed_window_days days?"""
-    try: return (today() - dt.date.fromisoformat(day)).days <= config_int("closed_window_days", CLOSED_WINDOW_DAYS)
+def in_closed_window(day, window=None):
+    """Was `day` (YYYY-MM-DD) within the last closed_window_days days (`window`, else read from config.json)?"""
+    if window is None: window = config_int("closed_window_days", CLOSED_WINDOW_DAYS)
+    try: return (today() - dt.date.fromisoformat(day)).days <= window
     except ValueError: return False
 
-def inflight():
+def inflight(conf=None):
     """Promoted notes with a due date (plus open-ended experiments), found in the sibling project folders."""
-    out = []
+    conf = read_config() if conf is None else conf; out = []
+    window = config_int("closed_window_days", CLOSED_WINDOW_DAYS, conf=conf); max_ext = config_int("max_extensions", MAX_EXTENSIONS, conf=conf)
     for dest in ("active", "experiments", "learning", "templates", "maintained", "archive"):
         d = os.path.join(PROJECTS, dest)
         if not os.path.isdir(d): continue
@@ -223,7 +228,7 @@ def inflight():
                 if dest in ("maintained", "archive"):
                     # finished work that moved out of the board's folders: only the Closed column shows it, and only while recent
                     if m["closed"]:
-                        if not in_closed_window(m["closed"]) or not (f.lower() == "notes.md" or root == d): continue
+                        if not in_closed_window(m["closed"], window) or not (f.lower() == "notes.md" or root == d): continue
                         recently_closed = True
                     elif dest == "archive" or not due: continue
                 # promoted with no ship-by: one per experiment (its NOTES.md, or a flat file), not every note it holds
@@ -236,7 +241,7 @@ def inflight():
                 out.append({"path": rel, "title": m["title"], "project": rel.split(os.sep)[1] if rel.count(os.sep) >= 2 else "",
                             "dest": dest, "promoted": m["promoted"], "due": due,
                             "days_left": left, "open_ended": open_ended, "status": m["status"],
-                            "extensions": m["extensions"], "max_extensions": config_int("max_extensions", MAX_EXTENSIONS),
+                            "extensions": m["extensions"], "max_extensions": max_ext,
                             "done": m["status"] in CLOSED or (dest in ("maintained", "archive") and bool(m["closed"])), "closed": m["closed"]})
     out.sort(key=lambda x: (x["done"], x["days_left"] if x["days_left"] is not None else 999))
     return out
