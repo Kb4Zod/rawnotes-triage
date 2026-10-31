@@ -51,11 +51,13 @@ server.SYNC_APPS = os.path.join(SESSION_DIR, "no-sync-apps")  # an absolute path
 
 def isolate_git(case, email=TEST_EMAIL):
     """For the rest of `case`, git sees a throwaway HOME and global config (a fixture identity, hooks off), never the
-    real ~/.gitconfig, its hooks (gitleaks) or the system config. Returns the config file, for tests that change it."""
+    real ~/.gitconfig, its hooks (gitleaks) or the system config, and never runs auto gc or maintenance. Returns the config file, for tests that change it."""
     home = os.path.realpath(tempfile.mkdtemp(prefix="rt-githome-")); case.addCleanup(shutil.rmtree, home, ignore_errors=True)
     cfg = os.path.join(home, ".gitconfig")
     with open(cfg, "w", encoding="utf-8") as fh:
-        fh.write(f"[user]\n\tname = Test User\n\temail = {email}\n[core]\n\thooksPath = /dev/null\n")
+        # no auto gc / maintenance: it could write .git/objects/maintenance.lock (or packs) between a test's snapshots
+        fh.write(f"[user]\n\tname = Test User\n\temail = {email}\n[core]\n\thooksPath = /dev/null\n"
+                 "[gc]\n\tauto = 0\n\tautoDetach = false\n[maintenance]\n\tauto = false\n")
     p = mock.patch.dict(os.environ, {"HOME": home, "XDG_CONFIG_HOME": os.path.join(home, ".config"), "GIT_CONFIG_GLOBAL": cfg,
                                      "GIT_CONFIG_NOSYSTEM": "1"})
     p.start(); case.addCleanup(p.stop)
