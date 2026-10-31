@@ -90,6 +90,8 @@ Flow gaps (plan and tickets in `.scratch/flow-gaps/`; Hugh approved all 13 recom
     missing from it. An origin added but never pushed, or a Create private GitHub repo whose push failed, is refused.
   - Auto-commit works when the notes folder's path goes through a symlink (for example a symlinked `~/Projects`): it
     compared resolved and unresolved paths, found nothing inside the notes folder and silently made no commit.
+  - The board's promoted-file cards (`inflight()`) follow the same rule as its folders: nothing inside a linked git
+    worktree, or inside a learning/templates folder Promote didn't make, becomes a card.
 - **Test fix.** `test_runtime.HttpLimits` reads the 413 right after the headers and tolerates the server closing
   before the oversized body is sent (it was flaky with BrokenPipe under load); it now also asserts no file changed
   and no undo step was added.

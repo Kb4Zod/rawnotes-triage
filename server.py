@@ -212,6 +212,8 @@ def inflight():
         if not os.path.isdir(d): continue
         for root, dirs, files in os.walk(d):
             if root[len(d):].count(os.sep) > 1: dirs[:] = []; continue
+            if root == d and dest in PROJECT_KINDS:  # the same folders the board lists: no linked worktree, no hand-made study folder
+                dirs[:] = [x for x in dirs if on_board(os.path.join(d, x), dest)]
             for f in files:
                 if not f.endswith(".md"): continue
                 p = os.path.join(root, f)

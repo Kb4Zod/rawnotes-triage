@@ -47,6 +47,18 @@ class Worktrees(Fixture):
         self.post("/api/open", {"name": "repo", "kind": "active"})
         self.assertEqual(self.opened, [os.path.join(self.tmp, "active", "repo")])
 
+    def test_files_inside_a_worktree_or_an_unpromoted_study_folder_are_not_cards(self):
+        notes = "# {0}\n\n- status: promoted\n- due: 2026-12-01\n"
+        for kind, name in (("active", "repo-feature"), ("experiments", "spike-wt"), ("active", "plain")):
+            with open(os.path.join(self.tmp, kind, name, "NOTES.md"), "w") as fh: fh.write(notes.format(name))
+        study = self.project("study", kind="learning", notes=notes.format("study"))  # no promoted: line: hand-made
+        kit = self.project("kit", kind="templates", notes=notes.format("kit") + "- promoted: 2026-10-01\n")
+        with open(os.path.join(self.tmp, "learning", "flat.md"), "w") as fh: fh.write(notes.format("flat"))  # an old flat file still shows
+        paths = sorted(f["path"] for f in self.get("/api/notes")["inflight"])
+        self.assertEqual(paths, ["active/plain/NOTES.md", "learning/flat.md", "templates/kit/NOTES.md"])
+        self.assertTrue(os.path.isdir(study) and os.path.isdir(kit))
+        self.post("/api/project/status", {"path": "active/repo-feature/NOTES.md", "action": "extend", "note": "Waiting on the parts."}, ok=False)
+
     def test_status_and_done_refuse_a_worktree(self):
         before = self.snapshot()
         self.post("/api/project/status", {"name": "repo-feature", "kind": "active", "action": "shipped"}, ok=False)
