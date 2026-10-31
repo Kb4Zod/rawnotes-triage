@@ -97,6 +97,23 @@ class PromoteBase(Fixture):
         with open(self.gitconfig, "w") as fh: fh.write(f"[user]\n\tname = Someone\n\temail = {email}\n[core]\n\thooksPath = /dev/null\n")
 
 
+class Slugs(PromoteBase):
+    """A promoted folder or reference file always starts (and ends) with a letter or digit."""
+    def test_promote_reference_and_merge_slugs_start_with_a_letter_or_digit(self):
+        self.assertEqual(self.promote(slug="--x")["target"], "active/x/NOTES.md")
+        self.assertEqual(self.promote("2026-10-02-b.md", slug="-")["target"], "active/b/NOTES.md")  # nothing left: the note's own slug
+        self.note("2026-10-04--odd.md", "Odd")
+        self.assertEqual(self.promote("2026-10-04--odd.md")["target"], "active/odd/NOTES.md")
+        r = self.post("/api/action", {"file": "2026-10-03-c.md", "action": "reference", "slug": "-_-ref-"})
+        self.assertEqual(r["target"], "reference/ref.md")
+        for i in (5, 6): self.note(f"2026-10-0{i}-m{i}.md", f"M{i}")
+        r = self.post("/api/merge", {"files": ["2026-10-05-m5.md", "2026-10-06-m6.md"], "title": "-- Both --", "then": "promote",
+                                     "dest": "active", "note": "It ships.", "due_days": 3, "slug": "---"})
+        self.assertTrue(r["file"] is None and os.path.isdir(os.path.join(self.tmp, "active", "both")), r)
+        self.assertFalse([d for d in os.listdir(os.path.join(self.tmp, "active")) if not d[0].isalnum()])
+        self.assertIn("kebab-case", self.post("/api/new", {"slug": "-lead"}, ok=False)["error"])
+
+
 class PromoteSkeleton(PromoteBase):
     """07: Promote to active/experiments writes the skeleton, git init -b main and one commit, as one undo step."""
     def test_active_gets_the_skeleton_and_one_commit_on_main(self):

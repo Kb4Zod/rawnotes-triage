@@ -647,7 +647,7 @@ function formHtml(mode,n){const s=slugOf(n.file);
   return `<form class="form kill" id="form"><div>
     <div class="field"><label class="label" for="note">Why not</label><input class="input" id="note" placeholder="one line: why this died (optional)"></div></div>
     <div class="preview"><div class="label">What will happen</div><ol><li>Sets <b>status: dead</b> and writes your reason under ## Outcome</li><li>Moves the note to <span class="mono">RawNotes/done/</span>; it shows up in the <b>Archive</b></li></ol></div>${foot(I.x+'Kill &amp; next','danger','Restore it from the Archive any time')}</form>`}
-function updatePreview(){const pv=$('#pv');if(!pv||!S.mode)return;const slug=($('#slug')?.value||'').toLowerCase().replace(/[^a-z0-9-]/g,'')||'…';
+function updatePreview(){const pv=$('#pv');if(!pv||!S.mode)return;const slug=($('#slug')?.value||'').toLowerCase().replace(/[^a-z0-9-]/g,'').replace(/-+/g,'-').replace(/^-|-$/g,'')||'…';
   if(S.mode==='promote'){const d=segVal('dest'),folder=true,exp=d==='experiments',due=shipDate();syncShipBy(d);  // every destination is a project folder
     const days=Math.round((new Date(due+'T00:00')-new Date(addDays(0)+'T00:00'))/864e5);
     pv.innerHTML=`<div class="label">What will happen</div><ol><li>Creates <span class="mono">~/Projects/${d}/${slug}${folder?'/':'.md'}</span>${folder?' with README, NOTES.md (this note), AGENTS.md and CLAUDE.md, as a git repo on <b>main</b> with a first commit (private; push it in the first build round)':''}</li>

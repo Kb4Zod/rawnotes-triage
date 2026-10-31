@@ -1130,6 +1130,11 @@ def safe_note(rel, write=False):
 
 def slug_of(fname): return re.sub(r"^\d{4}-\d{2}-\d{2}-", "", fname)[:-3]
 
+def clean_slug(text):
+    """A folder or file name for Promote/Reference: lowercase letters, digits and single dashes, starting and ending with
+    a letter or digit (a leading dash reads as an option to every command that is later given the path). "" if nothing is left."""
+    return re.sub(r"-+", "-", re.sub(r"[^a-z0-9-]", "", (text or "").lower())).strip("-")[:80]
+
 def unique(path):
     base, ext = os.path.splitext(path); n = 2
     while os.path.lexists(path):
@@ -1582,7 +1587,7 @@ def _act(req, tx):
         return {"ok": True, "msg": f"Killed “{title}” → Archive", "label": f"kill “{title}”"}
 
     dest = "reference" if action == "reference" else req.get("dest")
-    slug = re.sub(r"[^a-z0-9-]", "", (_text(req, "slug") or slug_of(fname)).lower()) or slug_of(fname)
+    slug = clean_slug(_text(req, "slug")) or clean_slug(slug_of(fname)) or "project"
     dest_dir = os.path.join(PROJECTS, dest)
     tx.ensure_dir(dest_dir); proj = None
     if action == "promote" and DESTS[dest] == "folder":
