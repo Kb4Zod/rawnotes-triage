@@ -923,6 +923,7 @@ function closeOut(c){const box=$('#pform');if(!box)return;const pe=$('#perr');pe
       :!d?(failed?`<span class="err">Couldn't check what points here (${esc(failed)}). It is checked again when you send this.</span>`:'<span class="muted">Checking what points here…</span>')
       :d.blockers.length?`<span class="err">Blocked: ${d.blockers.length} ${d.blockers.length>1?'things point':'thing points'} at this folder (see What points here). Fix ${d.blockers.length>1?'them':'it'} first.</span>`
       :`Moves to <span class="mono">${esc(d.dest)}/</span>${d.todos.length?` · ${d.todos.length} to-do${d.todos.length>1?'s':''} for after, written to its NOTES.md`:''}`;
+    if(!next&&d&&d.undo_warning)$('#cmove').insertAdjacentHTML('beforeend',`<div class="err" id="cundo" style="margin-top:4px">${esc(d.undo_warning)}</div>`);  // too big to check: Undo will refuse
     $('#cgo').disabled=!next&&(d?!!d.blockers.length:!failed)};
   const lookup=to=>{S.depsErr=null;return loadDeps(c,to).then(d=>{failed=d?null:(S.depsErr&&S.depsErr.id===c.id&&S.depsErr.msg)||'no answer';return d})};
   const check=o=>{if(o==='next')return sync();lookup(o).then(()=>{if($('#pf'))sync()})};

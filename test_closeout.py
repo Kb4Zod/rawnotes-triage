@@ -301,6 +301,13 @@ class Faults(CloseBase):
         r = self.post("/api/undo", {}, ok=False); self.assertIn("too big", r["error"]); self.assertIn("mv ", r["error"])
         self.assertEqual((self.snapshot(), len(server._undo)), (mid, 1))
 
+    def test_the_deps_answer_warns_before_a_move_that_undo_cannot_check(self):
+        self.assertNotIn("undo_warning", self.get("/api/project/deps?name=demo&kind=active"))
+        with mock.patch.object(server, "TREE_LIMIT", 1):
+            d = self.get("/api/project/deps?name=demo&kind=active")
+        self.assertIn("can't be undone", d["undo_warning"]); self.assertIn("mv ", d["undo_warning"])
+        self.assertNotIn(self.tmp, d["undo_warning"])  # it may go to a phone: no absolute path
+
     def test_tree_state_ignores_git_internals_and_gives_up_on_huge_folders(self):
         d = os.path.join(self.tmp, "t"); os.makedirs(os.path.join(d, ".git", "objects")); open(os.path.join(d, "f"), "w").close()
         s1 = server.tree_state(d); open(os.path.join(d, ".git", "index"), "w").close()

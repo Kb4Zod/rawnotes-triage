@@ -282,6 +282,7 @@ def deps_text(r):
     lines += ([f"BLOCKED: {len(r['blockers'])} thing(s) would break; fix each first:"] + [f"- {b['where']}: {b['detail'].splitlines()[0]}\n  fix: {b['fix']}" for b in r["blockers"]]
               if r["blockers"] else ["Nothing blocks the move."])
     if r["todos"]: lines += ["After the move, by hand:"] + [f"- {t['fix']}" for t in r["todos"]]
+    if r.get("undo_warning"): lines.append("Warning: " + r["undo_warning"])
     return "\n".join(lines)
 
 

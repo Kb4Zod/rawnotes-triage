@@ -454,9 +454,13 @@ def project_deps(name, kind=None, to=None, local=True):
     with _lock.read():
         dest = close_target(path, to)
         sources = dep_sources(); found = depcheck.check(path, sources, dest)
+        too_big = tree_too_big(path)
     if not local: found = redact_deps(found, sources.home)
-    return {"name": name, "kind": kind, "path": f"{kind}/{name}", "suggest": suggest, "to": to,
-            "dest": os.path.relpath(dest, PROJECTS), **found}
+    old, new = f"{kind}/{name}", os.path.relpath(dest, PROJECTS)
+    warn = ({"undo_warning": f"{name} is too big (over {TREE_LIMIT} files and folders) or partly unreadable for the app to check "
+                             f"later, so this move can't be undone from here: you'd move it back by hand (from the projects folder, "
+                             f"mv {shlex.quote(new)} {shlex.quote(old)})."} if too_big else {})
+    return {"name": name, "kind": kind, "path": old, "suggest": suggest, "to": to, "dest": new, **found, **warn}
 
 PRIVATE_HITS = ("process", "crontab")  # their detail is a command line or a crontab line: never sent off this machine
 
@@ -1186,6 +1190,19 @@ def tree_state(path, limit=None):
     return out
 
 def _raise(e): raise e
+
+def tree_too_big(path, limit=None):
+    """Would tree_state(path) give up (more than `limit` entries, or unreadable)? Counted without a stat per entry, so
+    the close-out form can warn, before a move, that its undo won't be possible."""
+    n = 0; limit = TREE_LIMIT if limit is None else limit
+    try:
+        for root, dirs, files in os.walk(path, onerror=_raise):
+            if ".git" in dirs and os.path.isdir(os.path.join(root, ".git")) and not os.path.islink(os.path.join(root, ".git")):
+                dirs.remove(".git"); n += 1
+            n += len(dirs) + len(files)
+            if n > limit: return True
+    except OSError: return True
+    return False
 
 class Tx:
     """One change to the files, applied step by step. Each step that succeeds is recorded, so the whole change can be

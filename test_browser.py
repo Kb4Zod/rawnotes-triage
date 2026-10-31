@@ -297,6 +297,13 @@ class Flows(BrowserCase):
         self.assertEqual(open(os.path.join(demo, "NOTES.md"), "rb").read(), original)
         self.assertFalse(os.path.exists(os.path.join(self.tmp, "archive")))
 
+    def test_the_close_out_form_warns_when_the_move_cannot_be_undone(self):
+        with mock.patch.object(server, "TREE_LIMIT", 0):  # the fixture's demo holds just NOTES.md
+            self.open("projects"); self.page.click("[data-pid='active/demo/NOTES.md']"); self.page.wait("document.querySelector('[data-pa=shipped]')")
+            self.page.click("[data-pa=shipped]"); self.page.wait("document.querySelector('#cmove').textContent.includes('Moves to archive/demo/')")
+            self.assertIn("can't be undone", self.text("#cmove"))
+            self.page.click("[data-seg=outcome] [data-v=next]"); self.page.wait("!document.querySelector('#cmove').textContent.includes(\"can't be undone\")")
+
     def test_close_out_next_round_asks_for_done_means_and_stays(self):
         nodod = os.path.join(self.tmp, "active", "nodod", "NOTES.md")
         self.open("projects"); self.page.click("[data-pid='active/nodod/NOTES.md']"); self.page.wait("document.querySelector('[data-pa=shipped]')")

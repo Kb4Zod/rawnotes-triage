@@ -474,7 +474,9 @@ it: they are written under `## Moved` in the moved `NOTES.md` (`- <date>: moved 
 hand:` and one line per command) and shown in the toast. The status edit and the move are one undo step: **Undo**
 moves the folder back and restores `NOTES.md`, but refuses (changing nothing, and saying the `mv` to do it by hand) if
 anything in the moved folder was added, removed or edited since (git's own `.git` contents don't count), the old name
-is taken again, or the folder became a symlink. The move is a `rename` on the same filesystem, never a copy. After a
+is taken again, or the folder became a symlink. A folder too big to check that way (over 200,000 files and folders,
+`.git` aside) or partly unreadable still moves, but its undo will refuse: the close-out form, `rawtriage project deps`
+and `/api/project/deps` (`undo_warning`) say so before you send it. The move is a `rename` on the same filesystem, never a copy. After a
 move or its undo, `sync-apps` (from `maintained/obsidian-sync-apps`) runs if it is on `PATH`, so Obsidian's `Apps/`
 link follows the folder; its output goes to stderr and a failure never fails the change (`sync_apps` in the answer
 says `ran`, `failed` or `not installed`). Moves happen only when you choose one, never on a timer. A single-file
