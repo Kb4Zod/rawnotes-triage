@@ -1767,14 +1767,16 @@ def note_body_for_merge(text):
     return re.sub(r"\n{3,}", "\n\n", "\n".join(l for i, l in enumerate(lines) if i not in drop)).strip()
 
 def restore(req):
-    """Bring a note back from done/ into the Inbox (status cooking)."""
+    """Bring a note back from done/ into the Inbox (status cooking) with a fresh start: `restored: <today>` restarts the
+    Inbox limit, and its Keep count (`keeps:`, `kept:`) is cleared, so it gets the full 30 days and 3 Keeps again."""
     with mutation() as tx:
         src = safe_note(req.get("file", ""), write=True)
         if os.path.dirname(src) != os.path.join(os.path.normpath(NOTES), "done"): raise ValueError("only Archive notes can be restored")
         dst = os.path.join(NOTES, os.path.basename(src))
         if os.path.lexists(dst): raise ValueError("a note with that name is already in the Inbox")
         text, eol = read_note(src); title = title_of(text, os.path.basename(src))
-        text = append_outcome(set_field(set_field(text, "status", "cooking"), "restored", today().isoformat()), f"**Restored {today().isoformat()}** to the Inbox")
+        text = drop_field(drop_field(set_field(set_field(text, "status", "cooking"), "restored", today().isoformat()), "keeps"), "kept")
+        text = append_outcome(text, f"**Restored {today().isoformat()}** to the Inbox")
         tx.write(src, text, eol); tx.move(src, dst)
         tx.label = f"restore “{title}”"; tx.select = "done/" + os.path.basename(src)
     _log(f"restore {os.path.basename(src)}")

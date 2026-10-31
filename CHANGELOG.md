@@ -26,7 +26,8 @@ Flow gaps (plan and tickets in `.scratch/flow-gaps/`; Hugh approved all 13 recom
 - **Inbox limits (04).** `open` is stale after 14 days and `cooking` after 7 (from the last Keep); a note expires after
   30 days in the Inbox (from capture, or from Restore) or 3 Keeps, and then Keep is refused on the page, in a batch
   (one expired note refuses the whole batch) and through the API; Promote, Reference, Merge and Kill still work. Keep
-  writes `kept:`/`keeps:`, Restore writes `restored:`. Rows show `kept 2×` and `expires in 3d`; an **Expired** filter
+  writes `kept:`/`keeps:`, Restore writes `restored:` and clears `kept:`/`keeps:` (a restored note gets a fresh 30 days
+  and 3 Keeps). Rows show `kept 2×` and `expires in 3d`; an **Expired** filter
   and Pulse count. All four numbers can be set in `config.json`. `inbox_summary()` gives the nudge line, also sent as
   `summary` by `GET /api/notes` and printed by `rawtriage -l --summary`.
 - **Ship clock (05, 06).** Pushing a ship-by date needs a reason (at least 10 characters), recorded as `extensions: N`

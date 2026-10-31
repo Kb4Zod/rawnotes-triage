@@ -243,10 +243,11 @@ filename and the first paragraph of the question.
 | `open` (or no status) is **stale** | 14 days | capture date, or the last Keep |
 | `cooking` is **stale** | 7 days | the last Keep (capture date if never kept) |
 | **Expired**: Keep is refused | 30 days | capture date (Restore date for a restored note) |
-| **Expired**: Keep is refused | 3 Keeps | counted in the header |
+| **Expired**: Keep is refused | 3 Keeps | counted in the header (Restore starts the count over) |
 
 Keep writes `- kept: <today>` and `- keeps: N` into the note's header; Restore
-writes `- restored: <today>`. An expired note cannot be kept, on the page, in a
+writes `- restored: <today>` and removes `kept:`/`keeps:`, so a restored note
+gets a fresh 30 days and 3 Keeps. An expired note cannot be kept, on the page, in a
 batch (one expired note refuses the whole batch and names it) or through the
 API (400, "...30-day limit: promote, file, merge or kill it"). Promote,
 Reference, Merge and Kill still work. Rows show `kept 2×` and `expires in 3d`;
@@ -348,7 +349,8 @@ steps already taken are rolled back. If a rollback cannot finish, an
 Everything in `done/`, newest first, filtered by Promoted / Reference /
 Killed / Merged (worked out from the status and the `## Outcome` line).
 **Restore to Inbox** sets the note to `cooking`, stamps `- restored: <today>`
-(its Inbox limit starts again from that date) and moves it back; it refuses
+(its Inbox limit starts again from that date), clears its Keep count (`kept:`,
+`keeps:`) and moves it back; it refuses
 if a note with that filename is already in the Inbox, and it does not remove
 a project or reference copy made earlier.
 

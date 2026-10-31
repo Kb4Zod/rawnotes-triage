@@ -23,6 +23,7 @@ Your job is to make decisions happen, not to do more research. Every decision go
      `rawtriage reference --unindexed`; add one with `rawtriage index <name.md> --section "<section>"`.
    - **keep** (still alive): `rawtriage keep <file> [--status cooking] [--next "<one line next step>"]`. If the note is
      `[expired]`, do not offer keep: the choices are promote, reference, merge or kill (the server refuses keep anyway).
+     A note restored from the Archive starts over: a fresh 30 days and 3 Keeps.
    - **kill**: ask why in a few words, then `rawtriage kill <file> --reason "<why>"`.
    - **merge** (several notes on one topic): `rawtriage merge <file> <file> ... --title "<title>"`, optionally
      `--then promote ...` with the promote options above.

@@ -67,13 +67,15 @@ class InboxLimits(Fixture):
         self.assertIn("- keeps: 2", self.text(name)); self.assertEqual(self.text(name).count("- kept:"), 1)
 
     def test_restore_starts_the_clock_over(self):
-        name = self.make(60, "dead", slug="old")
+        name = self.make(60, "dead", slug="old", extra=f"- kept: {ago(40)}\n- keeps: 3\n")  # it had used every Keep
         os.makedirs(os.path.join(self.notes, "done"))
         os.rename(os.path.join(self.notes, name), os.path.join(self.notes, "done", name))
         self.post("/api/restore", {"file": "done/" + name})
         self.assertIn(f"- restored: {TODAY}", self.text(name))
-        r = self.row(name); self.assertFalse(r["expired"]); self.assertEqual(r["expires_in"], 30); self.assertFalse(r["stale"])
-        self.post("/api/action", {"file": name, "action": "keep"})
+        self.assertNotIn("- keeps:", self.text(name)); self.assertNotIn("- kept:", self.text(name))  # the Keep count starts over too
+        r = self.row(name); self.assertFalse(r["expired"]); self.assertEqual((r["expires_in"], r["keeps"]), (30, 0)); self.assertFalse(r["stale"])
+        for n in (1, 2, 3): self.post("/api/action", {"file": name, "action": "keep"}); self.assertIn(f"- keeps: {n}", self.text(name))
+        self.assertIn("used all 3 Keeps", self.post("/api/action", {"file": name, "action": "keep"}, ok=False)["error"])
 
     def test_batch_keep_with_one_expired_note_refuses_all_and_names_it(self):
         fresh, old = self.make(2, slug="fresh"), self.make(40, slug="oldnote"); before = self.snapshot()
