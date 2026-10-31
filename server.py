@@ -1319,9 +1319,9 @@ def _check_gitinit(path, sha):
     if os.path.islink(gitdir) or not os.path.isdir(gitdir): raise bad
     if not shutil.which("git"): raise ValueError(f"Can't undo: git is not installed, so {os.path.basename(path)}/.git can't be checked. Fix it by hand.")
     try:
-        remotes = _git(path, ["remote"])
-        if remotes[0] or remotes[1].strip():
-            raise ValueError(f"Can't undo: {os.path.basename(path)} has a remote now ({', '.join(remotes[1].split()) or 'unreadable'}), "
+        remotes = _git(path, ["remote"])  # a half-made .git (git init failed) can't answer: the checks below decide then
+        if not remotes[0] and remotes[1].strip():
+            raise ValueError(f"Can't undo: {os.path.basename(path)} has a remote now ({', '.join(remotes[1].split())}), "
                              f"so its repo may be on GitHub. Delete the GitHub repo first (then remove the remote), or keep the project.")
         head = _git(path, ["rev-parse", "-q", "--verify", "HEAD"])
         refs = _git(path, ["for-each-ref", "--format=%(objectname)"])
