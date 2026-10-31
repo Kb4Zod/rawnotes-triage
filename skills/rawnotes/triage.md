@@ -52,3 +52,6 @@ Your job is to make decisions happen, not to do more research. Every decision go
    user decides. After a move, the command prints what is left to do by hand (also written under `## Moved` in the
    project's NOTES.md): the `mv` of its Claude Code agent memory folder (under `.claude/projects` in the home folder), and updating any T3 Code project
    that points at the old folder. Offer to do those (with T3's own project tools for T3), with the user's OK.
+   Shipping an `active` or `templates` project is refused until it is on GitHub ("Push it first"). Tell the user, and
+   offer `rawtriage project github <name>` (creates a **private** repo and pushes `main`; only on the server's own
+   machine; it never makes anything public, that is the user's `gopublic`). Run it only when they say yes.

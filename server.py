@@ -498,18 +498,42 @@ def _git_fingerprint(path):
         except OSError: out.append(None)
     return tuple(out)
 
+NOT_ON_GITHUB_DAYS = 2  # a project with no GitHub origin is flagged this long after Promote, or at its first commit after the skeleton
+SKELETON_SUBJECT = re.compile(r"Start .+ \(promoted from RawNotes\)")  # the one commit Promote makes (Tx.gitinit)
+
+def _promoted_days(path):
+    """Days since the project's NOTES.md says it was promoted, None if it doesn't say (or the date is unreadable)."""
+    try:
+        with open(notes_file(path), "rb") as fh: d = field(to_lf(fh.read(4000).decode("utf-8", "replace")), "promoted")
+        return (today() - dt.date.fromisoformat(d)).days
+    except (OSError, ValueError): return None
+
 def github_state(path, fresh=False):
     """Is this project on GitHub? git: has a repo; repo: 'owner/name' of a GitHub origin; pushed: that remote has
-    received something (a remote-tracking ref exists); unpushed: commits on this checkout that no origin ref contains.
-    Cached for GIT_TTL seconds (and until the repo's own files change): three git processes per project add up."""
-    if not os.path.exists(os.path.join(path, ".git")): return {"git": False, "repo": "", "pushed": False, "unpushed": 0}
+    received something (a remote-tracking ref exists); unpushed: commits on this checkout that no origin ref contains;
+    after_skeleton: commits made after Promote's own first commit (0 when the repo has none, i.e. it predates it);
+    not_on_github: no GitHub origin and (after_skeleton > 0 or promoted 2+ days ago): the red chip and the Ship gate.
+    The git facts are cached for GIT_TTL seconds (and until the repo's own files change): a few git processes per project add up."""
+    state = _git_facts(path, fresh)
+    if state["repo"]: state["not_on_github"] = False
+    else:
+        age = _promoted_days(path)
+        state["not_on_github"] = state["after_skeleton"] > 0 or (age is not None and age >= NOT_ON_GITHUB_DAYS)
+    return state
+
+def _git_facts(path, fresh):
+    if not os.path.exists(os.path.join(path, ".git")): return {"git": False, "repo": "", "pushed": False, "unpushed": 0, "after_skeleton": 0}
     fp = _git_fingerprint(path)
     with _git_lock: hit = _git_cache.get(path)
     if hit and not fresh and hit[0] == fp and time.time() - hit[1] < GIT_TTL: return dict(hit[2])
     repo = github_repo_of(git_out(path, ["remote", "get-url", "origin"]))
     pushed = bool(repo and git_out(path, ["for-each-ref", "--count=1", "refs/remotes/origin"]))
     ahead = git_out(path, ["rev-list", "--count", "HEAD", "--not", "--remotes=origin"]) if pushed else None
-    state = {"git": True, "repo": repo, "pushed": pushed, "unpushed": int(ahead) if ahead and ahead.isdigit() else 0}
+    after = 0
+    if not repo:
+        total = git_out(path, ["rev-list", "--count", "HEAD"]); roots = (git_out(path, ["log", "--max-parents=0", "--format=%s", "HEAD"]) or "").splitlines()
+        if total and total.isdigit() and len(roots) == 1 and SKELETON_SUBJECT.fullmatch(roots[0]): after = int(total) - 1
+    state = {"git": True, "repo": repo, "pushed": pushed, "unpushed": int(ahead) if ahead and ahead.isdigit() else 0, "after_skeleton": after}
     with _git_lock:
         if len(_git_cache) > 500: _git_cache.clear()
         _git_cache[path] = (fp, time.time(), state)
@@ -524,7 +548,7 @@ def project_detail(name, kind=None):
     path, kind = project_dir(name, kind)
     result = {"name": name, "kind": kind, "path": f"{kind}/{name}", "abs_path": path, "summary": "No README or project notes yet.",
               "summary_source": None, "commits": [], "features": [], "prs": [],
-              "pr_status": "No Git repository in this project.", "branch": "", "remote": "", "repo": "", "gh": {"git": False, "repo": "", "pushed": False, "unpushed": 0},
+              "pr_status": "No Git repository in this project.", "branch": "", "remote": "", "repo": "", "gh": {"git": False, "repo": "", "pushed": False, "unpushed": 0, "after_skeleton": 0, "not_on_github": False},
               "linked": os.path.islink(path), "done": definition_of_done(path)}
     files = {f.lower(): f for f in sorted(os.listdir(path))}
     for candidate in ("readme.md", "readme.rst", "readme.txt", "readme", "notes.md"):
@@ -1694,6 +1718,13 @@ def restore(req):
     _log(f"restore {os.path.basename(src)}")
     return {"ok": True, "msg": f"Restored “{title}” to the Inbox", "file": os.path.basename(dst)}
 
+SHIP_NEEDS_GITHUB = ("active", "templates")  # shipped means it's on GitHub (experiments and learning may ship without)
+
+def require_github_to_ship(req, folder, kind):
+    """Refuse Ship for an active/templates project folder that has no GitHub origin. Reads the repo fresh."""
+    if req.get("action") == "shipped" and kind in SHIP_NEEDS_GITHUB and os.path.isdir(folder) and not github_state(folder, True)["repo"]:
+        raise ValueError("Push it first: shipped means it's on GitHub.")
+
 def _status_edit(text, req, name):
     """The new text, label and message for a project status action (shipped / extend / kill)."""
     t = today().isoformat(); action = req.get("action")
@@ -1735,6 +1766,7 @@ def project_status(req):
     with mutation() as tx:
         if not isinstance(rel, str) or rel not in {x["path"] for x in inflight()}: raise ValueError("unknown project file")
         path = os.path.join(PROJECTS, rel)
+        if rel.count("/") >= 2: require_github_to_ship(req, os.path.dirname(path), rel.split("/")[0])
         text, eol = read_note(path)
         name = rel.split("/")[1] if rel.count("/") >= 2 else os.path.basename(rel)[:-3]
         text, tx.label, msg = _status_edit(text, req, name)
@@ -1745,6 +1777,7 @@ def project_status(req):
 def folder_project_status(req):
     path, kind = project_dir(req.get("name", ""), req.get("kind"), write=True); name = os.path.basename(path)
     if req.get("action") == "extend": raise ValueError("unknown project action")  # no due: line to push in a bare folder
+    require_github_to_ship(req, path, kind)
     with mutation() as tx:
         target = notes_file(path)
         text, eol = read_note(target) if os.path.exists(target) else (f"# {name}\n", "\n")
@@ -1860,6 +1893,42 @@ def run_sync_apps():
     if p.returncode:
         print(f"rawtriage-web: sync-apps exited {p.returncode}; the move itself stands", file=sys.stderr); return "failed"
     return "ran"
+
+_gh_create_lock = threading.Lock()
+
+def create_github_repo(req):
+    """First push, for a project folder with a local repo and no origin: `gh repo create <login>/<folder> --private
+    --source <path> --remote origin`, then `git push -u origin main`. Always private (going public is gopublic's job);
+    the push has ALLOW_PUSH_MAIN=1 in its own environment only (the global hook allows a first push to main with it);
+    never --no-verify. Refuses an existing origin, a dirty tree, a branch other than main or no gh sign-in."""
+    path, kind = project_dir(req.get("name", ""), req.get("kind"), write=True); name = os.path.basename(path)
+    if not re.fullmatch(r"[\w.-]+", name) or not name.strip("."): raise ValueError(f"“{name}” is not a name GitHub accepts for a repo.")
+    if not os.path.exists(os.path.join(path, ".git")): raise ValueError("This project has no git repo yet.")
+    if not shutil.which("git"): raise ValueError("git is not installed.")
+    if not _gh_create_lock.acquire(blocking=False): raise ValueError("A GitHub repo is already being created.")
+    try:
+        if "origin" in _git(path, ["remote"])[1].split(): raise ValueError("It already has an origin remote.")
+        code, branch, _ = _git(path, ["symbolic-ref", "--short", "HEAD"])
+        if code or branch != "main": raise ValueError("Switch to the main branch first: the first push is `main`.")
+        if _git(path, ["rev-parse", "--verify", "-q", "HEAD"])[0]: raise ValueError("Make a first commit before creating the repo.")
+        if _git(path, ["status", "--porcelain"])[1]: raise ValueError("Commit or stash your changes first: the working tree isn't clean.")
+        st = github_status(True)
+        if st["state"] == "signed_out": raise ValueError("Not signed in to GitHub: run `gh auth login`." + (f" ({st['error']})" if st.get("error") else ""))
+        if st["state"] != "signed_in": raise ValueError(st.get("error") or "GitHub isn't reachable through gh right now.")
+        slug = f"{st['login']}/{name}"
+        try: _gh(["repo", "create", slug, "--private", "--source", path, "--remote", "origin"], timeout=60)
+        except RuntimeError as e: raise ValueError(f"gh repo create failed: {e}")
+        try:
+            proc = subprocess.run(["git", "push", "-u", "origin", "main"], cwd=path, capture_output=True, text=True, timeout=120,
+                                  env={**{k: v for k, v in os.environ.items() if k not in GIT_ENV_DROP}, "GIT_TERMINAL_PROMPT": "0", "ALLOW_PUSH_MAIN": "1"})
+            code, err = proc.returncode, proc.stderr or proc.stdout
+        except (OSError, subprocess.TimeoutExpired) as e: code, err = 1, str(e)
+        if code:
+            raise ValueError(f"Created private repo {slug}, but the push failed: {_last_line(err)}. Fix that, then run `git push -u origin main` in the folder.")
+    finally: _gh_create_lock.release()
+    _git_cache.pop(path, None)
+    _log(f"github {kind}/{name} -> {slug} (private)")
+    return {"ok": True, "repo": slug, "msg": f"Created private repo {slug} and pushed main"}
 
 def stats(weeks=8):
     """Inbox flow for the Pulse page: notes captured vs. decided per week, and how long the Inbox waits."""
@@ -2080,6 +2149,9 @@ class H(BaseHTTPRequestHandler):
             if path == "/api/new": return self._send(200, new_note(req))
             if path == "/api/project/status": return self._send(200, project_status(req))
             if path == "/api/project/close": return self._send(200, close_project(req))
+            if path == "/api/project/github":
+                if not self._this_machine(): raise ValueError("The GitHub repo can only be created from the machine running the server.")
+                return self._send(200, create_github_repo(req))
             if path in ("/api/github/token", "/api/github/token/remove"):
                 if not self._this_machine(): raise ValueError("The GitHub sign-in can only be changed from the machine running the server.")
                 return self._send(200, set_github_token(req) if path == "/api/github/token" else remove_github_token())
