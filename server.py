@@ -658,7 +658,8 @@ def gh_env(token=None):
 
 def _gh(args, timeout=25, token=None):
     """Run the gh CLI and return stdout. Signed in as the token saved through the page if there is one (given to gh in
-    its environment, never on the command line), otherwise as gh itself. Read-only use: callers only issue GETs and queries."""
+    its environment, never on the command line), otherwise as gh itself. Mostly reads (api GETs and GraphQL queries);
+    the one write is create_github_repo's `gh repo create --private`, which only runs from this machine."""
     try:
         proc = subprocess.run(["gh"] + args, capture_output=True, text=True, timeout=timeout, env=gh_env(token))
     except FileNotFoundError: raise RuntimeError("gh is not installed")
@@ -1763,12 +1764,6 @@ def restore(req):
 
 SHIP_NEEDS_GITHUB = ("active", "templates")  # shipped means it's on GitHub (experiments and learning may ship without)
 
-def require_github_to_ship(req, folder, kind):
-    """Refuse Ship for an active/templates project that has no GitHub origin, outside close out (a promoted file deeper
-    than <kind>/<folder>/<file>.md). A project folder is gated in close_project instead (require_github_to_close)."""
-    if req.get("action") == "shipped" and kind in SHIP_NEEDS_GITHUB and os.path.isdir(folder) and not github_state(folder, True)["repo"]:
-        raise ValueError("Push it first: shipped means it's on GitHub.")
-
 def work_commits(path):
     """Commits in a folder's repo beyond Promote's skeleton commit (every commit when no root commit is the skeleton),
     across every local branch (local_revs). 0 with no repo or no commits yet. A repo git can't read counts as work (1),
@@ -1848,7 +1843,6 @@ def project_status(req, local=True):
     with mutation() as tx:
         if not isinstance(rel, str) or rel not in {x["path"] for x in inflight()}: raise ValueError("unknown project file")
         path = os.path.join(PROJECTS, rel)
-        if rel.count("/") >= 2: require_github_to_ship(req, os.path.dirname(path), rel.split("/")[0])
         text, eol = read_note(path)
         name = rel.split("/")[1] if rel.count("/") >= 2 else os.path.basename(rel)[:-3]
         text, tx.label, msg = _status_edit(text, req, name)
@@ -1859,7 +1853,6 @@ def project_status(req, local=True):
 def folder_project_status(req):
     path, kind = project_dir(req.get("name", ""), req.get("kind"), write=True); name = os.path.basename(path)
     if req.get("action") == "extend": raise ValueError("unknown project action")  # no due: line to push in a bare folder
-    require_github_to_ship(req, path, kind)
     with mutation() as tx:
         target = notes_file(path)
         text, eol = read_note(target) if os.path.exists(target) else (f"# {name}\n", "\n")

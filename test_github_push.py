@@ -209,6 +209,12 @@ class CloseOutGate(GithubCase):
             self.assertTrue(self.state("e-" + dest, dest)["not_on_github"])  # the chip stays red
             self.assertEqual(self.close("e-" + dest, dest, "maintained")["moved_to"], f"maintained/e-{dest}")
 
+    def test_close_out_is_the_only_gate(self):
+        """No second, older Ship gate is left beside close out's (it was dead code that could drift from it)."""
+        self.assertFalse(hasattr(server, "require_github_to_ship"))
+        import inspect
+        self.assertNotIn("require_github", inspect.getsource(server.project_status) + inspect.getsource(server.folder_project_status))
+
     def test_the_gate_off_lets_everything_through(self):
         path = self.promoted(); self.work(path)
         with mock.patch.object(server, "SHIP_NEEDS_GITHUB", ()):
