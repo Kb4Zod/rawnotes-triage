@@ -50,7 +50,10 @@ Your job is to make decisions happen, not to do more research. Every decision go
    extensions the server refuses: the only choices left are ship or kill, so ask the user which.
 8. **Moves.** A move is refused while anything points at the folder (systemd unit, running process, git worktree,
    a link or script in the local bin folder, crontab line): show the user each blocker and its fix from `rawtriage project deps`,
-   and let them fix it; never fix it silently. Never move a project folder yourself, never on a timer, only when the
+   and let them fix it; never fix it silently. Never run a blocker's fix yourself (`kill <pid>`, `systemctl … disable`,
+   `rm`, `crontab -e`): show it to the user, who runs it. Don't run a close out (or a project kill) from inside the
+   project folder: your own session and shell count as processes working there and block the move (the `rawtriage`
+   command itself doesn't); run it from the notes folder or anywhere else. Never move a project folder yourself, never on a timer, only when the
    user decides. After a move, the command prints what is left to do by hand (also written under `## Moved` in the
    project's NOTES.md): the `mv` of its Claude Code agent memory folder (under `.claude/projects` in the home folder), and updating any T3 Code project
    that points at the old folder. Offer to do those (with T3's own project tools for T3), with the user's OK.

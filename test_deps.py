@@ -141,6 +141,20 @@ class Situation(Fixture):
                           if h["kind"] == "process"], ["pid 704", "pid 705"])
         self.assertEqual(depcheck.Sources.default().own_pid, os.getpid())
 
+    def test_the_rawtriage_command_asking_for_the_move_is_not_a_blocker(self):
+        """`rawtriage project close` run from inside the folder: the command itself is the request, not something that
+        points at the folder. Its parent shell (or agent) still blocks: triage.md says not to close out from inside."""
+        fake_proc(self.proc, {
+            800: (self.folder, ["/usr/bin/python3", "/somewhere/bin/rawtriage", "project", "close", "rawnotes-triage", "--outcome", "archive"]),
+            801: (self.folder, ["/home/x/.local/bin/rawtriage", "project", "kill", "rawnotes-triage", "--reason", "r"]),
+            802: (self.folder, ["python3", "-I", "rawtriage", "project", "close", "x"]),
+            803: (self.folder, ["bash"]),                                           # the shell it runs in: blocks
+            804: (self.folder, ["/usr/bin/python3", f"{self.folder}/bin/rawtriage-web", "--service"]),  # the web server: blocks
+            805: ("/", ["vim", f"{self.folder}/rawtriage"]),                        # editing a file called rawtriage in it: blocks
+        })
+        r = depcheck.scan_processes(self.folder, self.proc, self.home)
+        self.assertEqual([h["where"] for h in r], ["pid 803", "pid 804", "pid 805"])
+
     def test_crontab_lines_block_but_comments_do_not(self):
         self.crontab = f"# {self.folder}/old\n0 * * * * {self.folder}/run.sh\n5 * * * * ~/Projects/active/rawnotes-triage/x\n0 1 * * * {self.wt}/y\n"
         r = depcheck.check(self.folder, self.sources)

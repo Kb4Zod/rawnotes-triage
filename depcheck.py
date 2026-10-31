@@ -131,8 +131,25 @@ def _own_tool(proc, pid, argv, own_pid):
     return False
 
 
+PYTHON = re.compile(r"python[0-9.]*")
+CLI_NAME = "rawtriage"  # the CLI (bin/rawtriage), not the web server's rawtriage-web wrapper
+
+
+def _rawtriage_cli(argv):
+    """A `rawtriage …` command (run directly, or as `python3 [-opts] …/rawtriage …`): when it is run from inside the
+    folder it is the request for the move itself, not something pointing at the folder. Its parent shell or agent is
+    not exempt (skills/rawnotes/triage.md: don't close out from inside the project folder)."""
+    if not argv: return False
+    prog = os.path.basename(argv[0])
+    if prog == CLI_NAME: return True
+    if not PYTHON.fullmatch(prog): return False
+    script = next((a for a in argv[1:] if not a.startswith("-")), "")
+    return os.path.basename(script) == CLI_NAME
+
+
 def scan_processes(path, proc, home, own_pid=None):
-    """Running processes whose working folder or command line is inside the folder (the app's own git/gh children aside)."""
+    """Running processes whose working folder or command line is inside the folder (the app's own git/gh children, and
+    the rawtriage command asking for the move, aside)."""
     out = []; real = {path, os.path.realpath(path)}
     try: pids = sorted((n for n in os.listdir(proc) if n.isdigit()), key=int)
     except OSError: return out
@@ -146,7 +163,7 @@ def scan_processes(path, proc, home, own_pid=None):
         except OSError: argv = []
         in_cwd = bool(cwd) and any(within(cwd, r) for r in real)
         if not in_cwd and not mentions("\0".join(argv), path, home): continue
-        if _own_tool(proc, pid, argv, own_pid): continue
+        if _own_tool(proc, pid, argv, own_pid) or _rawtriage_cli(argv): continue
         cmd = " ".join(argv)[:200] or "(no command line)"
         out.append(hit("process", f"pid {pid}", f"{cmd}" + (f" (working folder {cwd})" if in_cwd else ""),
                        f"stop it first: kill {pid} (or stop the service or terminal that runs it)"))
