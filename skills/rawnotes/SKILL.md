@@ -19,7 +19,7 @@ Find the folder with `rawtriage where` (it prints the notes folder and the proje
 
 ## Rules for both
 
-1. **Decisions only through `rawtriage`.** Promote, keep, kill, reference, merge, undo and project status are
+1. **Decisions only through `rawtriage`.** Promote, keep, kill, reference, merge, undo, project status and close out (moves) are
    `rawtriage` commands. Never decide by editing a note's status, moving it to `done/`, or copying it to a project folder.
 2. **If `rawtriage` exits 2, stop.** It means there is no working triage server and nothing was changed. Tell the user.
    Do not fall back to editing files. Exit 1 means the server refused: read its message, ask the user, do not work

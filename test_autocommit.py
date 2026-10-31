@@ -127,8 +127,20 @@ class AutoCommit(GitFixture):
 
     def test_project_only_change_has_no_commit(self):
         self.project("demo", notes="# Demo\n\n- status: promoted\n- promoted: 2026-10-01\n- due: 2026-12-01\n")
-        r = self.post("/api/project/status", {"path": "active/demo/NOTES.md", "action": "shipped"})
+        r = self.post("/api/project/status", {"path": "active/demo/NOTES.md", "action": "extend", "note": "Waiting on the parts."})
         self.assertNotIn("commit", r)
+
+    def test_a_project_folder_move_is_never_swept_into_a_rawnotes_commit(self):
+        """Close out writes NOTES.md and moves the whole folder (a "movedir" step): none of it is a notes-folder path."""
+        self.project("demo", notes="# Demo\n\n- status: promoted\n- promoted: 2026-10-01\n- due: 2026-12-01\n")
+        with open(os.path.join(self.notes, "stray.md"), "w") as fh: fh.write("an untracked note\n")
+        n = self.count(); head = git(self.notes, "rev-parse", "HEAD").strip()
+        r = self.post("/api/project/close", {"name": "demo", "outcome": "archive"})
+        self.assertNotIn("commit", r); self.assertEqual(r["moved_to"], "archive/demo")
+        self.assertEqual((self.count(), git(self.notes, "rev-parse", "HEAD").strip()), (n, head))
+        self.assertEqual(server._commit_paths(server._undo[-1]["ops"]), ([], {}))
+        r = self.post("/api/undo", {}); self.assertNotIn("commit", r); self.assertEqual(self.count(), n)
+        self.assertIn("?? stray.md", git(self.notes, "status", "--porcelain"))
 
     def test_skip_reasons_keep_the_change(self):
         gd = os.path.join(self.notes, ".git")

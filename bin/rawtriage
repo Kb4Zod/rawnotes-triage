@@ -17,9 +17,14 @@
                     [--due-days N | --due YYYY-MM-DD] [--slug S]
   rawtriage merge <file> <file>... --title TEXT [--then inbox|promote|reference] [promote options]
   rawtriage undo                     reverse the newest change (the page's undo list is the same one)
-  rawtriage project ship <name> [--kind KIND]
+  rawtriage project ship <name> [--kind KIND]           a single-file project; a folder needs --outcome (see close)
   rawtriage project extend <name> --reason TEXT [--days N] [--kind KIND]   at most twice; the reason is required
-  rawtriage project kill <name> --reason TEXT [--kind KIND]
+  rawtriage project kill <name> --reason TEXT [--kind KIND]   a folder moves to archive/<name>_abandoned
+  rawtriage project close <name> --outcome next|maintained|archive [--kind KIND]
+                    next: --done TEXT and --due YYYY-MM-DD | --due-days N (experiments may skip the ship-by)
+                    maintained / archive: the folder moves there; refused while something points at it
+  rawtriage project deps <name> [--to maintained|archive|abandoned] [--kind KIND]
+                                     what points at the folder (blockers, and to-dos for after a move); read-only
 
 Every command goes through the running server, so a decision made here is logged, undoable in the page and counted
 in Pulse exactly like one made in the page. If the server is down it is started (the systemd unit if installed, else
@@ -34,6 +39,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 REPO = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
@@ -160,9 +166,13 @@ def make_parser():
     add("merge", "merge notes into one", (("files",), {"nargs": "+"}), (("--title",), {"required": True}),
         (("--then",), {"choices": ["inbox", "promote", "reference"], "default": "inbox"}), (("--question",), {"default": ""}), *promo)
     add("undo", "undo the newest change")
-    pr = add("project", "ship, push or kill a project", (("action",), {"choices": ["ship", "extend", "kill"]}), (("name",), {}),
+    pr = add("project", "ship, push, kill or close out a project", (("action",), {"choices": ["ship", "extend", "kill", "close", "deps"]}), (("name",), {}),
              (("--kind",), {"choices": ["active", "experiments", "learning", "templates"]}),
-             (("--reason", "--note"), {"dest": "reason", "default": "", "help": "why: required to extend or kill"}), (("--days",), {"type": int}))
+             (("--reason", "--note"), {"dest": "reason", "default": "", "help": "why: required to extend or kill"}), (("--days",), {"type": int}),
+             (("--outcome",), {"choices": ["next", "maintained", "archive"], "help": "what happens after shipping a folder"}),
+             (("--done",), {"default": "", "help": "next round: what done means"}), (("--due",), {"help": "next round: ship-by YYYY-MM-DD"}),
+             (("--due-days",), {"type": int, "help": "next round: ship-by in N days"}),
+             (("--to",), {"choices": ["maintained", "archive", "abandoned"], "help": "deps: the move to check for"}))
     return p
 
 
@@ -194,6 +204,11 @@ def promote_body(args):
 
 
 def check_project(args):
+    if args.action == "close" and not args.outcome:
+        raise Refused(f"Say what happens next: rawtriage project close {args.name} --outcome next|maintained|archive "
+                      f"(`rawtriage project deps {args.name}` shows the suggestion and what points at it)")
+    if args.outcome == "next" and not args.done.strip():
+        raise Refused("A next round needs --done \"what done means\" and a ship-by (--due YYYY-MM-DD or --due-days N)")
     if args.action in ("extend", "kill") and not args.reason.strip():
         raise Refused(f"Say why: rawtriage project {args.action} {args.name} --reason \"...\"" +
                       (" (at least 10 characters; a ship-by date can be pushed twice)" if args.action == "extend" else ""))
@@ -209,7 +224,40 @@ def project_body(args):
     if len(flights) > 1: raise Refused(f"“{args.name}” has {len(flights)} promoted files; say --kind or fix it in the page")
     if flights: return {**body, "path": flights[0]["path"]}
     if args.action == "extend": raise Refused(f"“{args.name}” has no ship-by date to push")
-    return {**body, "name": args.name, "kind": args.kind or "active"}
+    return {**body, "name": args.name, "kind": folder_kind(args)}
+
+
+def folder_kind(args):
+    """The kind of the project folder called args.name: --kind, else the one folder on the board with that name."""
+    if args.kind: return args.kind
+    kinds = [p["kind"] for p in api("/api/projects").get("projects", []) if p["name"] == args.name]
+    if len(kinds) > 1: raise Refused(f"“{args.name}” is in {', '.join(kinds)}: say --kind")
+    return kinds[0] if kinds else "active"
+
+
+def close_body(args):
+    body = {"name": args.name, "kind": folder_kind(args), "outcome": args.outcome, "action": "shipped"}
+    if args.outcome == "next":
+        body["done"] = args.done
+        if args.due is not None: body["due"] = args.due
+        if args.due_days is not None: body["due_days"] = args.due_days
+    return body
+
+
+def closed_text(r):
+    """The server's message, plus what is left to do by hand after a move."""
+    lines = [r["msg"]]
+    if r.get("todos"): lines += ["Left to do by hand (also written under ## Moved in its NOTES.md):"] + [f"- {t['fix']}" for t in r["todos"]]
+    if r.get("sync_apps") == "failed": lines.append("sync-apps failed (see the server's log); run it yourself so Obsidian's Apps/ links follow.")
+    return "\n".join(lines)
+
+
+def deps_text(r):
+    lines = [f"{r['path']} → {r['dest']} (suggested: {r['suggest']})"]
+    lines += ([f"BLOCKED: {len(r['blockers'])} thing(s) would break; fix each first:"] + [f"- {b['where']}: {b['detail'].splitlines()[0]}\n  fix: {b['fix']}" for b in r["blockers"]]
+              if r["blockers"] else ["Nothing blocks the move."])
+    if r["todos"]: lines += ["After the move, by hand:"] + [f"- {t['fix']}" for t in r["todos"]]
+    return "\n".join(lines)
 
 
 def run(args):
@@ -238,8 +286,14 @@ def run(args):
         r = api("/api/reference/index", {"file": os.path.basename(args.file), "section": args.section, "blurb": args.blurb}); return out(args, r, r["msg"])
     if c == "undo":
         r = api("/api/undo", {}); return out(args, r, r["msg"])
+    if c == "project" and args.action == "deps":
+        kind = folder_kind(args)
+        r = api(f"/api/project/deps?name={urllib.parse.quote(args.name)}&kind={kind}" + (f"&to={args.to}" if args.to else ""))
+        return out(args, r, deps_text(r))
+    if c == "project" and (args.action == "close" or (args.action == "ship" and args.outcome)):
+        r = api("/api/project/close", close_body(args)); return out(args, r, closed_text(r))
     if c == "project":
-        r = api("/api/project/status", project_body(args)); return out(args, r, r["msg"])
+        r = api("/api/project/status", project_body(args)); return out(args, r, closed_text(r))
     if c == "merge":
         body = {"files": [note_name(f) for f in args.files], "title": args.title, "then": args.then, "question": args.question}
         if args.then == "promote": body.update(promote_body(args))

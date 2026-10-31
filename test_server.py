@@ -596,7 +596,9 @@ class DecisionTestCase(DecisionBase):
         self.assertEqual((f["path"], f["project"]), ("active/a/NOTES.md", "a"))
         self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "extend", "days": 7, "note": "Waiting on the parts to arrive."})
         self.assertEqual(self.get("/api/notes")["inflight"][0]["days_left"], 9)
-        self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "shipped"})
+        err = self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "shipped"}, ok=False)["error"]
+        self.assertIn("What happens to a now?", err); self.assertIn("suggested: archive", err)  # a folder needs an outcome
+        self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "shipped", "outcome": "archive"})
         self.assertTrue(self.get("/api/notes")["inflight"][0]["done"])
         self.post("/api/undo", {}); self.assertFalse(self.get("/api/notes")["inflight"][0]["done"])
         self.assertIn("unknown", self.post("/api/project/status", {"path": "../etc/passwd", "action": "shipped"}, ok=False)["error"])
@@ -607,16 +609,20 @@ class DecisionTestCase(DecisionBase):
         with open(os.path.join(old, "notes.md"), "w") as fh: fh.write("# old\n\nSome notes.\n")
         status = lambda: {p["path"]: p["status"] for p in self.get("/api/projects")["projects"]}
         self.assertEqual(status(), {"experiments/spike": "", "experiments/old": ""})
-        self.post("/api/project/status", {"name": "spike", "kind": "experiments", "action": "shipped"})
-        self.assertEqual(status()["experiments/spike"], "shipped")
+        self.post("/api/project/status", {"name": "spike", "kind": "experiments", "action": "shipped", "outcome": "archive"})
+        self.assertNotIn("experiments/spike", status())
+        self.assertIn("- status: shipped", open(os.path.join(self.tmp, "archive", "spike", "NOTES.md")).read())
         self.post("/api/undo", {})
+        self.assertEqual(status()["experiments/spike"], "")
         self.assertFalse(os.path.exists(os.path.join(spike, "NOTES.md")))  # undo removes the file it created
         self.post("/api/project/status", {"name": "spike", "kind": "experiments", "action": "kill"}, ok=False)  # a reason is required
         self.post("/api/project/status", {"name": "old", "kind": "experiments", "action": "kill", "note": "Went nowhere."})
-        text = open(os.path.join(old, "notes.md")).read()  # existing file kept its name and content
+        text = open(os.path.join(self.tmp, "archive", "old_abandoned", "notes.md")).read()  # existing file kept its name and content
         self.assertIn("- status: dead", text); self.assertIn("Some notes.", text); self.assertIn("Went nowhere.", text)
-        for bad in ({"name": "spike", "kind": "experiments", "action": "extend"}, {"name": "spike", "action": "shipped"},
-                    {"name": "../experiments/spike", "kind": "active", "action": "shipped"}, {"name": "spike", "kind": "learning", "action": "shipped"}):
+        for bad in ({"name": "spike", "kind": "experiments", "action": "extend"}, {"name": "spike", "action": "shipped", "outcome": "archive"},
+                    {"name": "../experiments/spike", "kind": "active", "action": "shipped", "outcome": "archive"},
+                    {"name": "spike", "kind": "learning", "action": "shipped", "outcome": "archive"},
+                    {"name": "spike", "kind": "experiments", "action": "shipped", "outcome": "elsewhere"}):
             self.post("/api/project/status", bad, ok=False)
 
     def _promoted(self, extra=""):
@@ -651,7 +657,7 @@ class DecisionTestCase(DecisionBase):
         before = self.snapshot()
         err = self.post("/api/project/status", self._push(), ok=False)["error"]
         self.assertEqual(err, "Pushed twice already: ship it or kill it."); self.assertEqual(self.snapshot(), before)
-        self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "shipped"})  # shipping is still allowed
+        self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "shipped", "outcome": "archive"})  # shipping is still allowed
 
     def test_missing_extensions_counts_as_zero_and_undo_restores_exactly(self):
         path = self._promoted(); original = open(path, "rb").read()
@@ -680,6 +686,7 @@ class DecisionTestCase(DecisionBase):
         self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "kill", "note": "  "}, ok=False)
         self.assertEqual(self.snapshot(), before)
         self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "kill", "note": "Not worth it."})
+        path = os.path.join(self.tmp, "archive", "a_abandoned", "NOTES.md")
         self.assertIn("**Killed", open(path).read().split("## Outcome", 1)[1]); self.assertIn("Not worth it.", open(path).read())
 
     def project(self, name, kind="active", notes=None):
@@ -692,22 +699,24 @@ class DecisionTestCase(DecisionBase):
 
     def test_ship_and_kill_write_closed_and_undo_removes_it(self):
         path = self._promoted(); original = open(path, "rb").read(); t = server.today().isoformat()
-        self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "shipped"})
-        text = open(path).read(); self.assertEqual((server.field(text, "closed"), server.field(text, "shipped")), (t, t))
-        [f] = self.get("/api/notes")["inflight"]; self.assertEqual(f["closed"], t)
+        self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "shipped", "outcome": "maintained"})
+        text = open(os.path.join(self.tmp, "maintained", "a", "NOTES.md")).read()
+        self.assertEqual((server.field(text, "closed"), server.field(text, "shipped")), (t, t))
+        [f] = self.get("/api/notes")["inflight"]; self.assertEqual((f["path"], f["closed"]), ("maintained/a/NOTES.md", t))
         self.post("/api/undo", {}); self.assertEqual(open(path, "rb").read(), original)
         self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "kill", "note": "Not worth it."})
-        self.assertEqual(server.field(open(path).read(), "closed"), t)
+        self.assertEqual(server.field(open(os.path.join(self.tmp, "archive", "a_abandoned", "NOTES.md")).read(), "closed"), t)
         self.post("/api/undo", {}); self.assertEqual(open(path, "rb").read(), original)
 
     def test_folder_ship_and_kill_write_closed_and_listing_reports_it(self):
         for name in ("s", "k"): os.makedirs(os.path.join(self.tmp, "experiments", name))
         t = server.today().isoformat()
-        self.post("/api/project/status", {"name": "s", "kind": "experiments", "action": "shipped"})
+        self.post("/api/project/status", {"name": "s", "kind": "experiments", "action": "shipped", "outcome": "archive"})
         self.post("/api/project/status", {"name": "k", "kind": "experiments", "action": "kill", "note": "No."})
-        closed = {p["name"]: p["closed"] for p in self.get("/api/projects")["projects"]}
-        self.assertEqual(closed, {"s": t, "k": t})
-        self.post("/api/undo", {}); self.assertEqual({p["name"]: p["closed"] for p in self.get("/api/projects")["projects"]}["k"], "")
+        self.assertEqual(self.get("/api/projects")["projects"], [])  # both moved out of experiments/
+        closed = {f["path"]: f["closed"] for f in self.get("/api/notes")["inflight"]}  # and show as recently closed
+        self.assertEqual(closed, {"archive/s/NOTES.md": t, "archive/k_abandoned/NOTES.md": t})
+        self.post("/api/undo", {}); self.assertEqual({p["name"]: p["closed"] for p in self.get("/api/projects")["projects"]}, {"k": ""})
 
     def test_closed_date_falls_back_to_shipped_then_the_killed_date(self):
         from notemeta import closed_date
@@ -769,8 +778,8 @@ class DecisionTestCase(DecisionBase):
         self.assertIn("open-ended experiment", notes)
         [f] = self.get("/api/notes")["inflight"]
         self.assertEqual((f["dest"], f["due"], f["days_left"], f["open_ended"], f["done"]), ("experiments", "", None, True, False))
-        self.post("/api/project/status", {"path": f["path"], "action": "shipped"})
-        self.assertTrue(self.get("/api/notes")["inflight"][0]["done"])
+        self.post("/api/project/status", {"path": f["path"], "action": "shipped", "outcome": "archive"})
+        [f] = self.get("/api/notes")["inflight"]; self.assertEqual((f["path"], f["done"]), ("archive/spike/NOTES.md", True))
 
     def test_promote_active_to_an_exact_ship_by_date(self):
         self.note("2026-10-01-a.md"); self.note("2026-10-02-b.md")

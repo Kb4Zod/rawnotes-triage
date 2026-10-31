@@ -255,11 +255,36 @@ class Projects(CliBase):
     def test_ship_and_kill(self):
         self.project("alpha", notes="# Alpha\n\n- status: promoted\n- promoted: 2026-10-01\n- due: 2099-01-01\n")
         self.project("beta", notes="# Beta\n\n- status: promoted\n")
-        self.assertIn("Shipped alpha", self.ok("project", "ship", "alpha").stdout)
+        self.assertIn("suggested: archive", self.refused("project", "ship", "alpha"))  # a folder needs an outcome
+        self.assertIn("Shipped alpha", self.ok("project", "ship", "alpha", "--outcome", "archive").stdout)
+        self.assertTrue(os.path.isdir(os.path.join(self.tmp, "archive", "alpha")))
         self.assertIn("--reason", self.refused("project", "kill", "beta"))
-        self.assertIn("Killed beta", self.ok("project", "kill", "beta", "--reason", "no time").stdout)
-        with open(os.path.join(self.tmp, "active", "beta", "NOTES.md")) as fh: self.assertIn("no time", fh.read())
+        out = self.ok("project", "kill", "beta", "--reason", "no time").stdout
+        self.assertIn("Killed beta → archive/beta_abandoned", out); self.assertIn("Update any T3 Code project", out)
+        with open(os.path.join(self.tmp, "archive", "beta_abandoned", "NOTES.md")) as fh: self.assertIn("no time", fh.read())
         self.assertIn("unknown project", self.refused("project", "ship", "ghost"))
+
+    def test_close_out_next_round_deps_and_a_blocked_move(self):
+        import depcheck
+        from unittest import mock
+        self.project("alpha", notes="# Alpha\n\n- status: promoted\n- promoted: 2026-10-01\n- due: 2099-01-01\n\n- definition of done: One.\n")
+        self.project("spike", kind="experiments", notes="# Spike\n\n- status: promoted\n")
+        self.assertIn("--outcome", self.refused("project", "close", "alpha"))
+        self.assertIn("--done", self.refused("project", "close", "alpha", "--outcome", "next"))
+        r = self.ok("project", "close", "alpha", "--outcome", "next", "--done", "Two.", "--due-days", "5").stdout
+        self.assertIn("Next round ships by", r)
+        with open(os.path.join(self.tmp, "active", "alpha", "NOTES.md")) as fh: self.assertIn("## Rounds", fh.read())
+        r = self.ok("project", "deps", "spike").stdout  # the kind is found from the board
+        self.assertIn("experiments/spike → archive/spike (suggested: archive)", r); self.assertIn("Nothing blocks the move.", r)
+        home = os.path.join(self.tmp, "home"); os.makedirs(os.path.join(home, ".local", "bin"))
+        with open(os.path.join(home, ".local", "bin", "spike"), "w") as fh: fh.write(f"#!/bin/sh\n{self.tmp}/experiments/spike/run\n")
+        with mock.patch.object(server, "DEPS", depcheck.Sources(home, proc=os.path.join(self.tmp, "proc"), crontab=lambda: "")):
+            self.assertIn("BLOCKED: 1 thing(s)", self.ok("project", "deps", "spike", "--to", "abandoned").stdout)
+            self.assertIn("Can't move spike", self.refused("project", "ship", "spike", "--outcome", "archive"))
+        r = self.ok("project", "ship", "spike", "--outcome", "archive").stdout
+        self.assertIn("→ archive/spike", r); self.assertIn("Left to do by hand", r)
+        self.assertTrue(os.path.isdir(os.path.join(self.tmp, "archive", "spike")))
+        self.ok("undo"); self.assertTrue(os.path.isdir(os.path.join(self.tmp, "experiments", "spike")))
 
     def test_extend_needs_a_ship_by(self):
         self.project("alpha", notes="# Alpha\n\n- status: promoted\n- promoted: 2026-10-01\n- due: 2099-01-01\n")

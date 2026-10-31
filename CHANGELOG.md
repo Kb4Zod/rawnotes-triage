@@ -48,6 +48,17 @@ Flow gaps (plan and tickets in `.scratch/flow-gaps/`; Hugh approved all 13 recom
   systemd user units, running processes, git worktrees, `~/.local/bin` links and scripts, and crontab lines block;
   the agent memory folder under `~/.claude/projects` (with the exact `mv`) and T3 Code projects are to-dos. Each hit
   has its fix. New `depcheck.py` (every scanner takes its root as an argument) and `GET /api/project/deps`.
+- **Close out: Next round, Maintained or Archive (12).** Mark shipped on a project folder asks what happens now,
+  with a suggestion (maintained when it has a GitHub origin, else archive). Next round keeps the folder, records the
+  finished round under `## Rounds` and starts a new one (done means and ship-by required, `extensions: 0`). Maintained
+  and Archive move the folder to `maintained/<name>` / `archive/<name>`; Kill moves it to `archive/<name>_abandoned`.
+  The dependency check (11) runs inside the change: a blocker refuses the move (400 with the list), to-dos go under
+  `## Moved` in the moved `NOTES.md` and into the toast. New Tx op `movedir` (a rename, same filesystem only): undo
+  and rollback move the folder back only while nothing in it changed (`.git` internals aside) and the old name is
+  free. `sync-apps` runs after a move or its undo if on `PATH` (best effort). Moved projects show in Closed for 7
+  days. New `POST /api/project/close`; `/api/project/status` ship/kill on a folder goes through it. CLI:
+  `rawtriage project close <name> --outcome next|maintained|archive`, `project ship --outcome`, `project deps`.
+  Project moves are never part of a RawNotes auto-commit.
 - **Integration.** One config reader (`read_config` / `config_value` / `config_int`) behind every setting, with a
   settings table in the README. The reader hides every header key the app writes (`kept`, `keeps`, `restored`,
   `extensions`, `closed`, `github`). Tests: every git-running test uses `testkit.isolate_git`; testkit points the config

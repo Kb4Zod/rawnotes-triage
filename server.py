@@ -23,11 +23,13 @@ Decisions (all move real files, nothing is deleted; the words match the CLI and 
   kill (archive)      -> status: dead, reason in ## Outcome, move to done/
   keep                -> status open|cooking, optional next-step line
 Also: batch (one decision for many notes), merge (many notes -> one), restore (done/ -> Inbox),
-project status (mark shipped / push ship-by date), and undo of the last change made through this server.
+project status (mark shipped / push ship-by date), close out of a project folder (next round in place, or a move to
+maintained/ or archive/; kill moves it to archive/<name>_abandoned) after a read-only dependency check (depcheck.py),
+and undo of the last change made through this server.
 After each change (undo included) the notes-folder files it touched are committed, if the notes folder is a git
 repo: only those paths, message "triage: <what>". A commit that can't happen warns; the change stands (--no-commit).
 """
-import argparse, base64, contextlib, errno, json, os, re, shlex, shutil, subprocess, sys, tempfile, threading, time, urllib.parse, datetime as dt
+import argparse, base64, contextlib, errno, json, os, re, shlex, shutil, stat, subprocess, sys, tempfile, threading, time, urllib.parse, datetime as dt
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -292,30 +294,36 @@ def set_done(name, text, expected, kind=None):
         now = hit["text"] if hit and hit["defined"] else ""
         if re.sub(r"\s+", " ", expected or "").strip() != now:
             raise ValueError("This definition changed on disk since you opened it. Refresh and try again.")
-        eol = "\n"
-        if hit:
-            target = os.path.join(path, hit["file"]); lines, eol = _read_lines(target)
-            if hit["kind"] == "line":
-                prefix = hit["prefix"] if hit["prefix"].rstrip().endswith(":") or hit["prefix"].rstrip().endswith(":**") else hit["prefix"].rstrip() + ": "
-                lines[hit["start"]:hit["end"]] = [prefix + text]
-            else:
-                tail = [""] if hit["end"] < len(lines) and lines[hit["end"]].strip() else []
-                lines[hit["start"] + 1:hit["end"]] = ["", text] + tail
-        else:
-            target = notes_file(path)
-            item = "- definition of done: " + text
-            if os.path.exists(target):
-                lines, eol = _read_lines(target)
-                plan = next((i for i, l in enumerate(lines) if re.match(r"^##\s+Plan\s*$", l)), None)
-                if plan is None:
-                    while lines and not lines[-1].strip(): lines.pop()
-                    lines += ["", "## Plan", "", item, ""]
-                else: lines.insert(plan + 2 if lines[plan + 1:plan + 2] == [""] else plan + 1, item)
-            else: lines = [f"# {name}", "", "## Plan", "", item, ""]
+        target, lines, eol = _with_done(path, name, text, hit)
         tx.write(target, eol.join(lines))
         tx.select = None
     _log(f"done {kind}/{name} -> {os.path.basename(target)}: {text[:80]}")
     return {"ok": True, "file": os.path.basename(target), "msg": f"Saved to {os.path.basename(target)}"}
+
+def _with_done(path, name, text, hit):
+    """(file, lines, eol): `text` put in as the definition of done where find_done found one (`hit`), else as a
+    `- definition of done:` line in the Plan of NOTES.md (made if missing). Nothing is written here."""
+    eol = "\n"
+    if hit:
+        target = os.path.join(path, hit["file"]); lines, eol = _read_lines(target)
+        if hit["kind"] == "line":
+            prefix = hit["prefix"] if hit["prefix"].rstrip().endswith(":") or hit["prefix"].rstrip().endswith(":**") else hit["prefix"].rstrip() + ": "
+            lines[hit["start"]:hit["end"]] = [prefix + text]
+        else:
+            tail = [""] if hit["end"] < len(lines) and lines[hit["end"]].strip() else []
+            lines[hit["start"] + 1:hit["end"]] = ["", text] + tail
+    else:
+        target = notes_file(path)
+        item = "- definition of done: " + text
+        if os.path.exists(target):
+            lines, eol = _read_lines(target)
+            plan = next((i for i, l in enumerate(lines) if re.match(r"^##\s+Plan\s*$", l)), None)
+            if plan is None:
+                while lines and not lines[-1].strip(): lines.pop()
+                lines += ["", "## Plan", "", item, ""]
+            else: lines.insert(plan + 2 if lines[plan + 1:plan + 2] == [""] else plan + 1, item)
+        else: lines = [f"# {name}", "", "## Plan", "", item, ""]
+    return target, lines, eol
 
 PROJECT_KINDS = ("active", "experiments", "learning", "templates")  # folders whose subfolders are projects on the board
 PROMOTED_ONLY = ("learning", "templates")  # here a folder is a project only if Promote made it (its NOTES.md says promoted:)
@@ -1080,6 +1088,27 @@ def _read(path):
 
 def _stored(path): return safefs.ensure_inside([NOTES, PROJECTS], path)
 
+TREE_LIMIT = 200_000  # entries; a bigger folder can still move, but its undo can't be checked, so it refuses
+
+def tree_state(path, limit=None):
+    """What a folder holds, to tell later whether anything in it changed: every entry's relative path with its size and
+    mtime (a link: its target), folders by name only, `.git` contents left out (git rewrites its index on a mere
+    `git status`). None if it can't be read or has more than `limit` entries. Never raises."""
+    out = {}; limit = TREE_LIMIT if limit is None else limit
+    try:
+        for root, dirs, files in os.walk(path, onerror=_raise):
+            if ".git" in dirs and os.path.isdir(os.path.join(root, ".git")) and not os.path.islink(os.path.join(root, ".git")):
+                dirs.remove(".git"); out[os.path.relpath(os.path.join(root, ".git"), path)] = "git"
+            for n in dirs + files:
+                p = os.path.join(root, n); st = os.lstat(p)
+                out[os.path.relpath(p, path)] = (("link", os.readlink(p)) if stat.S_ISLNK(st.st_mode) else "dir" if stat.S_ISDIR(st.st_mode)
+                                                 else (st.st_size, st.st_mtime_ns))
+                if len(out) > limit: return None
+    except OSError: return None
+    return out
+
+def _raise(e): raise e
+
 class Tx:
     """One change to the files, applied step by step. Each step that succeeds is recorded, so the whole change can be
     rolled back if a later step fails, or undone later. Every path must be a real (non-symlink) path inside the notes
@@ -1105,6 +1134,16 @@ class Tx:
         self.ops.append(("move", src, dst))
     def mkdir(self, path):
         path = _stored(path); os.mkdir(path); self.ops.append(("mkdir", path))
+    def movedir(self, src, dst):
+        """Rename a whole folder (a project closing out). Recorded as ("movedir", src, dst, state): `state` is what the
+        folder held right after the move (tree_state), so undo and rollback move it back only while nothing in it was
+        added, removed or edited since, and only while the old name is still free. Same filesystem only (a rename,
+        never a copy); a symlink, or a symlink on the way, is refused like every other write."""
+        src, dst = _stored(src), _stored(dst)
+        if os.path.islink(src) or not os.path.isdir(src): raise ValueError(f"{os.path.basename(src)} is not a folder")
+        if os.path.lexists(dst): raise FileExistsError(f"{os.path.basename(dst)} already exists")
+        os.rename(src, dst)  # EXDEV (another filesystem) fails here, before anything moved
+        self.ops.append(("movedir", src, dst, tree_state(dst)))
     def ensure_dir(self, path):
         """Create `path` and any missing parents, each one recorded (so undo removes the empty ones it made)."""
         path = _stored(path); missing = []
@@ -1149,7 +1188,7 @@ def _recheck_contained(op):
     """Every path a recorded step touches must still be a real path inside the notes/projects folders, now: a folder
     renamed away and replaced by a symlink (or the file itself swapped for one) since the step ran makes undo,
     rollback and redo refuse rather than write through the link. Raises ValueError, changing nothing."""
-    for p in ((op[1], op[2]) if op[0] == "move" else (op[1],)):
+    for p in ((op[1], op[2]) if op[0] in ("move", "movedir") else (op[1],)):
         try: _stored(p)
         except ValueError as e: raise ValueError(f"Can't undo: {e}. Nothing was changed; fix {os.path.basename(p)} by hand.") from e
 
@@ -1157,10 +1196,14 @@ def _plan_inverse(ops, vfs=None):
     """Dry run of reversing `ops` newest first, against the files as they are now: raises ValueError (changing
     nothing) if any file a step touched has been edited, moved or added to since, or no longer lies safely inside the
     notes and projects folders."""
-    vfs = {} if vfs is None else vfs
+    vfs = {} if vfs is None else vfs; moved = []  # folders a later step moved: their files are read at the new place
     for op in ops: _recheck_contained(op)
     def cur(p):
         if p in vfs: return vfs[p]
+        for src, dst in reversed(moved):
+            if _within(p, src):
+                p = dst + p[len(src):]
+                if p in vfs: return vfs[p]
         if os.path.isfile(p):
             with open(p, "rb") as fh: return fh.read()
         return MISSING
@@ -1181,7 +1224,22 @@ def _plan_inverse(ops, vfs=None):
         elif op[0] == "gitinit":
             _check_gitinit(op[1], op[2])
             vfs[os.path.join(op[1], ".git")] = MISSING
+        elif op[0] == "movedir":
+            _check_movedir(op, vfs)
+            moved.append((op[1], op[2])); vfs[op[2]] = MISSING
     return vfs
+
+def _check_movedir(op, vfs=None):
+    """Raise ValueError unless a moved folder can go back: still a real folder at the new place, holding exactly what
+    it held right after the move, and the old name still free."""
+    _, src, dst, state = op; name = os.path.basename(dst)
+    back = f"move it back by hand if you still want to: mv {shlex.quote(dst)} {shlex.quote(src)}"
+    if os.path.islink(dst) or not os.path.isdir(dst): raise ValueError(f"Can't undo: {name} is no longer in {os.path.basename(os.path.dirname(dst))}/. Fix it by hand.")
+    if os.path.lexists(src) and (vfs or {}).get(src) is not MISSING:
+        raise ValueError(f"Can't undo: {os.path.basename(os.path.dirname(src))}/{os.path.basename(src)} exists again. Nothing was changed; {back}")
+    if state is None: raise ValueError(f"Can't undo: {name} is too big (or partly unreadable) to check for changes. Nothing was changed; {back}")
+    if tree_state(dst) != state:
+        raise ValueError(f"Can't undo: {name} changed since it moved (files added, removed or edited). Nothing was changed; {back}")
 
 def _check_gitinit(path, sha):
     """Raise ValueError unless `path`/.git is still exactly what promote made: HEAD at its one commit, every ref on
@@ -1208,6 +1266,9 @@ def _apply_inverse(op):
         if op[2] is None: os.remove(op[1])
         else: safefs.atomic_write(op[1], op[2], op[4])
     elif op[0] == "move": os.rename(op[2], op[1])
+    elif op[0] == "movedir":
+        if os.path.lexists(op[1]): raise FileExistsError(f"{os.path.basename(op[1])} already exists")
+        os.rename(op[2], op[1])
     elif op[0] == "mkdir": os.rmdir(op[1])
     elif op[0] == "gitinit":
         gitdir = _stored(os.path.join(op[1], ".git"))
@@ -1218,6 +1279,9 @@ def _apply_forward(op):
     _recheck_contained(op)
     if op[0] == "write": safefs.atomic_write(op[1], op[3], op[4])
     elif op[0] == "move": os.rename(op[1], op[2])
+    elif op[0] == "movedir":
+        if os.path.lexists(op[2]): raise FileExistsError(f"{os.path.basename(op[2])} already exists")
+        os.rename(op[1], op[2])
     elif op[0] == "mkdir": os.mkdir(op[1])
     elif op[0] == "gitinit": raise ValueError("a removed .git can't be put back")  # undo reports it; the files are intact
 
@@ -1272,6 +1336,7 @@ def undo():
         _undo.pop(); _log(f"undo {entry['label']}")
         res = {"ok": True, "msg": f"Undone: {entry['label']}", "select": entry["select"], "left": len(_undo)}
     _note_commit(autocommit(f"undo {entry['label']}", ops))  # undo is a new change with its own commit; history is never rewritten
+    if any(op[0] == "movedir" for op in ops): res["sync_apps"] = run_sync_apps()  # a folder moved back: Obsidian links follow
     return res
 
 def to_done(src, tx):
@@ -1660,7 +1725,11 @@ def _status_edit(text, req, name):
 def project_status(req):
     """On a promoted project file (a due: line, or an open-ended experiment): mark it shipped, push the ship-by
     date (not on open-ended experiments), or kill it.
-    A project folder with no promoted file ({name, kind} instead of path) can be shipped or killed through its NOTES.md."""
+    A project folder with no promoted file ({name, kind} instead of path) can be shipped or killed through its NOTES.md.
+    Shipping or killing a project folder on the board is a close out (close_project): it needs an outcome, and moves."""
+    folder = _folder_of(req) if req.get("action") in ("shipped", "kill") else None
+    if folder: return close_project(req, folder)
+    if req.get("outcome"): raise ValueError("Only a project folder can be closed out; this project is a single file.")
     if not req.get("path"): return folder_project_status(req)
     rel = req.get("path", "")
     with mutation() as tx:
@@ -1683,6 +1752,114 @@ def folder_project_status(req):
         tx.write(target, text, eol)
     _log(f"project {req.get('action')} {kind}/{name}")
     return {"ok": True, "msg": msg}
+
+# ---- close out: ship a project folder into another round, maintained/ or archive/, or kill it into archive/ ----
+OUTCOMES = ("next", "maintained", "archive")
+SYNC_TIMEOUT = 60  # seconds sync-apps may take
+
+class Blocked(ValueError):
+    """A move refused because something points at the folder. `payload` ({blockers, todos}) goes into the 400 answer."""
+    def __init__(self, msg, payload): super().__init__(msg); self.payload = payload
+
+def _folder_of(req):
+    """(folder, kind, project file or None) when a status request is about a project folder on the board: {name, kind},
+    or a path `<kind>/<folder>/<file>.md`. None for a single-file project, or one outside the board's folders."""
+    rel = req.get("path")
+    if not rel: return (*project_dir(req.get("name", ""), req.get("kind")), None)
+    parts = rel.split("/") if isinstance(rel, str) else []
+    if len(parts) != 3 or parts[0] not in PROJECT_KINDS: return None
+    try: path, kind = project_dir(parts[1], parts[0])
+    except ValueError: return None
+    return path, kind, os.path.join(path, parts[2])
+
+def close_project(req, folder=None):
+    """POST /api/project/close (and ship/kill of a project folder through /api/project/status). One undo step.
+    outcome next: another round in place (new done means and ship-by, the finished round under ## Rounds).
+    maintained / archive: shipped, then the folder moves to maintained/<slug> or archive/<slug>.
+    action kill (reason required): dead, then the folder moves to archive/<slug>_abandoned.
+    A move first runs the dependency check inside the change: any blocker refuses it (400, nothing changed); to-dos
+    are written under ## Moved in its notes and returned. After a move, sync-apps runs (best effort)."""
+    path, kind, file = folder or _folder_of(req) or (None, None, None)
+    if not path: raise ValueError("unknown project")
+    path, kind = project_dir(os.path.basename(path), kind, write=True)  # a symlinked folder is refused here
+    name = os.path.basename(path); action = req.get("action") or "shipped"
+    if action not in ("shipped", "kill"): raise ValueError("unknown project action")
+    outcome = "abandoned" if action == "kill" else req.get("outcome")
+    if outcome not in OUTCOMES + ("abandoned",):
+        raise ValueError(f"What happens to {name} now? Choose next (another round, stays in {kind}/), maintained or archive "
+                         f"(suggested: {close_suggestion(path)}).")
+    done = due = None
+    if outcome == "next":
+        done = " ".join(_text(req, "done").split())
+        if done_placeholder(done): raise ValueError("Say what done means for the next round.")
+        if len(done) > DONE_MAX: raise ValueError(f"Keep done means under {DONE_MAX} characters.")
+        due = ship_by(req) if req.get("due") or req.get("due_days") else None
+        if not due and kind != "experiments": raise ValueError("Give the next round a ship-by date.")
+    res = {"ok": True}
+    with mutation() as tx:
+        path, kind = project_dir(name, kind, write=True)  # again under the lock: it may have moved since
+        if file and os.path.relpath(file, PROJECTS) not in {x["path"] for x in inflight()}: raise ValueError("unknown project file")
+        target = file or notes_file(path)
+        if outcome == "next": res["msg"] = _next_round(tx, path, kind, name, target, done, due)
+        else: res.update(_close_and_move(tx, req, path, kind, name, target, action, outcome))
+    if res.get("moved_to"): res["sync_apps"] = run_sync_apps()
+    return res
+
+def _next_round(tx, path, kind, name, target, done, due):
+    t = today().isoformat(); old_done = definition_of_done(path)["text"]
+    dfile, dlines, deol = _with_done(path, name, done, find_done(path))
+    if dfile == target: text, eol = "\n".join(dlines), deol
+    else:
+        tx.write(dfile, deol.join(dlines))
+        text, eol = read_note(target) if os.path.exists(target) else (f"# {name}\n", "\n")
+    promoted, old_due, ext = field(text, "promoted"), field(text, "due"), _count(field(text, "extensions"))
+    text = _status_edit(text, {"action": "shipped"}, name)[0]  # the same checks and fields as any ship, then reopened
+    text = set_field(set_field(set_field(text, "status", "promoted"), "promoted", t), "extensions", "0")
+    text = drop_field(drop_field(text, "closed"), "shipped")
+    text = set_field(text, "due", due) if due else drop_field(text, "due")
+    clock = f" (ship by {old_due}" + (f", pushed {ext}×" if ext else "") + ")" if old_due else ""
+    text = append_to_section(text, "Rounds", f"- {promoted or '?'} → shipped {t}{clock}. Done means: {old_done or '(none written)'}")
+    tx.write(target, text, eol)
+    tx.label = f"next round of {name}"; tx.log(f"project next {kind}/{name} due {due or 'open-ended'}")
+    return f"Shipped {name} 🎉 Next round" + (f" ships by {due}" if due else " is open-ended")
+
+def _moved_lines(t, old, new, todos):
+    out = [f"- {t}: moved from `{old}/` to `{new}/`" + (". Left to do by hand:" if todos else ".")]
+    for x in todos: out.append(f"  - {x['fix']}" if x["kind"] == "t3" else f"  - {x['detail']}: `{x['fix']}`")
+    return "\n".join(out)
+
+def _close_and_move(tx, req, path, kind, name, target, action, outcome):
+    text, eol = read_note(target) if os.path.exists(target) else (f"# {name}\n", "\n")
+    text, label, msg = _status_edit(text, {**req, "action": action}, name)
+    dest = close_target(path, outcome)
+    found = depcheck.check(path, dep_sources(), dest)
+    blockers, todos = found["blockers"], found["todos"]
+    if blockers:
+        n = len(blockers)
+        raise Blocked(f"Can't move {name}: {n} {'things point' if n > 1 else 'thing points'} at it. Fix {'each' if n > 1 else 'it'}, then try again:\n"
+                      + "\n".join(f"- {b['where']}: {b['detail'].splitlines()[0]} → {b['fix']}" for b in blockers), found)
+    old, new = f"{kind}/{name}", os.path.relpath(dest, PROJECTS)
+    text = append_to_section(text, "Moved", _moved_lines(today().isoformat(), old, new, todos))
+    tx.write(target, text, eol)
+    tx.ensure_dir(os.path.dirname(dest))
+    tx.movedir(path, dest)
+    tx.label = f"{'kill' if action == 'kill' else outcome} {name}"
+    tx.log(f"project close {old} -> {new}")
+    return {"msg": f"{msg} → {new}", "moved_to": new, "todos": todos}
+
+def run_sync_apps():
+    """Re-run obsidian-sync-apps after a folder moved (or moved back), so Obsidian's Apps/ links follow it. Best effort:
+    "ran", "failed" or "not installed"; its output goes to stderr only, and nothing here can fail the change."""
+    exe = shutil.which(SYNC_APPS) if SYNC_APPS else None
+    if not exe: return "not installed"
+    try: p = subprocess.run([exe], capture_output=True, text=True, timeout=SYNC_TIMEOUT, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError) as e:
+        print(f"rawtriage-web: sync-apps failed ({e}); the move itself stands", file=sys.stderr); return "failed"
+    out = (p.stdout + p.stderr).strip()
+    if out: print(f"rawtriage-web: sync-apps: {out[-2000:]}", file=sys.stderr)
+    if p.returncode:
+        print(f"rawtriage-web: sync-apps exited {p.returncode}; the move itself stands", file=sys.stderr); return "failed"
+    return "ran"
 
 def stats(weeks=8):
     """Inbox flow for the Pulse page: notes captured vs. decided per week, and how long the Inbox waits."""
@@ -1838,7 +2015,7 @@ class H(BaseHTTPRequestHandler):
         """Bad requests are the caller's (400); a file that vanished is 404; anything else is ours (500)."""
         code = (500 if isinstance(e, MutationFailed) else 400 if isinstance(e, (ValueError, KeyError, TypeError, AttributeError, RuntimeError))
                 else 404 if isinstance(e, FileNotFoundError) else 500)
-        self._send(code, {"error": str(e.args[0]) if isinstance(e, KeyError) and e.args else str(e) or type(e).__name__})
+        self._send(code, {"error": str(e.args[0]) if isinstance(e, KeyError) and e.args else str(e) or type(e).__name__, **getattr(e, "payload", {})})
     def log_message(self, *a): pass
     def _refuse(self, post):
         """Browser-attack guard (no login here, so the page you are on must not be able to drive it).
@@ -1902,6 +2079,7 @@ class H(BaseHTTPRequestHandler):
             if path == "/api/restore": return self._send(200, restore(req))
             if path == "/api/new": return self._send(200, new_note(req))
             if path == "/api/project/status": return self._send(200, project_status(req))
+            if path == "/api/project/close": return self._send(200, close_project(req))
             if path in ("/api/github/token", "/api/github/token/remove"):
                 if not self._this_machine(): raise ValueError("The GitHub sign-in can only be changed from the machine running the server.")
                 return self._send(200, set_github_token(req) if path == "/api/github/token" else remove_github_token())

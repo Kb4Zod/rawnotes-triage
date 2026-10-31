@@ -382,14 +382,14 @@ class LearningAndTemplates(PromoteBase):
         old_due = server.field(self.read(lp, "NOTES.md"), "due")
         self.post("/api/project/status", {"path": "learning/a/NOTES.md", "action": "extend", "days": 7, "note": "Waiting on the exam date"})
         self.assertNotEqual(server.field(self.read(lp, "NOTES.md"), "due"), old_due)
-        self.post("/api/project/status", {"path": "templates/b/NOTES.md", "action": "shipped"})
-        self.assertEqual(server.field(self.read(tp, "NOTES.md"), "status"), "shipped")
+        self.post("/api/project/status", {"path": "templates/b/NOTES.md", "action": "shipped", "outcome": "next", "done": "Copies cleanly.", "due_days": 5})
+        self.assertIn("## Rounds", self.read(tp, "NOTES.md"))
         self.post("/api/project/status", {"name": "c", "kind": "learning", "action": "kill", "note": "lost interest"})
-        self.assertIn("**Killed", self.read(self.tmp, "learning/c/NOTES.md"))
+        self.assertIn("**Killed", self.read(self.tmp, "archive/c_abandoned/NOTES.md"))
         self.post("/api/done", {"name": "a", "kind": "learning", "text": "I can pass the exam.", "expected": "It runs on the phone."})
         self.assertIn("- definition of done: I can pass the exam.", self.read(lp, "NOTES.md"))
         ps = {p["path"]: p["status"] for p in self.get("/api/projects")["projects"]}
-        self.assertEqual((ps["templates/b"], ps["learning/c"]), ("shipped", "dead"))
+        self.assertEqual((ps["templates/b"], "learning/c" in ps), ("promoted", False))
         for _ in range(4): self.post("/api/undo", {})
         self.assertEqual(server.field(self.read(lp, "NOTES.md"), "due"), old_due)
 
