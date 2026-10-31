@@ -125,6 +125,18 @@ class AutoCommit(GitFixture):
         self.post("/api/action", {"file": "2026-10-01-alpha.md", "action": "keep", "status": "cooking"})
         self.assertIn("edits made by hand before this change: 2026-10-01-alpha.md", git(self.notes, "log", "-1", "--format=%b"))
 
+    def test_hand_edits_are_found_when_the_notes_folder_is_a_subfolder_of_the_repo(self):
+        """RawNotes kept inside a bigger repo (the projects root, say): HEAD:<path> is from the repo's top, so the
+        lookup must be relative to the notes folder (HEAD:./<path>)."""
+        import shutil
+        shutil.rmtree(os.path.join(self.notes, ".git"))
+        git(self.tmp, "init", "-q", "-b", "main"); git(self.tmp, "config", "core.hooksPath", self.hooks)
+        git(self.tmp, "config", "user.name", "Test"); git(self.tmp, "config", "user.email", "me@users.noreply.github.com")
+        git(self.tmp, "add", "-A", "RawNotes"); git(self.tmp, "commit", "-q", "-m", "start")
+        with open(os.path.join(self.notes, "2026-10-01-alpha.md"), "a") as fh: fh.write("typed by hand\n")
+        r = self.post("/api/action", {"file": "2026-10-01-alpha.md", "action": "keep"}); self.assertTrue(r["commit"]["ok"], r)
+        self.assertIn("edits made by hand before this change: 2026-10-01-alpha.md", git(self.tmp, "log", "-1", "--format=%b"))
+
     def test_undo_is_not_reported_as_hand_edits(self):
         for f in ("2026-10-01-alpha.md", "2026-10-02-beta.md"):
             self.post("/api/action", {"file": f, "action": "keep", "status": "cooking", "note": "next"})

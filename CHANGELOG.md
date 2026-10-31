@@ -138,6 +138,8 @@ Flow gaps (plan and tickets in `.scratch/flow-gaps/`; Hugh approved all 13 recom
     (`undo_warning`, with the `mv` to move it back by hand, relative to the projects folder).
   - README and the spec say what the GitHub gate checks (commits and pushes, not uncommitted changes) and that Next
     round is never gated (a change from user story 22, noted in `spec.md`).
+  - Auto-commit names hand edits also when the notes folder is a subfolder of a bigger repo (it looked the note up from
+    the repo's top, found nothing and never said so).
 - **Test fix.** `test_runtime.HttpLimits` reads the 413 right after the headers and tolerates the server closing
   before the oversized body is sent (it was flaky with BrokenPipe under load); it now also asserts no file changed
   and no undo step was added.

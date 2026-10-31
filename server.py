@@ -1525,7 +1525,7 @@ def _commit_paths(ops):
 def _hand_edited(rel, op):
     """True if a tracked note already differed from its last commit before this change wrote it."""
     if op is None or op[2] is None: return False
-    head = _notes_git(["rev-parse", "-q", "--verify", f"HEAD:{rel}"])
+    head = _notes_git(["rev-parse", "-q", "--verify", f"HEAD:./{rel}"])  # ./: from the notes folder, which may sit inside a bigger repo
     if head.returncode != 0: return False
     mine = _notes_git(["hash-object", "--stdin"], stdin=op[2])
     return mine.returncode == 0 and mine.stdout.strip() != head.stdout.strip()
