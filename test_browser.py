@@ -257,7 +257,7 @@ class Flows(BrowserCase):
         self.assertIn("git repo on main", self.page.eval("document.querySelector('#pv').textContent"))
         self.focus("#note"); self.page.type("Works on my phone"); self.page.click("#go"); self.done_toast()
         text = self.page.eval("document.querySelector('#toast').textContent")
-        self.assertIn("Warning:", text); self.assertIn("me@example.com", text)
+        self.assertIn("Warning:", text); self.assertIn("not a @users.noreply.github.com address", text); self.assertNotIn("me@example.com", text)
         self.assertTrue(self.page.eval("document.querySelector('#toast').classList.contains('bad') && !!document.querySelector('#tUndo')"))
 
     def test_reference_files_the_note(self):
