@@ -118,6 +118,9 @@ Flow gaps (plan and tickets in `.scratch/flow-gaps/`; Hugh approved all 13 recom
   - An inherited `GIT_DIR` (or `GIT_WORK_TREE`, `GIT_INDEX_FILE`, …: a server started from a git hook or a `git -C`
     alias) no longer reaches `gh` (whose `repo create --source` adds the remote with git), the project panel's git reads
     (branch, history), or a server `rawtriage` starts when none is running.
+  - Git run in a project folder reads only that folder's own `.git` (`GIT_CEILING_DIRECTORIES` is set to its parent):
+    with the projects root inside an outer repo, a half-made `.git` (a failed `git init`) made git read the outer repo,
+    whose remote then refused the rollback and left the folder behind. The dependency check's worktree scan does the same.
 - **Test fix.** `test_runtime.HttpLimits` reads the 413 right after the headers and tolerates the server closing
   before the oversized body is sent (it was flaky with BrokenPipe under load); it now also asserts no file changed
   and no undo step was added.

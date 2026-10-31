@@ -480,12 +480,19 @@ def github_repo_of(url):
     if not m or any(not seg.strip(".") for seg in m[1].split("/")): return ""  # "..", "." are not names
     return m[1]
 
-def git_out(path, args, timeout=5):
-    """stdout of a read-only `git args` in `path` (None if it failed). Like _git: never prompts, and a GIT_DIR or
-    similar inherited from the environment is dropped, so it always reads the repo in `path`."""
+def git_env(path):
+    """The environment for git run in a project folder `path`: never prompts; a GIT_DIR or similar inherited from the
+    environment is dropped; and GIT_CEILING_DIRECTORIES is the folder's parent, so git only ever reads `path`'s own
+    .git: one it can't read (a half-made one) is "not a repo", never the repo of a folder above (projects kept inside
+    a dotfiles or ~/Projects repo)."""
     env = {k: v for k, v in os.environ.items() if k not in GIT_ENV_DROP}
+    return {**env, "GIT_TERMINAL_PROMPT": "0", "GIT_CEILING_DIRECTORIES": os.path.dirname(os.path.abspath(path))}
+
+def git_out(path, args, timeout=5):
+    """stdout of a read-only `git args` in `path` (None if it failed). Like _git: never prompts and reads only the repo
+    in `path` (git_env)."""
     try:
-        proc = subprocess.run(["git"] + args, cwd=path, capture_output=True, text=True, timeout=timeout, env={**env, "GIT_TERMINAL_PROMPT": "0"})
+        proc = subprocess.run(["git"] + args, cwd=path, capture_output=True, text=True, timeout=timeout, env=git_env(path))
         return proc.stdout.strip() if proc.returncode == 0 else None
     except (OSError, subprocess.TimeoutExpired): return None
 
@@ -494,11 +501,9 @@ NOREPLY_SUFFIX = "@users.noreply.github.com"
 GIT_ENV_DROP = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR", "GIT_CEILING_DIRECTORIES")
 
 def _git(path, args, timeout=GIT_TIMEOUT):
-    """(returncode, stdout, stderr) of `git args` run in `path`. Never prompts; a GIT_DIR or similar inherited from
-    the environment is dropped, so the command always acts on the repo in `path`."""
-    env = {k: v for k, v in os.environ.items() if k not in GIT_ENV_DROP}
-    proc = subprocess.run(["git", *args], cwd=path, capture_output=True, text=True, timeout=timeout,
-                          env={**env, "GIT_TERMINAL_PROMPT": "0"})
+    """(returncode, stdout, stderr) of `git args` run in `path`. Never prompts, and always acts on the repo in `path`
+    itself, never one inherited from the environment or found in a folder above (git_env)."""
+    proc = subprocess.run(["git", *args], cwd=path, capture_output=True, text=True, timeout=timeout, env=git_env(path))
     return proc.returncode, proc.stdout.rstrip(), proc.stderr.strip()  # rstrip: porcelain lines start with a space
 
 def _last_line(text): return (text.strip().splitlines() or ["no output"])[-1][:300]
@@ -605,8 +610,7 @@ def project_detail(name, kind=None):
     def run(args, timeout=5):
         try:
             proc = subprocess.run(args, cwd=path, capture_output=True, text=True, timeout=timeout,
-                                  env={**(gh_env() if args[0] == "gh" else {k: v for k, v in os.environ.items() if k not in GIT_ENV_DROP}),
-                                       "GIT_TERMINAL_PROMPT": "0", "GH_PROMPT_DISABLED": "1"})
+                                  env={**(gh_env() if args[0] == "gh" else git_env(path)), "GIT_TERMINAL_PROMPT": "0", "GH_PROMPT_DISABLED": "1"})
             return proc.stdout.strip() if proc.returncode == 0 else None
         except (OSError, subprocess.TimeoutExpired): return None
     result["gh"] = github_state(path)
@@ -2044,7 +2048,7 @@ def create_github_repo(req):
         except RuntimeError as e: raise ValueError(f"gh repo create failed: {e}")
         try:
             proc = subprocess.run(["git", "push", "-u", "origin", "main"], cwd=path, capture_output=True, text=True, timeout=120,
-                                  env={**{k: v for k, v in os.environ.items() if k not in GIT_ENV_DROP}, "GIT_TERMINAL_PROMPT": "0", "ALLOW_PUSH_MAIN": "1"})
+                                  env={**git_env(path), "ALLOW_PUSH_MAIN": "1"})
             code, err = proc.returncode, proc.stderr or proc.stdout
         except (OSError, subprocess.TimeoutExpired) as e: code, err = 1, str(e)
         if code:

@@ -315,6 +315,18 @@ class PromoteSkeleton(PromoteBase):
         self.assertIn("git init failed", r["error"])
         self.assertEqual((self.snapshot(), server._undo), (self.before, []))
 
+    def test_a_half_made_git_inside_an_outer_repo_never_reads_the_outer_one(self):
+        """Projects inside an outer repo (a dotfiles or ~/Projects repo with a remote): a .git that git can't read must not
+        send git searching upward, where the outer repo's remote would refuse the rollback and strand the folder."""
+        self.git(self.tmp, "init", "-q", "-b", "main"); self.git(self.tmp, "remote", "add", "origin", "https://github.com/me/outer.git")
+        self.git(self.tmp, "commit", "-q", "--allow-empty", "-m", "outer")
+        before = self.snapshot()
+        self.fail_git("init", after=lambda path: os.makedirs(os.path.join(path, ".git", "objects")))
+        r = self.promote(ok=False)
+        self.assertIn("git init failed", r["error"]); self.assertNotIn("remote", r["error"])
+        self.assertEqual((self.snapshot(), server._undo), (before, []))
+        self.assertIsNone(server.git_out(os.path.join(self.tmp, "active"), ["rev-parse", "--show-toplevel"]))  # no upward search
+
     def test_a_failed_git_add_is_a_warning_not_a_failure(self):
         self.fail_git("add")
         r = self.promote(); self.assertIn("first commit failed", r["warning"]); self.assertIn("simulated add failure", r["warning"])

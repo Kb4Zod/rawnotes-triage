@@ -155,7 +155,8 @@ def scan_processes(path, proc, home, own_pid=None):
 
 def _git(path, args):
     env = {k: v for k, v in os.environ.items() if k not in GIT_ENV_DROP}
-    try: p = subprocess.run(["git", *args], cwd=path, capture_output=True, text=True, timeout=10, env={**env, "GIT_TERMINAL_PROMPT": "0"})
+    env.update(GIT_TERMINAL_PROMPT="0", GIT_CEILING_DIRECTORIES=os.path.dirname(os.path.abspath(path)))  # only path's own .git, never a repo above
+    try: p = subprocess.run(["git", *args], cwd=path, capture_output=True, text=True, timeout=10, env=env)
     except (OSError, subprocess.TimeoutExpired): return None
     return p.stdout if p.returncode == 0 else None
 
