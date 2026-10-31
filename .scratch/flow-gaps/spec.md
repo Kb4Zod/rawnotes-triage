@@ -1,7 +1,7 @@
 # Spec: Flow gaps (capture → triage → project → closed)
 
-Status: draft, waiting for Hugh's approval of the breakdown (see `PROPOSAL.md`, "Decisions Hugh still needs to make").
-The recommended answer to every open decision is assumed below; a different answer changes the named ticket only.
+Status: approved 2026-10-30 (Hugh chose the recommended answer for all 13 decisions; see `PROPOSAL.md`, "Decisions").
+The approved answers are assumed below; a later change to one changes the named ticket only.
 
 ## Problem Statement
 
