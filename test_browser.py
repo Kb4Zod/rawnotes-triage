@@ -336,6 +336,16 @@ class Flows(BrowserCase):
         self.assertIn("- status: promoted", open(os.path.join(self.tmp, "active", "demo", "NOTES.md")).read())
         self.assertFalse(os.path.exists(os.path.join(self.tmp, "archive")))
 
+    def test_a_failed_dependency_lookup_shows_why_and_leaves_the_form_usable(self):
+        with mock.patch.object(server, "project_deps", side_effect=ValueError("deps exploded")):
+            self.open("projects"); self.page.click("[data-pid='active/demo/NOTES.md']"); self.page.wait("document.querySelector('[data-pa=shipped]')")
+            self.page.click("[data-pa=shipped]"); self.page.wait("document.querySelector('#pf.closeout')")
+            self.page.wait("document.querySelector('#cmove').textContent.includes('deps exploded')")
+            self.assertIn("deps exploded", self.text("#osug")); self.assertNotIn("Checking", self.text("#osug") + self.text("#cmove"))
+            self.assertFalse(self.page.eval("document.querySelector('#cgo').disabled"))  # the server checks again on send
+        self.page.click("#cgo"); self.done_toast()
+        self.assertTrue(os.path.isdir(os.path.join(self.tmp, "archive", "demo")))
+
     def test_promoted_learning_and_template_folders_are_labelled_cards(self):
         for kind, name in (("learning", "study"), ("templates", "kit")):
             self.project(name, kind=kind, notes=f"# {name}\n\n- date: 2026-10-01\n- status: promoted\n- promoted: 2026-10-01\n- due: 2026-12-01\n\n## Plan\n\n- definition of done: Done.\n")
@@ -399,7 +409,7 @@ class Flows(BrowserCase):
 
     def test_server_text_on_a_card_is_shown_as_text_not_markup(self):
         real = server.inflight
-        evil = lambda: [{**f, "due": "2026-<img id=pwn src=x onerror=window.__pwn=1>"} if f["project"] == "demo" else f for f in real()]
+        evil = lambda *a, **k: [{**f, "due": "2026-<img id=pwn src=x onerror=window.__pwn=1>"} if f["project"] == "demo" else f for f in real(*a, **k)]
         with mock.patch.object(server, "inflight", evil):
             self.open("projects"); self.settle(0.3)
             self.assertFalse(self.exists("#pwn")); self.assertFalse(self.page.eval("!!window.__pwn"))

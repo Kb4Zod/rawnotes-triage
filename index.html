@@ -905,12 +905,12 @@ async function loadDeps(c,to){const box=$('#pdeps');if(!box||!c.p)return;const s
   if(!box.innerHTML)box.innerHTML='<h3 class="sec label">What points here</h3><div class="muted" style="font-size:13px">Checking…</div>';
   try{const d=await api('/api/project/deps?'+pq(c.p)+(to?'&to='+enc(to):''),undefined,sc.signal);if(!sc.ok(box)||S.psel!==c.id)return;
     S.deps={...d,id:c.id};box.innerHTML=depsHtml(d);return d}
-  catch(e){if(aborted(e)||!sc.ok(box))return;box.innerHTML=`<h3 class="sec label">What points here</h3><p class="err">${esc(e.message)}</p>`}}
+  catch(e){if(aborted(e))return;S.depsErr={id:c.id,msg:e.message};if(!sc.ok(box))return;box.innerHTML=`<h3 class="sec label">What points here</h3><p class="err">${esc(e.message)}</p>`}}
 // Shipping a project folder is a close out: Next round (stays), Maintained or Archive (the folder moves), with the
 // server's suggestion preselected. A move is refused while anything in "What points here" blocks it.
 const OUTCOMES=[['next','Next round','stays, new due'],['maintained','Maintained','moves to maintained/'],['archive','Archive','moves to archive/']];
 function closeOut(c){const box=$('#pform');if(!box)return;const pe=$('#perr');pe&&(pe.textContent='');
-  const p=c.p,exp=p.kind==='experiments',known=S.deps&&S.deps.id===c.id?S.deps.suggest:null;let touched=false;
+  const p=c.p,exp=p.kind==='experiments',known=S.deps&&S.deps.id===c.id?S.deps.suggest:null;let touched=false,failed=null;  // failed: why the last lookup didn't answer
   box.innerHTML=`<form id="pf" class="closeout" style="margin:10px 0;padding:12px;border-radius:10px;border:1px solid var(--green)"><div class="field"><span class="label" id="olab">What happens to it now?</span>
     ${seg('outcome',OUTCOMES,known||'archive')}<div class="muted" id="osug" style="font-size:12px;margin-top:4px">${known?`Suggested: <b>${esc(known)}</b>${known==='maintained'?' (it has a GitHub origin)':' (no GitHub origin)'}`:'Checking…'}</div></div>
     <div id="cnext"><div class="field"><label class="label" for="cdone">Done means, next round <em>required</em></label><textarea class="input" id="cdone" rows="2" maxlength="600" placeholder="What does shipped look like this time?"></textarea></div>${exp?'':shipBy([3,7,14,30])}</div>
@@ -920,14 +920,16 @@ function closeOut(c){const box=$('#pform');if(!box)return;const pe=$('#perr');pe
   const sync=()=>{const o=segVal('outcome'),next=o==='next',d=S.deps&&S.deps.id===c.id&&S.deps.to===o?S.deps:null;
     $('#cnext').style.display=next?'':'none';
     $('#cmove').innerHTML=next?`<span class="muted">Stays in <span class="mono">${esc(p.kind)}/</span>; this round goes under <b>## Rounds</b> in its NOTES.md.</span>`
-      :!d?'<span class="muted">Checking what points here…</span>'
+      :!d?(failed?`<span class="err">Couldn't check what points here (${esc(failed)}). It is checked again when you send this.</span>`:'<span class="muted">Checking what points here…</span>')
       :d.blockers.length?`<span class="err">Blocked: ${d.blockers.length} ${d.blockers.length>1?'things point':'thing points'} at this folder (see What points here). Fix ${d.blockers.length>1?'them':'it'} first.</span>`
       :`Moves to <span class="mono">${esc(d.dest)}/</span>${d.todos.length?` · ${d.todos.length} to-do${d.todos.length>1?'s':''} for after, written to its NOTES.md`:''}`;
-    $('#cgo').disabled=!next&&!!(!d||d.blockers.length)};
-  const check=o=>{if(o==='next')return sync();loadDeps(c,o).then(()=>{if($('#pf'))sync()})};
+    $('#cgo').disabled=!next&&(d?!!d.blockers.length:!failed)};
+  const lookup=to=>{S.depsErr=null;return loadDeps(c,to).then(d=>{failed=d?null:(S.depsErr&&S.depsErr.id===c.id&&S.depsErr.msg)||'no answer';return d})};
+  const check=o=>{if(o==='next')return sync();lookup(o).then(()=>{if($('#pf'))sync()})};
   wireSegs(box,()=>{touched=true;pe&&(pe.textContent='');check(segVal('outcome'))});wireShipBy(box);
   $('#pcancel').onclick=()=>{box.innerHTML='';loadDeps(c)};
-  loadDeps(c).then(d=>{if(!d||!$('#pf'))return;
+  lookup().then(d=>{if(!$('#pf'))return;
+    if(!d){$('#osug').innerHTML=`<span class="err">Couldn't check what points here: ${esc(failed)}</span>`;return sync()}
     $('#osug').innerHTML=`Suggested: <b>${esc(d.suggest)}</b>${d.suggest==='maintained'?' (it has a GitHub origin)':' (no GitHub origin)'}`;
     if(!touched)$$('[data-seg=outcome] button').forEach(b=>b.classList.toggle('on',b.dataset.v===d.suggest));check(segVal('outcome'))});
   sync();
@@ -935,7 +937,7 @@ function closeOut(c){const box=$('#pform');if(!box)return;const pe=$('#perr');pe
     const body={name:p.name,kind:p.kind,action:'shipped',outcome:o,...(o==='next'?{done:$('#cdone').value.trim(),...shipBody(p.kind)}:{})};
     btn.disabled=true;
     try{const r=await api('/api/project/close',body);S.undoCount++;await changed();render();toast(r.msg,{undo:true,list:(r.todos||[]).map(t=>t.fix)})}
-    catch(e){btn.disabled=false;pe&&(pe.textContent=e.message);if(o!=='next')loadDeps(c,o).then(()=>{if($('#pf'))sync()})}}}
+    catch(e){btn.disabled=false;pe&&(pe.textContent=e.message);if(o!=='next')lookup(o).then(()=>{if($('#pf'))sync()})}}}
 function projectAction(c,a,btn){
   if(a==='shipped')return c.p?closeOut(c):sendProject(c,a,'',btn);
   // pushing the date and killing both ask why first; the reason is written into the project file

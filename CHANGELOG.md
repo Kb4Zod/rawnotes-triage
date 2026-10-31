@@ -103,6 +103,8 @@ Flow gaps (plan and tickets in `.scratch/flow-gaps/`; Hugh approved all 13 recom
     blocking a move; a `git` you run yourself in the folder still blocks.
   - Undo of a Promote is refused once the new repo has a remote (after **Create private GitHub repo**): it would delete
     the folder and orphan the GitHub repo. Delete the GitHub repo first (and the remote), or keep the project.
+  - Close out: if the dependency lookup fails, the form says why and **Ship it** works (the server checks again inside
+    the change) instead of staying on "Checking…" with the button disabled.
 - **Test fix.** `test_runtime.HttpLimits` reads the 413 right after the headers and tolerates the server closing
   before the oversized body is sent (it was flaky with BrokenPipe under load); it now also asserts no file changed
   and no undo step was added.
