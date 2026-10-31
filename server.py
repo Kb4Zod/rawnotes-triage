@@ -1883,10 +1883,10 @@ def require_github_to_close(path, kind, outcome):
         others = [b for b, _ in branches if b != current and b != "HEAD"]
         raise ValueError(f"Push it first: {u} commit{'s' if u > 1 else ''} on {name}'s local branches {'are' if u > 1 else 'is'} not on "
                          f"GitHub ({st['repo']}): " + ", ".join(f"{b} ({n})" for b, n in branches) + ". Push each branch ("
-                         + ", ".join(f"`git push origin {b}`" for b, _ in branches if b != "HEAD")
+                         + ", ".join(f"`git push origin {shlex.quote(b)}`" for b, _ in branches if b != "HEAD")
                          + ("; a detached HEAD needs a branch first: `git switch -c <name>`" if any(b == "HEAD" for b, _ in branches) else "")
                          + ")" + (", or, for a branch already merged on GitHub (a squash or rebase merge leaves its own commits "
-                                  "behind), delete it instead (" + ", ".join(f"`git branch -D {b}`" for b in others) + ")" if others else "")
+                                  "behind), delete it instead (" + ", ".join(f"`git branch -D {shlex.quote(b)}`" for b in others) + ")" if others else "")
                          + ", then close it out again.")
 
 def unpushed_work(path):

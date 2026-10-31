@@ -223,6 +223,13 @@ class CloseOutGate(GithubCase):
         run(path, "push", "-q", "origin", "refs/heads/side")
         self.assertEqual(self.close(outcome="maintained")["moved_to"], "maintained/demo")
 
+    def test_the_suggested_commands_quote_the_branch_name(self):
+        path = self.promoted(); self.work(path); self.origin(path)
+        run(path, "switch", "-q", "-c", "x$(id)"); self.work(path); run(path, "switch", "-q", "main")
+        err = self.assert_refused(outcome="maintained")
+        self.assertIn("`git push origin 'x$(id)'`", err)
+        self.assertIn("`git branch -D 'x$(id)'`", err)
+
     def test_a_git_check_that_fails_refuses_rather_than_lets_it_through(self):
         """The unpushed count comes from git rev-list: if that fails (or times out) the gate fails closed."""
         path = self.promoted(); self.work(path); self.origin(path)

@@ -151,6 +151,8 @@ Flow gaps (plan and tickets in `.scratch/flow-gaps/`; Hugh approved all 13 recom
   - A tag with the same name as a branch (a tag `main`, say) no longer breaks the close-out gate or **Create private
     GitHub repo**: git shortened the branch to `heads/main`, so the gate couldn't count and refused a fully pushed repo
     ("couldn't check with git"), and Create refused with "Switch to the main branch first". Full ref names are used now.
+  - The close-out gate's suggested `git push origin <branch>` and `git branch -D <branch>` quote the branch name for
+    the shell (a branch may legally be called `x$(id)`).
 - **Test fix.** `test_runtime.HttpLimits` reads the 413 right after the headers and tolerates the server closing
   before the oversized body is sent (it was flaky with BrokenPipe under load); it now also asserts no file changed
   and no undo step was added.
