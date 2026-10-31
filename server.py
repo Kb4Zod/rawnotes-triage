@@ -182,14 +182,21 @@ def _count(v):
     """A header count (extensions: 2) as an int; missing or junk counts as 0."""
     return int(v) if v.isdigit() else 0
 
+ISO_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+def iso_day(s):
+    """`s` if it is a real YYYY-MM-DD date, else "": header text goes to the page, so anything else is dropped here."""
+    return s if isinstance(s, str) and ISO_DAY.fullmatch(s) and _day(s) else ""
+
 def _meta_of(path, f):
-    """The part of a project file the board needs: kept until the file changes."""
+    """The part of a project file the board needs: kept until the file changes. A `due:` that isn't a real
+    YYYY-MM-DD date counts as no ship-by date."""
     with open(path, "rb") as fh: raw = fh.read(CLOSED_READ)
     text = to_lf(raw[:4000].decode("utf-8", "replace"))
     status = field(text, "status") or "?"
     # a killed project's date can sit far down, in ## Outcome: only closed projects pay for reading more
     closed = closed_date(to_lf(raw.decode("utf-8", "replace")) if status in CLOSED else text)
-    return {"title": title_of(text, f), "due": field(text, "due"), "promoted": field(text, "promoted"), "status": status,
+    return {"title": title_of(text, f), "due": iso_day(field(text, "due")), "promoted": field(text, "promoted"), "status": status,
             "extensions": _count(field(text, "extensions")), "closed": closed}
 
 def in_closed_window(day):

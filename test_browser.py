@@ -397,6 +397,14 @@ class Flows(BrowserCase):
         week = sum(len(pids) for h, pids in cols if h.startswith("Due this week"))
         self.assertEqual(self.page.eval("[...document.querySelectorAll('.card.tile')].find(t=>t.textContent.includes('Due this week')).querySelector('.num').textContent"), str(week))
 
+    def test_server_text_on_a_card_is_shown_as_text_not_markup(self):
+        real = server.inflight
+        evil = lambda: [{**f, "due": "2026-<img id=pwn src=x onerror=window.__pwn=1>"} if f["project"] == "demo" else f for f in real()]
+        with mock.patch.object(server, "inflight", evil):
+            self.open("projects"); self.settle(0.3)
+            self.assertFalse(self.exists("#pwn")); self.assertFalse(self.page.eval("!!window.__pwn"))
+            self.assertIn("<img id=pwn", self.page.eval("document.querySelector(\"[data-pid='active/demo/NOTES.md']\").textContent"))
+
     def test_h_l_and_side_arrows_scroll_the_projects_board(self):
         self.page.resize(900, 800); self.open("projects")
         self.page.click("[data-pid='active/demo/NOTES.md']"); self.page.wait("document.querySelector('#drawer')")

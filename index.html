@@ -578,7 +578,7 @@ function renderInboxList(fromSearch){
   const ent=e=>{if(e.kind==='note')return row(e.n);const open=S.expanded===e.key,id='stack:'+e.key;
     const dates=e.members.map(n=>n.date).sort();
     return `<div class="item stack ${S.sel===id?'sel':''}" data-f="${esc(id)}" role="button" tabindex="0" aria-expanded="${open}"${S.sel===id?' aria-current="true"':''}><span class="bar"></span><div><div class="t">${esc(e.name)}</div>
-      <div class="m">${e.members.length} related notes · ${dates[0]===dates.at(-1)?dates[0]:dates[0].slice(5)+' – '+dates.at(-1).slice(5)} · ${open?'decide them together':'open to decide them together'}</div></div><span class="count">${e.members.length}</span></div>`+(open?e.members.map(member).join(''):'')};
+      <div class="m">${e.members.length} related notes · ${esc(dates[0]===dates.at(-1)?dates[0]:dates[0].slice(5)+' – '+dates.at(-1).slice(5))} · ${open?'decide them together':'open to decide them together'}</div></div><span class="count">${e.members.length}</span></div>`+(open?e.members.map(member).join(''):'')};
   const grp=(label,es)=>es.length?`<div class="grp-h"><h2>${label}</h2><span>${es.reduce((s,e)=>s+(e.kind==='note'?1:e.members.length),0)}</span></div>${es.map(ent).join('')}`:'';
   el.innerHTML=m.count?grp('Waiting 2+ weeks',m.older)+grp('This fortnight',m.recent):`<div class="empty">${S.notes.live.length?'Nothing matches.':'Inbox zero. Go build something.'}</div>`;
   el.querySelectorAll('[data-f]').forEach(r=>{
@@ -832,7 +832,7 @@ function renderProjects(){
   const card=c=>{const dm=c.p?(c.p.done_defined?null:'＋ Define “done means”'):null;
     return `<button type="button" class="card pc ${c.id===S.psel?'sel':''} ${c.closed?'closed':''}" data-pid="${esc(c.id)}"><div class="top"><div class="ct">${esc(c.title)}</div>${c.f&&!c.f.done?ring(c.f):''}</div>
       <div class="dm ${dm?'miss':''}">${dm||esc(c.f&&c.f.title!==c.title?c.f.title:(c.p?c.p.path:c.f.path))}</div>
-      <div class="row">${expChip(c)}${c.closed?st(c.status==='dead'?'killed':'shipped',stLabel[c.status]||c.status):''}${c.p?ghChip(c.p.gh):c.exp?'':st('plain',c.f.dest)}${decide(c.f)}${c.f&&c.f.due&&!c.f.done?`<span class="st plain">ship by ${c.f.due.slice(5)}</span>`:''}${c.f&&c.f.open_ended&&!c.f.done?`<span class="st plain">since ${esc((c.f.promoted||'').slice(5))}</span>`:''}</div></button>`};
+      <div class="row">${expChip(c)}${c.closed?st(c.status==='dead'?'killed':'shipped',stLabel[c.status]||c.status):''}${c.p?ghChip(c.p.gh):c.exp?'':st('plain',c.f.dest)}${decide(c.f)}${c.f&&c.f.due&&!c.f.done?`<span class="st plain">ship by ${esc(c.f.due.slice(5))}</span>`:''}${c.f&&c.f.open_ended&&!c.f.done?`<span class="st plain">since ${esc((c.f.promoted||'').slice(5))}</span>`:''}</div></button>`};
   // Left to right by urgency; empty columns are hidden. The drawer opens right after the selected card's column.
   // Closed shows only what closed within the window (a project with no date counts as old); "Show all" lifts that
   const win=S.notes.closed_window_days,cut=new Date(S.notes.today+'T00:00:00Z');cut.setUTCDate(cut.getUTCDate()-win);
@@ -889,7 +889,7 @@ async function renderDrawer(){const d=$('#drawer');if(!d)return;const c=projectC
   box.innerHTML='<h3 class="sec label">Done means</h3><div class="muted">Loading…</div>';
   try{const j=await api('/api/project?'+pq(p),undefined,sc.signal);if(!sc.ok(d,box,more)||S.psel!==c.id)return;S.pdetail=j;
     const dr=S.dods[j.path];renderDod(j,dr&&dr.mode,dr&&dr.text);  // an unsaved edit comes back as it was left
-    const prs=j.prs&&j.prs.length?`<h3 class="sec label">Pull requests</h3><ul class="tl">${j.prs.slice(0,5).map(x=>`<li><a href="${esc(ghUrl(x.url))}" target="_blank" rel="noopener noreferrer">#${x.number} ${esc(x.title)}</a><span class="muted">${esc(x.mergedAt?'merged':x.state.toLowerCase())}</span></li>`).join('')}</ul>`:'';
+    const prs=j.prs&&j.prs.length?`<h3 class="sec label">Pull requests</h3><ul class="tl">${j.prs.slice(0,5).map(x=>`<li><a href="${esc(ghUrl(x.url))}" target="_blank" rel="noopener noreferrer">#${esc(x.number)} ${esc(x.title)}</a><span class="muted">${esc(x.mergedAt?'merged':x.state.toLowerCase())}</span></li>`).join('')}</ul>`:'';
     more.innerHTML=(j.commits.length?`<h3 class="sec label">Recent activity${j.branch?' · '+esc(j.branch):''}</h3><ul class="tl">${j.commits.slice(0,5).map(x=>`<li><span>${esc(x.title)}</span><span class="muted">${esc(x.date.slice(5))}</span></li>`).join('')}</ul>`:'')
       +prs+`<h3 class="sec label">From ${esc(j.summary_source||'the project')}</h3><div style="font-size:13px;color:var(--ink2);white-space:pre-wrap;max-height:9.5em;overflow:hidden">${esc(j.summary)}</div>`;
     if(!linked&&(!c.closed||reopen))loadDeps(c)}
@@ -989,8 +989,8 @@ async function renderRepo(){const rs=S.repo,{name,path}=rs,sc=scope('repo');
       html=bar(r.url)+`<h1 class="title" style="font-size:38px">${r.private?'🔒 ':''}${esc(r.name)}</h1><p class="muted">${esc(r.description||'No description')} · default branch <code>${esc(r.default_branch)}</code> · last push ${esc(r.pushed_at)}${r.archived?' · archived':''}</p>
       <div class="md"><h2>Files</h2>${files(j.tree)}${note('tree')}<h2>${j.readme?esc(j.readme.name):'README'}</h2>${j.readme?md(j.readme.text,3):'<p class="muted">No README.</p>'}
       <h2>Recent commits</h2>${j.commits.length?'<ul>'+j.commits.map(c=>`<li>${esc(c.title)} <span class="muted">· ${esc(c.date)} · ${esc(c.sha)} · ${esc(c.author)}</span></li>`).join('')+'</ul>':'<p class="muted">No commits.</p>'}${note('commits')}
-      <h2>Pull requests</h2>${j.prs.length?'<ul>'+j.prs.map(x=>`<li>#${x.number} ${esc(x.title)} ${st(x.state==='merged'?'promoted':x.state==='open'?'cooking':'plain',x.state)} <span class="muted">${esc(x.updated)}</span></li>`).join('')+'</ul>':'<p class="muted">No pull requests.</p>'}${note('prs')}
-      <h2>Open issues</h2>${j.issues.length?'<ul>'+j.issues.map(x=>`<li>#${x.number} ${esc(x.title)} <span class="muted">${esc(x.updated)} · ${x.comments} comment${x.comments===1?'':'s'}</span></li>`).join('')+'</ul>':'<p class="muted">No open issues.</p>'}${note('issues')}</div>`}
+      <h2>Pull requests</h2>${j.prs.length?'<ul>'+j.prs.map(x=>`<li>#${esc(x.number)} ${esc(x.title)} ${st(x.state==='merged'?'promoted':x.state==='open'?'cooking':'plain',x.state)} <span class="muted">${esc(x.updated)}</span></li>`).join('')+'</ul>':'<p class="muted">No pull requests.</p>'}${note('prs')}
+      <h2>Open issues</h2>${j.issues.length?'<ul>'+j.issues.map(x=>`<li>#${esc(x.number)} ${esc(x.title)} <span class="muted">${esc(x.updated)} · ${esc(x.comments)} comment${x.comments===1?'':'s'}</span></li>`).join('')+'</ul>':'<p class="muted">No open issues.</p>'}${note('issues')}</div>`}
     else{const segs=path.split('/');const crumbs=`<div class="crumbs"><a href="#" data-rp="">${esc(name)}</a>`+segs.map((s,i)=>i===segs.length-1?` / <b>${esc(s)}</b>`:` / <a href="#" data-rp="${esc(segs.slice(0,i+1).join('/'))}">${esc(s)}</a>`).join('')+'</div>';
       let body;if(j.kind==='dir')body=files(j.entries);else if(j.too_large)body=`<p class="muted">Too large to show here (${fmtSize(j.size)}).</p>`;else if(j.binary||j.kind==='other')body=`<p class="muted">${j.binary?'Binary file':'Not a regular file'}; open it on GitHub.</p>`;
       else body=/\.(md|markdown)$/i.test(j.name)?`<div class="md">${md(j.text,2)}</div>`:`<div class="md"><pre>${esc(j.text)}</pre></div>`;
@@ -1006,11 +1006,11 @@ function renderPulse(){
   let heat='<p class="muted">Loading GitHub activity…</p>',bars='';
   if(a&&a.weeks){let lm=-1;const day=d=>new Date(d+'T00:00');
     const months=a.weeks.map((w,i)=>{const m=day(w[0].date).getMonth();if(m===lm)return'';lm=m;return`<span style="grid-column:${i+1}">${M[m]}</span>`}).join('');
-    const cells=a.weeks.map((w,i)=>w.map(d=>`<i class="l${d.level}${d.date===today?' today':''}" style="grid-column:${i+1};grid-row:${day(d.date).getDay()+1}" title="${d.count} commit${d.count===1?'':'s'} on ${fmtDate(d.date)}"></i>`).join('')).join('');
+    const cells=a.weeks.map((w,i)=>w.map(d=>`<i class="l${esc(d.level)}${d.date===today?' today':''}" style="grid-column:${i+1};grid-row:${day(d.date).getDay()+1}" title="${esc(d.count)} commit${d.count===1?'':'s'} on ${esc(fmtDate(d.date))}"></i>`).join('')).join('');
     heat=`<div class="hmwrap" id="hmwrap"><div class="hmonths" style="grid-template-columns:repeat(${a.weeks.length},13px)">${months}</div><div class="hm">${cells}</div></div>
       <div class="legend" style="margin-top:10px;justify-content:flex-end">${a.error?`<span class="err" style="margin-right:auto">Showing saved data: ${esc(a.error)}</span>`:''}Less ${[0,1,2,3,4].map(n=>`<i style="background:var(--g${n});margin:0"></i>`).join('')} More <button class="btn sm" id="actRef">Refresh</button></div>`;
     const mx=Math.max(1,...a.repos.map(r=>r.count));
-    bars=a.repos.length?a.repos.slice(0,10).map(r=>`<button class="b" data-repo="${esc(r.name)}" title="${esc(r.name)} · ${r.count} commits · open read-only view"><span>${r.private?'🔒 ':''}${esc(r.name.split('/')[1])}</span><span><div class="fill" style="width:${r.count/mx*100}%"></div></span><span class="n">${r.count}</span></button>`).join(''):'<p class="muted">No commits pushed in the last 30 days.</p>'}
+    bars=a.repos.length?a.repos.slice(0,10).map(r=>`<button class="b" data-repo="${esc(r.name)}" title="${esc(r.name)} · ${esc(r.count)} commits · open read-only view"><span>${r.private?'🔒 ':''}${esc(r.name.split('/')[1])}</span><span><div class="fill" style="width:${r.count/mx*100}%"></div></span><span class="n">${esc(r.count)}</span></button>`).join(''):'<p class="muted">No commits pushed in the last 30 days.</p>'}
   else if(a&&a.error)heat=`<p class="err">GitHub activity unavailable: ${esc(a.error)}</p><button class="btn sm" id="actRef">Retry</button>`;
   const w=s.weeks||[],fm=Math.max(1,...w.flatMap(x=>[x.captured,x.decided])),H=150,bw=20,gap=Math.max(52,Math.floor(520/Math.max(1,w.length)));
   const chart=`<svg class="chart" width="100%" viewBox="0 0 ${50+w.length*gap} 200" role="img" aria-label="Notes captured and decided per week; a table follows">

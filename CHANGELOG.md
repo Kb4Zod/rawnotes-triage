@@ -75,6 +75,9 @@ Flow gaps (plan and tickets in `.scratch/flow-gaps/`; Hugh approved all 13 recom
   skeleton archives freely; **next round** and **kill** (`_abandoned`) are never gated. New `work_commits()` /
   `require_github_to_close()`; a repo git can't read counts as work (fails closed). The panel shows **Create private
   GitHub repo** next to **Close out…** as well. `rawtriage project` takes `ship|extend|kill|close|deps|github`.
+- **Review fixes (pre-PR gate).**
+  - A project's `due:` reaches the board only when it is a real `YYYY-MM-DD` date (anything else counts as no ship-by
+    date), and the card's `ship by` text is escaped like every other server value (a header could inject markup).
 - **Test fix.** `test_runtime.HttpLimits` reads the 413 right after the headers and tolerates the server closing
   before the oversized body is sent (it was flaky with BrokenPipe under load); it now also asserts no file changed
   and no undo step was added.
