@@ -192,6 +192,15 @@ class Deciding(CliBase):
         with open(os.path.join(self.notes, "2026-10-01-a.md")) as fh: self.assertIn("next step", fh.read())
         self.assertIn("Kept “Alpha” (cooking)", self.ok("keep", "2026-10-01-a.md").stdout)
 
+    def test_a_change_that_stopped_part_way_exits_4_not_1(self):
+        """1 means refused, nothing changed; a 500 (MutationFailed: stopped part-way, some steps maybe left) is 4."""
+        msg = "simulated disk error. 1 change(s) could not be rolled back; press Undo to finish putting them back."
+        with mock.patch.object(server, "new_note", side_effect=server.MutationFailed(msg)): r = self.rt("new", "half-done")
+        self.assertEqual(r.returncode, 4, r.stderr); self.assertIn("could not be rolled back", r.stderr)
+        self.assertIn("rawtriage -l", r.stderr); self.assertNotIn("Nothing was changed", r.stderr)
+        self.assertEqual(self.rt("kill", "2026-10-01-a.md", "--reason", "x", "--kind", "nope").returncode, 1)  # usage: still 1
+        self.assertEqual(self.rt("keep", "2026-10-09-missing.md").returncode, 1)  # refused by the server: still 1
+
     def test_kill_needs_a_reason(self):
         self.assertIn("--reason", self.refused("kill", "2026-10-01-a.md"))
         r = self.ok("kill", "2026-10-01-a.md", "--reason", "dup of b")

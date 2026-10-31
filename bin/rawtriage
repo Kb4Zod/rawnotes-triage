@@ -31,9 +31,10 @@
 Every command goes through the running server, so a decision made here is logged, undoable in the page and counted
 in Pulse exactly like one made in the page. If the server is down it is started (the systemd unit if installed, else
 server.py --no-browser). If that fails, or something else answers on the port, rawtriage exits 2 and has changed
-nothing; do not edit notes by hand instead. Exit codes: 0 done, 1 refused (the server's reason is printed), 2 no server
-(nothing changed), 3 the connection was lost after a change was sent: the server may have finished it, so check
-`rawtriage -l` or the page before retrying. Slow changes (promote, merge, close out, ship/kill, project github, undo) wait up
+nothing; do not edit notes by hand instead. Exit codes: 0 done, 1 refused (the server's reason is printed; nothing
+changed), 2 no server (nothing changed), 3 the connection was lost after a change was sent: the server may have
+finished it, so check `rawtriage -l` or the page before retrying, 4 the change failed in the server and may have
+stopped part-way (HTTP 500; the message says what is left, e.g. "press Undo to finish"): check before retrying. Slow changes (promote, merge, close out, ship/kill, project github, undo) wait up
 to 300 s, everything else 60 s (RAWTRIAGE_TIMEOUT overrides both, in seconds).
 --json prints the server's answer. RAWTRIAGE_PORT picks another port (default 8765).
 """
@@ -62,6 +63,10 @@ class Refused(Exception):
 
 class NoServer(Exception):
     """There is no usable server; nothing was changed."""
+
+
+class Failed(Exception):
+    """The server tried the change and it failed (HTTP 500): it may have stopped part-way; the message says what's left."""
 
 
 class Lost(Exception):
@@ -145,7 +150,8 @@ def ensure_server():
 
 
 def api(path, body=None):
-    """GET (body None) or POST JSON to the server; returns the parsed answer. Raises Refused or NoServer."""
+    """GET (body None) or POST JSON to the server; returns the parsed answer. Raises Refused (4xx), Failed (5xx), NoServer
+    or Lost."""
     data = None if body is None else json.dumps(body).encode()
     req = urllib.request.Request(BASE + path, data=data, method="GET" if body is None else "POST",
                                  headers={} if body is None else {"Content-Type": "application/json"})
@@ -154,6 +160,7 @@ def api(path, body=None):
     except urllib.error.HTTPError as e:
         try: msg = json.loads(e.read()).get("error") or f"HTTP {e.code}"
         except (ValueError, AttributeError): msg = f"HTTP {e.code}"
+        if e.code >= 500: raise Failed(msg)
         raise Refused(msg)
     except urllib.error.URLError as e:
         if isinstance(e.reason, (ConnectionRefusedError, FileNotFoundError)) or body is None:
@@ -407,4 +414,7 @@ if __name__ == "__main__":
     try: main(sys.argv[1:])
     except Refused as e: print(f"rawtriage: {e}", file=sys.stderr); sys.exit(1)
     except Lost as e: print(f"rawtriage: {e}", file=sys.stderr); sys.exit(3)
+    except Failed as e:
+        print(f"rawtriage: {e}\nThe change failed in the server and may have stopped part-way (the message says what is left): "
+              f"check `rawtriage -l` or the page, and Undo if it asks you to.", file=sys.stderr); sys.exit(4)
     except NoServer as e: print(f"rawtriage: {e}. Nothing was changed.", file=sys.stderr); sys.exit(2)

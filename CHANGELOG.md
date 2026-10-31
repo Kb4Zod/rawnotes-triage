@@ -173,6 +173,8 @@ Flow gaps (plan and tickets in `.scratch/flow-gaps/`; Hugh approved all 13 recom
   - Undo of a close out (or a Kill) lists the to-dos for the way back, as close out lists them for the way there: the
     memory folder `mv` back (if you had moved it) and the T3 Code path back, in the answer (`todos`), the toast and
     `rawtriage undo`'s output.
+  - `rawtriage` exits **4** when the change failed in the server (HTTP 500, e.g. it stopped part-way and some steps
+    are left for Undo), no longer 1, which means "refused, nothing changed". README, `SKILL.md`, `triage.md`.
 - **Test fix.** `test_runtime.HttpLimits` reads the 413 right after the headers and tolerates the server closing
   before the oversized body is sent (it was flaky with BrokenPipe under load); it now also asserts no file changed
   and no undo step was added.

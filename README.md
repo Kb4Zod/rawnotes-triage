@@ -185,7 +185,8 @@ rawtriage project github <name> [--kind ...]       # first push: private GitHub 
 - `--json` prints the server's answer instead of a sentence. `RAWTRIAGE_PORT` picks another port (default 8765).
 - **Exit codes:** 0 done; 1 refused (the reason is printed; bad usage too); 2 no usable server (nothing was changed);
   3 the connection was lost after a change was sent: the server may have finished it, so check `rawtriage -l` or the
-  page before retrying. Promote, merge, close out, ship/kill, `project github` and undo wait up to 300 s for an answer,
+  page before retrying; 4 the change failed in the server (HTTP 500) and may have stopped part-way: the message says
+  what is left (for example "press Undo to finish putting them back"), so check before retrying. Promote, merge, close out, ship/kill, `project github` and undo wait up to 300 s for an answer,
   everything else 60 s (`RAWTRIAGE_TIMEOUT` sets both, in seconds).
 - **Server down:** `systemctl --user start rawtriage-web` if the unit is installed, otherwise `server.py --no-browser`
   is started detached; it waits up to 5 seconds. If that fails, or something that isn't rawnotes-triage answers on the
