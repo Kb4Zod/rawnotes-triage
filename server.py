@@ -576,6 +576,12 @@ def local_revs(path):
     HEAD's commits are on no branch). An unborn HEAD with commits on other branches still counts those."""
     return ["--branches"] + (["HEAD"] if git_out(path, ["rev-parse", "--verify", "-q", "HEAD"]) is not None else [])
 
+def current_branch(path):
+    """The checked-out branch's name ("" when HEAD is detached or git fails). From the full ref, never --short:
+    with a tag of the same name git shortens refs/heads/main to "heads/main"."""
+    ref = git_out(path, ["symbolic-ref", "-q", "HEAD"]) or ""
+    return ref.removeprefix("refs/heads/") if ref.startswith("refs/heads/") else ""
+
 def _git_facts(path, fresh):
     if not os.path.exists(os.path.join(path, ".git")): return {"git": False, "origin": False, "repo": "", "pushed": False, "unpushed": 0, "after_skeleton": 0}
     fp = _git_fingerprint(path)
@@ -1873,7 +1879,7 @@ def require_github_to_close(path, kind, outcome):
         raise ValueError(f"Push it first: couldn't check with git whether every local branch of {name} is on GitHub ({st['repo']}), so "
                          f"nothing was moved. Look with `git log --branches --not --remotes=origin` in the folder, then close it out again.")
     if u:
-        current = git_out(path, ["symbolic-ref", "-q", "--short", "HEAD"]) or ""
+        current = current_branch(path)
         others = [b for b, _ in branches if b != current and b != "HEAD"]
         raise ValueError(f"Push it first: {u} commit{'s' if u > 1 else ''} on {name}'s local branches {'are' if u > 1 else 'is'} not on "
                          f"GitHub ({st['repo']}): " + ", ".join(f"{b} ({n})" for b, n in branches) + ". Push each branch ("
@@ -1886,10 +1892,11 @@ def require_github_to_close(path, kind, outcome):
 def unpushed_work(path):
     """(commits on local branches, or a detached HEAD, that no origin ref contains; [(branch, count), ...]) for the close
     out gate. (None, None) when git can't say (fails, times out): the gate then refuses, it never guesses 0."""
-    heads = git_out(path, ["for-each-ref", "--format=%(refname:short)", "refs/heads"])
+    heads = git_out(path, ["for-each-ref", "--format=%(refname)", "refs/heads"])
     total = git_out(path, ["rev-list", "--count", *local_revs(path), "--not", "--remotes=origin"])
     if heads is None or total is None or not total.isdigit(): return None, None
-    revs = [(b, f"refs/heads/{b}") for b in heads.splitlines() if b]
+    revs = [(ref.removeprefix("refs/heads/"), ref) for ref in heads.splitlines() if ref]  # full ref as the rev: a tag
+    # with a branch's name makes the short form "heads/<b>", and refs/heads/heads/<b> doesn't exist
     if git_out(path, ["symbolic-ref", "-q", "HEAD"]) is None and git_out(path, ["rev-parse", "--verify", "-q", "HEAD"]) is not None:
         revs.append(("HEAD", "HEAD"))  # detached
     out = []
@@ -2086,8 +2093,7 @@ def create_github_repo(req):
             path, kind = project_dir(name, kind, write=True)  # again under the lock: it may have moved or been undone since
             if not os.path.exists(os.path.join(path, ".git")): raise ValueError("This project has no git repo yet.")
             if "origin" in _git(path, ["remote"])[1].split(): raise ValueError("It already has an origin remote.")
-            code, branch, _ = _git(path, ["symbolic-ref", "--short", "HEAD"])
-            if code or branch != "main": raise ValueError("Switch to the main branch first: the first push is `main`.")
+            if current_branch(path) != "main": raise ValueError("Switch to the main branch first: the first push is `main`.")
             if _git(path, ["rev-parse", "--verify", "-q", "HEAD"])[0]: raise ValueError("Make a first commit before creating the repo.")
             if _git(path, ["status", "--porcelain"])[1]: raise ValueError("Commit or stash your changes first: the working tree isn't clean.")
             st = github_status(True)
@@ -2097,7 +2103,7 @@ def create_github_repo(req):
             try: _gh(["repo", "create", slug, "--private", "--source", path, "--remote", "origin"], timeout=60)
             except RuntimeError as e: raise ValueError(f"gh repo create failed: {e}")
         try:
-            proc = subprocess.run(["git", "push", "-u", "origin", "main"], cwd=path, capture_output=True, text=True, timeout=120,
+            proc = subprocess.run(["git", "push", "-u", "origin", "refs/heads/main"], cwd=path, capture_output=True, text=True, timeout=120,
                                   env={**git_env(path), "ALLOW_PUSH_MAIN": "1"})
             code, err = proc.returncode, proc.stderr or proc.stdout
         except (OSError, subprocess.TimeoutExpired) as e: code, err = 1, str(e)

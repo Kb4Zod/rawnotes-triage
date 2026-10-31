@@ -211,6 +211,18 @@ class CloseOutGate(GithubCase):
         self.assertIn("`git branch -D feat/merged-on-github`", err)
         self.assertNotIn("git branch -D main", err)
 
+    def test_a_tag_named_like_a_branch_does_not_break_the_gate(self):
+        """--short/refname:short turn refs/heads/main into "heads/main" when a tag "main" exists too: the gate then
+        couldn't count and refused a fully pushed repo. It uses full ref names for revs and lstrip=2 for display."""
+        path = self.promoted(); self.work(path); self.origin(path)
+        run(path, "tag", "main"); run(path, "switch", "-q", "-c", "side"); self.work(path); run(path, "tag", "side")
+        run(path, "switch", "-q", "main")
+        err = self.assert_refused(outcome="maintained")
+        self.assertIn("side (1)", err); self.assertNotIn("heads/", err); self.assertNotIn("couldn't check", err)
+        self.assertIn("`git branch -D side`", err); self.assertNotIn("git branch -D main", err)
+        run(path, "push", "-q", "origin", "refs/heads/side")
+        self.assertEqual(self.close(outcome="maintained")["moved_to"], "maintained/demo")
+
     def test_a_git_check_that_fails_refuses_rather_than_lets_it_through(self):
         """The unpushed count comes from git rev-list: if that fails (or times out) the gate fails closed."""
         path = self.promoted(); self.work(path); self.origin(path)
@@ -333,6 +345,11 @@ class CreateRepo(GithubCase):
         self.assertEqual(run(path, "rev-parse", "--abbrev-ref", "main@{upstream}"), "origin/main")
         s = self.state("demo"); self.assertEqual((s["repo"], s["pushed"], s["not_on_github"]), ("me/demo", True, False))
         self.assertEqual(self.post("/api/project/close", {"name": "demo", "kind": "active", "outcome": "maintained"})["moved_to"], "maintained/demo")
+
+    def test_a_tag_named_main_does_not_hide_the_main_branch(self):
+        path = self.promoted(); bare = self.bare("demo"); run(path, "tag", "main")
+        self.assertEqual(self.create("demo")["repo"], "me/demo")
+        self.assertEqual(run(bare, "rev-parse", "refs/heads/main"), run(path, "rev-parse", "refs/heads/main"))
 
     def test_undo_of_the_promote_is_refused_once_the_repo_has_a_remote(self):
         path = self.promoted(); self.bare("demo"); self.create("demo")

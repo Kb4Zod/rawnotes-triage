@@ -148,6 +148,9 @@ Flow gaps (plan and tickets in `.scratch/flow-gaps/`; Hugh approved all 13 recom
     else (a self-hosted git) got the button and then a refusal. `github_state()` gains `origin`.
   - The **Not on GitHub** chip (`after_skeleton`) and the close-out gate (`work_commits`) follow one rule for root
     commits: a second root (an orphan branch) next to Promote's skeleton commit is work for both (the chip ignored it).
+  - A tag with the same name as a branch (a tag `main`, say) no longer breaks the close-out gate or **Create private
+    GitHub repo**: git shortened the branch to `heads/main`, so the gate couldn't count and refused a fully pushed repo
+    ("couldn't check with git"), and Create refused with "Switch to the main branch first". Full ref names are used now.
 - **Test fix.** `test_runtime.HttpLimits` reads the 413 right after the headers and tolerates the server closing
   before the oversized body is sent (it was flaky with BrokenPipe under load); it now also asserts no file changed
   and no undo step was added.
