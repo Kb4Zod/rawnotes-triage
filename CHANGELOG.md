@@ -121,6 +121,9 @@ Flow gaps (plan and tickets in `.scratch/flow-gaps/`; Hugh approved all 13 recom
   - Git run in a project folder reads only that folder's own `.git` (`GIT_CEILING_DIRECTORIES` is set to its parent):
     with the projects root inside an outer repo, a half-made `.git` (a failed `git init`) made git read the outer repo,
     whose remote then refused the rollback and left the folder behind. The dependency check's worktree scan does the same.
+  - **Create private GitHub repo** holds the lock (read side) across its checks and `gh repo create`: an undo of the
+    promote sent meanwhile used to delete the folder under `gh` (orphaning the new GitHub repo); now it waits, finds the
+    remote and refuses. A close out waits the same way. The push runs after the lock is released.
 - **Test fix.** `test_runtime.HttpLimits` reads the 413 right after the headers and tolerates the server closing
   before the oversized body is sent (it was flaky with BrokenPipe under load); it now also asserts no file changed
   and no undo step was added.

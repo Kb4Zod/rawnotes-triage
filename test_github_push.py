@@ -21,6 +21,7 @@ case "$1 $2" in
   "api user") [ -f "$STUB_DIR/signed_out" ] && { echo "To get started with GitHub CLI, please run:  gh auth login" >&2; exit 4; }
               echo '{"login":"me"}' ;;
   "repo create") [ -f "$STUB_DIR/create_fails" ] && { echo "GraphQL: name already exists on this account" >&2; exit 1; }
+                 [ -f "$STUB_DIR/slow" ] && sleep 1.5
                  slug=$2; shift 2; slug=$1; shift
                  while [ $# -gt 0 ]; do case "$1" in --source) src=$2; shift;; esac; shift; done
                  git -C "$src" remote add origin "https://github.com/$slug.git" ;;
@@ -303,6 +304,24 @@ class CreateRepo(GithubCase):
         self.assertTrue(os.path.isdir(os.path.join(path, ".git")))
         run(path, "remote", "remove", "origin")  # GitHub repo deleted and the remote taken out by hand: undo works again
         self.post("/api/undo", {}); self.assertFalse(os.path.exists(path))
+
+    def test_an_undo_sent_while_the_repo_is_being_created_waits_and_is_refused(self):
+        """gh repo create runs under the lock: an undo of the promote (or a close out) sent meanwhile waits for it, then
+        sees the new remote and refuses, instead of deleting the folder under gh and orphaning the GitHub repo."""
+        import threading, time
+        path = self.promoted(); self.bare("demo"); open(os.path.join(self.stub, "slow"), "w").close()
+        made = {}
+        t = threading.Thread(target=lambda: made.update(r=self.call("/api/project/github", {"name": "demo", "kind": "active"}))); t.start()
+        for _ in range(200):
+            if any(c.startswith("gh repo create") for c in self.gh_calls()): break
+            time.sleep(0.02)
+        else: self.fail("gh repo create never started")
+        code, r = self.call("/api/undo", {})
+        t.join(30)
+        self.assertEqual(made["r"][0], 200, made["r"])
+        self.assertEqual(code, 400, r); self.assertIn("Delete the GitHub repo first", r["error"])
+        self.assertTrue(os.path.isdir(os.path.join(path, ".git"))); self.assertEqual(run(path, "remote"), "origin")
+        self.assertEqual(len(server._undo), 1)
 
     def test_refuses_off_this_machine(self):
         self.promoted(); self.bare("demo")
