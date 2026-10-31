@@ -502,7 +502,7 @@ def git_env(path):
     environment is dropped; and GIT_CEILING_DIRECTORIES is the folder's parent, so git only ever reads `path`'s own
     .git: one it can't read (a half-made one) is "not a repo", never the repo of a folder above (projects kept inside
     a dotfiles or ~/Projects repo)."""
-    env = {k: v for k, v in os.environ.items() if k not in GIT_ENV_DROP}
+    env = depcheck.without_git_env()
     return {**env, "GIT_TERMINAL_PROMPT": "0", "GIT_CEILING_DIRECTORIES": os.path.dirname(os.path.abspath(path))}
 
 def git_out(path, args, timeout=5):
@@ -515,7 +515,6 @@ def git_out(path, args, timeout=5):
 
 GIT_TIMEOUT = 30  # seconds for a git step that writes (init, add, commit: the commit runs your hooks, e.g. gitleaks)
 NOREPLY_SUFFIX = "@users.noreply.github.com"
-GIT_ENV_DROP = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR", "GIT_CEILING_DIRECTORIES")
 
 def _git(path, args, timeout=GIT_TIMEOUT):
     """(returncode, stdout, stderr) of `git args` run in `path`. Never prompts, and always acts on the repo in `path`
@@ -695,7 +694,7 @@ def gh_env(token=None):
     """The environment every gh process gets: never prompts, and signed in as the saved token if there is one
     (GH_TOKEN, never on the command line)."""
     token = token or saved_token()
-    env = {k: v for k, v in os.environ.items() if k not in GIT_ENV_DROP}  # gh runs git (repo create --source adds the remote)
+    env = depcheck.without_git_env()  # gh runs git (repo create --source adds the remote)
     return {**env, "GH_PROMPT_DISABLED": "1", **({"GH_TOKEN": token} if token else {})}
 
 def _gh(args, timeout=25, token=None):
@@ -1524,7 +1523,7 @@ def _note_commit(res):
 
 def _notes_git(args, timeout=COMMIT_TIMEOUT, stdin=None):
     """Run git in the notes folder (literal pathspecs, no prompts, never another repo's GIT_DIR). CompletedProcess."""
-    env = {k: v for k, v in os.environ.items() if k not in GIT_ENV_DROP}
+    env = depcheck.without_git_env()
     env["GIT_TERMINAL_PROMPT"] = "0"
     return subprocess.run(["git", "--literal-pathspecs"] + args, cwd=NOTES, capture_output=True, timeout=timeout, env=env,
                           input=stdin, stdin=None if stdin is not None else subprocess.DEVNULL)

@@ -292,7 +292,8 @@ the skeleton files are filled in one pass (text from the note is never
 expanded). Then, in the same undoable step, it runs `git init -b main` and
 makes one commit, `Start <slug> (promoted from RawNotes)`, with your normal
 git hooks. The app never sets a git identity: if the email git would use
-(config or `GIT_AUTHOR_EMAIL`/`GIT_COMMITTER_EMAIL`) does not end in
+(from git's config; `GIT_AUTHOR_*`/`GIT_COMMITTER_*` and `GIT_CONFIG_*` in the
+server's environment are ignored, like `GIT_DIR`) does not end in
 `@users.noreply.github.com` (change it with `"noreply_suffix"` in
 `config.json`), the repo is made with **no commit** and the page shows a
 warning with the command to commit by hand (it names the folder relative to

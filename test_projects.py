@@ -216,10 +216,28 @@ class PromoteSkeleton(PromoteBase):
         r = self.promote()
         self.assertIn("no commit", r["warning"]); self.assertIn("git has no email set", r["warning"])
 
-    def test_an_environment_override_counts_as_the_identity(self):
-        with mock.patch.dict(os.environ, {"GIT_AUTHOR_EMAIL": "leak@example.com"}): r = self.promote()
-        self.assertIn("no commit", r["warning"]); self.assertNotIn("leak@example.com", r["warning"])
-        self.assertEqual(self.git(os.path.join(self.tmp, "active", "a"), "rev-parse", "-q", "--verify", "HEAD"), "")
+    def test_an_inherited_identity_or_config_override_never_reaches_git(self):
+        """GIT_AUTHOR_* / GIT_COMMITTER_* (git exports them to its hooks), GIT_CONFIG_COUNT + KEY/VALUE and
+        GIT_CONFIG_PARAMETERS (`git -c`) are dropped: the identity checked and used is the one in git's config."""
+        for i, env in enumerate(({"GIT_AUTHOR_EMAIL": "leak@example.com", "GIT_COMMITTER_EMAIL": "leak@example.com"},
+                                 {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "user.email", "GIT_CONFIG_VALUE_0": "leak@example.com"},
+                                 {"GIT_CONFIG_PARAMETERS": "'user.email'='leak@example.com'"})):
+            name = f"2026-10-0{i + 1}-{'abc'[i]}.md"
+            if i: self.note(name, title="x")
+            with mock.patch.dict(os.environ, env): r = self.promote(name)
+            self.assertNotIn("warning", r, env)
+            self.assertEqual(self.git(os.path.join(self.tmp, "active", "abc"[i]), "log", "--format=%ae %ce"), f"{TEST_EMAIL} {TEST_EMAIL}")
+
+    def test_one_list_of_dropped_git_variables_for_every_git_and_gh(self):
+        import depcheck, importlib.machinery, importlib.util
+        bad = {v: "x" for v in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+                                "GIT_COMMON_DIR", "GIT_NAMESPACE", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0",
+                                "GIT_CONFIG_VALUE_0", "GIT_AUTHOR_NAME", "GIT_AUTHOR_DATE", "GIT_COMMITTER_EMAIL")}
+        loader = importlib.machinery.SourceFileLoader("rawtriage_cli", os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin", "rawtriage"))
+        cli = importlib.util.module_from_spec(importlib.util.spec_from_loader("rawtriage_cli", loader)); loader.exec_module(cli)
+        with mock.patch.dict(os.environ, {**bad, "GIT_CONFIG_GLOBAL_KEEP": "y"}):
+            for env in (server.git_env(self.tmp), server.gh_env(), depcheck.without_git_env(), cli.server_env()):
+                self.assertEqual(set(env) & set(bad), set()); self.assertIn("GIT_CONFIG_GLOBAL", env); self.assertIn("GIT_CONFIG_GLOBAL_KEEP", env)
 
     def test_the_suffix_is_configurable(self):
         os.makedirs(server.CONFIG_DIR, exist_ok=True)

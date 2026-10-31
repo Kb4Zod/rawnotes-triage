@@ -159,6 +159,11 @@ Flow gaps (plan and tickets in `.scratch/flow-gaps/`; Hugh approved all 13 recom
   - No home folder path in the messages that reach a browser: a refusing pre-commit hook is named as `~/…` (and what it
     printed spells home as `~`), as are Promote's "git init failed" error and its "first commit failed" warning.
     `POST /api/new` answers `path` with home as `~`; `rawtriage new` still prints the full path.
+  - The git variables the app never passes on (to git, `gh`, or a server `rawtriage` starts) are one list, in
+    `depcheck.py`, and it is longer: `GIT_CONFIG_PARAMETERS` (`git -c`), `GIT_CONFIG_COUNT` with
+    `GIT_CONFIG_KEY_*`/`GIT_CONFIG_VALUE_*`, `GIT_NAMESPACE`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`, and every
+    `GIT_AUTHOR_*`/`GIT_COMMITTER_*` (git exports them to its hooks). Promote's identity check and commit use the identity
+    in git's config.
 - **Test fix.** `test_runtime.HttpLimits` reads the 413 right after the headers and tolerates the server closing
   before the oversized body is sent (it was flaky with BrokenPipe under load); it now also asserts no file changed
   and no undo step was added.

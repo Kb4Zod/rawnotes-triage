@@ -15,7 +15,18 @@ import os, re, shlex, subprocess
 SCRIPT_MAX = 64 * 1024  # a ~/.local/bin file bigger than this is a program, not a wrapper script: not read
 UNIT_EXT = (".service", ".timer", ".path", ".socket")
 NAME_CHAR = re.compile(r"[\w.-]")  # a path followed by one of these is a different name (rawnotes-triage-flow-gaps)
-GIT_ENV_DROP = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR", "GIT_CEILING_DIRECTORIES")
+# Never handed to git or gh the app runs (nor to a server bin/rawtriage starts): inherited from a git hook, a `git -c`
+# or a `git -C` alias, they would point git at some other repo, objects or index, change its config, or commit as
+# someone else. The one list for server.py, this file and bin/rawtriage (without_git_env).
+GIT_ENV_DROP = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+                "GIT_COMMON_DIR", "GIT_CEILING_DIRECTORIES", "GIT_NAMESPACE", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT")
+GIT_ENV_DROP_PREFIXES = ("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_", "GIT_AUTHOR_", "GIT_COMMITTER_")
+
+
+def without_git_env(environ=None):
+    """A copy of `environ` (default os.environ) without the GIT_ENV_DROP variables (and prefixes)."""
+    env = os.environ if environ is None else environ
+    return {k: v for k, v in env.items() if k not in GIT_ENV_DROP and not k.startswith(GIT_ENV_DROP_PREFIXES)}
 
 
 def _crontab_l():
@@ -171,7 +182,7 @@ def scan_processes(path, proc, home, own_pid=None):
 
 
 def _git(path, args):
-    env = {k: v for k, v in os.environ.items() if k not in GIT_ENV_DROP}
+    env = without_git_env()
     env.update(GIT_TERMINAL_PROMPT="0", GIT_CEILING_DIRECTORIES=os.path.dirname(os.path.abspath(path)))  # only path's own .git, never a repo above
     try: p = subprocess.run(["git", *args], cwd=path, capture_output=True, text=True, timeout=10, env=env)
     except (OSError, subprocess.TimeoutExpired): return None

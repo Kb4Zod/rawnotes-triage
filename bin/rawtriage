@@ -52,9 +52,6 @@ PORT = int(os.environ.get("RAWTRIAGE_PORT") or 8765)
 BASE = f"http://127.0.0.1:{PORT}"
 UNIT = "rawtriage-web.service"
 WAIT = 5.0  # seconds to wait for a server we just started
-# never handed to a server we start: inherited from a git hook or a `git -C` alias, they would point every git and gh
-# command the server runs in a project or the notes folder at some other repo (same list as server.GIT_ENV_DROP)
-GIT_ENV_DROP = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR", "GIT_CEILING_DIRECTORIES")
 PROMPT = ("Raw note triage session. Use the rawnotes skill (its triage workflow): list the backlog with `rawtriage -l`, "
           "then walk me through the notes one at a time and make me decide. Decide only through the rawtriage command.")
 
@@ -118,6 +115,15 @@ def unit_name():
     except (OSError, subprocess.TimeoutExpired): return ""
 
 
+def server_env():
+    """The environment for a server we start: ours without the git variables (GIT_DIR, GIT_CONFIG_*, GIT_AUTHOR_*, ...)
+    a git hook or alias may have set, which would point the server's git and gh at some other repo or identity. The
+    list lives in depcheck.py (depcheck.without_git_env), loaded from this checkout."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("rawtriage_depcheck", os.path.join(REPO, "depcheck.py"))
+    mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+    return mod.without_git_env()
+
 def ensure_server():
     """Make sure our server answers; otherwise raise NoServer before anything has been changed."""
     state = probe()
@@ -131,7 +137,7 @@ def ensure_server():
             try:
                 subprocess.Popen([sys.executable, os.path.join(REPO, "server.py"), "--no-browser", "--port", str(PORT)],
                                  stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                 start_new_session=True, cwd=REPO, env={k: v for k, v in os.environ.items() if k not in GIT_ENV_DROP})
+                                 start_new_session=True, cwd=REPO, env=server_env())
             except OSError as e: raise NoServer(f"the triage server isn't running and couldn't be started ({e})")
         state = wait_up()
     if state == "foreign": raise NoServer(f"something that isn't rawnotes-triage answers on port {PORT}")
