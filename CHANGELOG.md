@@ -128,6 +128,8 @@ Flow gaps (plan and tickets in `.scratch/flow-gaps/`; Hugh approved all 13 recom
     timeout) the move is refused, where it used to count 0 and let it through. The refusal names each branch with its
     count and gives both ways out: `git push origin <branch>`, or `git branch -D <branch>` for a side branch already
     merged on GitHub (a squash or rebase merge leaves its own commits behind).
+  - Off this machine, `/api/project/deps` also hides the home folder inside Claude Code memory-folder names (the
+    `-home-<user>-…` key form), not only in paths.
 - **Test fix.** `test_runtime.HttpLimits` reads the 413 right after the headers and tolerates the server closing
   before the oversized body is sent (it was flaky with BrokenPipe under load); it now also asserts no file changed
   and no undo step was added.

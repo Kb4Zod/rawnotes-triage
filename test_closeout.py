@@ -321,6 +321,7 @@ class OffThisMachine(CloseBase):
         with open(os.path.join(pid, "cmdline"), "wb") as fh: fh.write(f"python3\0{self.demo}/app.py\0--token=hunter2\0".encode())
 
     def test_deps_off_this_machine_hide_command_lines_crontab_lines_and_the_home_path(self):
+        os.makedirs(os.path.join(self.sources.claude_projects, depcheck.claude_key(self.demo)))  # memory dir: the home path in key form
         here = self.get("/api/project/deps?name=demo&kind=active")
         self.assertIn("--token=hunter2", str(here)); self.assertIn("--secret-flag", str(here))
         code, there = self.remote("/api/project/deps?name=demo&kind=active")
@@ -328,8 +329,11 @@ class OffThisMachine(CloseBase):
         self.assertEqual(sorted(h["kind"] for h in there["blockers"]), ["crontab", "process"])
         for h in there["blockers"]: self.assertEqual(h["detail"], ""); self.assertTrue(h["fix"])
         text = json.dumps(there)
-        for secret in ("hunter2", "--secret-flag", self.tmp): self.assertNotIn(secret, text)
+        for secret in ("hunter2", "--secret-flag", self.tmp, depcheck.claude_key(self.tmp)): self.assertNotIn(secret, text)
         self.assertIn("~/active/demo", text)  # the T3 to-do still names the folder, home-relative
+        [mem] = [h for h in there["todos"] if h["kind"] == "agent-memory"]
+        self.assertEqual(mem["where"], "~/.claude/projects/~-active-demo")  # the memory dir's key, home-relative too
+        self.assertIn("~/.claude/projects/~-archive-demo", mem["fix"])
 
     def test_a_move_is_refused_off_this_machine_and_nothing_changes(self):
         self.sources = depcheck.Sources(self.home, proc=os.path.join(self.tmp, "noproc"), crontab=lambda: "")

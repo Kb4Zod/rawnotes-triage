@@ -567,7 +567,8 @@ it, with the list. A **Next round** moves nothing
 and works from anywhere. **What points here** (`/api/project/deps`) still
 answers off this machine, redacted: every hit keeps its kind and fix, but the
 command line of a running process and the text of a crontab line are left out,
-and your home folder is shown as `~`.
+and your home folder is shown as `~` (also inside the Claude Code memory
+folder names, where it is spelled `-home-<you>`).
 
 `triage.log` records every action after it has gone through, best-effort: if
 the log cannot be written, the change still happens and the Pulse decided

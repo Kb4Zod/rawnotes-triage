@@ -462,10 +462,13 @@ PRIVATE_HITS = ("process", "crontab")  # their detail is a command line or a cro
 
 def redact_deps(found, home):
     """The dependency check as a browser off this machine sees it: every hit keeps its kind and fix, but a running
-    process's command line and a crontab line (`detail`) are dropped, and the home folder is spelled ~ everywhere."""
-    homes = sorted({h for h in (home, os.path.realpath(home)) if h and h != os.sep}, key=len, reverse=True)
+    process's command line and a crontab line (`detail`) are dropped, and the home folder is spelled ~ everywhere, in
+    both of its forms: the path (/home/me/…) and Claude Code's memory-folder key (-home-me-…, see depcheck.claude_key)."""
+    homes = sorted({h.rstrip(os.sep) for h in (home, os.path.realpath(home)) if h and h != os.sep}, key=len, reverse=True)
+    keys = sorted({depcheck.claude_key(h) for h in homes}, key=len, reverse=True)
     def scrub(text):
-        for h in homes: text = re.sub(re.escape(h.rstrip(os.sep)) + r"(?=/|$|[^\w.-])", "~", text)
+        for h in homes: text = re.sub(re.escape(h) + r"(?=/|$|[^\w.-])", "~", text)
+        for k in keys: text = re.sub(re.escape(k) + r"(?![A-Za-z0-9])", "~", text)
         return text
     def one(hit):
         return {**hit, "where": scrub(hit["where"]), "fix": scrub(hit["fix"]),
