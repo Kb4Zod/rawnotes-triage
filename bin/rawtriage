@@ -313,7 +313,7 @@ def run(args):
         return out(args, r, text)
     if c == "new":
         r = api("/api/new", {"slug": args.slug, "thought": " ".join(args.thought)})
-        return out(args, r, f"{r['msg']}\n{r['path']}")
+        return out(args, r, f"{r['msg']}\n{os.path.expanduser(r['path'])}")  # the server spells home as ~
     if c == "reference" and args.unindexed:
         r = api("/api/reference/unindexed")
         if not r["has_index"]: return out(args, r, "reference/README.md has no ## Index section (or there is no README.md).")

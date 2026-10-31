@@ -156,6 +156,9 @@ Flow gaps (plan and tickets in `.scratch/flow-gaps/`; Hugh approved all 13 recom
   - **Create private GitHub repo** asks GitHub who you're signed in as before it takes the lock: that check can wait on
     the network for a long while, and holding the lock meanwhile froze every change. The repo checks run again under
     the lock, around `gh repo create`.
+  - No home folder path in the messages that reach a browser: a refusing pre-commit hook is named as `~/…` (and what it
+    printed spells home as `~`), as are Promote's "git init failed" error and its "first commit failed" warning.
+    `POST /api/new` answers `path` with home as `~`; `rawtriage new` still prints the full path.
 - **Test fix.** `test_runtime.HttpLimits` reads the 413 right after the headers and tolerates the server closing
   before the oversized body is sent (it was flaky with BrokenPipe under load); it now also asserts no file changed
   and no undo step was added.

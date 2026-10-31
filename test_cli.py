@@ -144,6 +144,17 @@ class NewNote(CliBase):
         self.assertNotIn("YYYY-MM-DD", text); self.assertNotIn("<topic>", text)
         self.assertEqual(self.get("/api/check")["problems"], [])
 
+    def test_new_answers_with_home_as_tilde_and_the_cli_prints_the_full_path(self):
+        self.template()
+        with mock.patch.dict(os.environ, {"HOME": self.tmp}):
+            r = self.post("/api/new", {"slug": "home-safe"})
+            fname = f"{server.today().isoformat()}-home-safe.md"
+            self.assertNotIn(self.tmp, r["path"]); self.assertTrue(r["path"].startswith("~/"), r["path"])
+            self.assertEqual(os.path.expanduser(r["path"]), os.path.join(self.notes, fname))
+            self.post("/api/undo", {})
+            out = self.ok("new", "home-safe").stdout.splitlines()
+        self.assertEqual(out, [f"Created {fname}", os.path.join(self.notes, fname)])
+
     def test_thought_goes_under_the_question(self):
         self.template()
         self.ok("new", "dns-slow", "why does dns", "take 5s?")

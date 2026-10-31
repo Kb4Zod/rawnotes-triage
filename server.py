@@ -464,16 +464,26 @@ def project_deps(name, kind=None, to=None, local=True):
 
 PRIVATE_HITS = ("process", "crontab")  # their detail is a command line or a crontab line: never sent off this machine
 
-def redact_deps(found, home):
-    """The dependency check as a browser off this machine sees it: every hit keeps its kind and fix, but a running
-    process's command line and a crontab line (`detail`) are dropped, and the home folder is spelled ~ everywhere, in
-    both of its forms: the path (/home/me/…) and Claude Code's memory-folder key (-home-me-…, see depcheck.claude_key)."""
-    homes = sorted({h.rstrip(os.sep) for h in (home, os.path.realpath(home)) if h and h != os.sep}, key=len, reverse=True)
+def home_scrubber(home):
+    """A function that spells the home folder `home` as ~ in a text, in both of its forms: the path (/home/me/…, also
+    its real path) and Claude Code's memory-folder key (-home-me-…, see depcheck.claude_key)."""
+    homes = sorted({h.rstrip(os.sep) for h in (home, os.path.realpath(home)) if h and h.rstrip(os.sep)}, key=len, reverse=True)
     keys = sorted({depcheck.claude_key(h) for h in homes}, key=len, reverse=True)
     def scrub(text):
         for h in homes: text = re.sub(re.escape(h) + r"(?=/|$|[^\w.-])", "~", text)
         for k in keys: text = re.sub(re.escape(k) + r"(?![A-Za-z0-9])", "~", text)
         return text
+    return scrub
+
+def tilde(text):
+    """`text` with this user's home folder spelled ~ (for messages that reach a browser, a phone included, or the log)."""
+    return home_scrubber(os.path.expanduser("~"))(text)
+
+def redact_deps(found, home):
+    """The dependency check as a browser off this machine sees it: every hit keeps its kind and fix, but a running
+    process's command line and a crontab line (`detail`) are dropped, and the home folder is spelled ~ everywhere, in
+    both of its forms: the path (/home/me/…) and Claude Code's memory-folder key (-home-me-…, see depcheck.claude_key)."""
+    scrub = home_scrubber(home)
     def one(hit):
         return {**hit, "where": scrub(hit["where"]), "fix": scrub(hit["fix"]),
                 "detail": "" if hit["kind"] in PRIVATE_HITS else scrub(hit["detail"])}
@@ -1266,7 +1276,7 @@ class Tx:
         try: code, _, err = _git(path, ["init", "-q", "-b", "main"])
         except (OSError, subprocess.TimeoutExpired) as e: code, err = 1, str(e)
         if os.path.isdir(gitdir) and not os.path.islink(gitdir): self.ops.append(("gitinit", path, None))
-        if code: raise OSError(f"git init failed: {_last_line(err)}")
+        if code: raise OSError(f"git init failed: {tilde(_last_line(err))}")
         i = len(self.ops) - 1; name = os.path.basename(path)
         # The warning goes to whichever browser asked (a phone, on a --host 0.0.0.0 bind) and into triage.log: it names
         # the folder relative to the projects root and never the email address git would use.
@@ -1283,6 +1293,7 @@ class Tx:
         if code:
             err = _last_line(err).replace(path, rel)
             if PROJECTS: err = err.replace(PROJECTS.rstrip(os.sep) + os.sep, "")
+            err = tilde(err)
             return f"{name}: git repo made, but the first commit failed ({err}). The files are staged; {how}"
         sha = _git(path, ["rev-parse", "HEAD"])[1]
         self.ops[i] = ("gitinit", path, sha)
@@ -1582,7 +1593,7 @@ def _autocommit(label, paths, first):
         if not paths: return {"ok": True, "skipped": "nothing to commit"}
         edited = [p for p in paths if _hand_edited(p, first.get(p))]
         r = _notes_git(["add", "-A", "--"] + paths)
-        if r.returncode != 0: return {"ok": False, "error": "git add failed: " + _tail(r.stderr)}
+        if r.returncode != 0: return {"ok": False, "error": tilde("git add failed: " + _tail(r.stderr))}
         if _notes_git(["rev-parse", "-q", "--verify", "HEAD"]).returncode == 0 and _notes_git(["diff", "--cached", "--quiet", "HEAD", "--"] + paths).returncode == 0:
             return {"ok": True, "skipped": "nothing to commit"}
         body = "\n".join(paths)
@@ -1592,7 +1603,7 @@ def _autocommit(label, paths, first):
         if r.returncode != 0:
             _notes_git(["reset", "-q", "--"] + paths)  # leave the index as it was; the files keep the change
             hook = _hook_name(); out = _tail(r.stderr + r.stdout)
-            return {"ok": False, "error": (f"the pre-commit hook ({hook}) refused the commit" if hook else "git commit failed") + (f": {out}" if out else "")}
+            return {"ok": False, "error": tilde((f"the pre-commit hook ({hook}) refused the commit" if hook else "git commit failed") + (f": {out}" if out else ""))}
         sha = _notes_git(["rev-parse", "--short", "HEAD"]).stdout.decode().strip()
         return {"ok": True, "sha": sha}
     finally: _commit_lock.release()
@@ -2248,7 +2259,7 @@ def new_note(req):
                 text = re.sub(r"(^## What's the question / problem\?[ \t]*\n)", lambda m: m.group(1) + "\n" + thought + "\n", text, count=1, flags=re.M)
             else: text = text.rstrip("\n") + "\n\n" + thought + "\n"
         tx.write(path, text, eol); tx.select = fname; tx.log(f"new {fname}")
-    return {"ok": True, "msg": f"Created {fname}", "file": fname, "path": path}
+    return {"ok": True, "msg": f"Created {fname}", "file": fname, "path": tilde(path)}  # home as ~: rawtriage expands it
 
 MAX_BODY = 1 << 20
 

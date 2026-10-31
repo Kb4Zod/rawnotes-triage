@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import unittest
 from unittest import mock
 
@@ -332,6 +333,22 @@ class PromoteSkeleton(PromoteBase):
         self.assertIn("git init failed", r["error"]); self.assertNotIn("remote", r["error"])
         self.assertEqual((self.snapshot(), server._undo), (before, []))
         self.assertIsNone(server.git_out(os.path.join(self.tmp, "active"), ["rev-parse", "--show-toplevel"]))  # no upward search
+
+    def test_git_init_and_first_commit_errors_spell_home_as_tilde(self):
+        home = tempfile.mkdtemp(prefix="rt-home-"); self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        real = server._git
+        def fake(path, args, timeout=server.GIT_TIMEOUT):
+            if args[0] == "init": return 1, "", f"fatal: cannot copy {home}/.git-templates/hooks: Permission denied"
+            return real(path, args, timeout)
+        with mock.patch.dict(os.environ, {"HOME": home}):
+            with mock.patch.object(server, "_git", fake): err = self.promote(ok=False)["error"]
+            self.assertIn("git init failed", err); self.assertIn("~/.git-templates/hooks", err); self.assertNotIn(home, err)
+            hooks = os.path.join(self.tmp, "hooks"); os.makedirs(hooks)
+            with open(os.path.join(hooks, "pre-commit"), "w") as fh: fh.write(f"#!/bin/sh\necho 'key in {home}/.ssh/id' >&2\nexit 1\n")
+            os.chmod(os.path.join(hooks, "pre-commit"), 0o755)
+            with open(self.gitconfig, "a") as fh: fh.write(f"[core]\n\thooksPath = {hooks}\n")
+            w = self.promote()["warning"]
+        self.assertIn("first commit failed", w); self.assertIn("key in ~/.ssh/id", w); self.assertNotIn(home, w)
 
     def test_a_failed_git_add_is_a_warning_not_a_failure(self):
         self.fail_git("add")

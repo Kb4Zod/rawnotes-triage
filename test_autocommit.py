@@ -191,6 +191,16 @@ class AutoCommit(GitFixture):
         self.post("/api/undo", {})
         self.assertTrue(os.path.isfile(os.path.join(self.notes, "2026-10-01-alpha.md")))
 
+    def test_a_refusing_hook_is_named_with_home_as_tilde(self):
+        """The error goes to whichever browser asked: the hook's path (and anything it printed) spells home as ~."""
+        hook = os.path.join(self.hooks, "pre-commit")
+        with open(hook, "w") as fh: fh.write(f"#!/bin/sh\necho 'leak in {self.tmp}/keys/id' >&2\nexit 1\n")
+        os.chmod(hook, 0o755)
+        with mock.patch.dict(os.environ, {"HOME": self.tmp}):
+            err = self.post("/api/action", {"file": "2026-10-01-alpha.md", "action": "kill"})["commit"]["error"]
+        self.assertIn("(~/hooks/pre-commit)", err); self.assertIn("leak in ~/keys/id", err)
+        self.assertNotIn(self.tmp, err); self.assertNotIn(os.path.realpath(self.tmp), err)
+
     def test_no_commit_flag_and_config_turn_it_off(self):
         n = self.count()
         server.AUTOCOMMIT = False
