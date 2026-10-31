@@ -295,7 +295,9 @@ git hooks. The app never sets a git identity: if the email git would use
 (config or `GIT_AUTHOR_EMAIL`/`GIT_COMMITTER_EMAIL`) does not end in
 `@users.noreply.github.com` (change it with `"noreply_suffix"` in
 `config.json`), the repo is made with **no commit** and the page shows a
-warning with the command to commit by hand. A refused commit (a hook said no)
+warning with the command to commit by hand (it names the folder relative to
+the projects root and never shows the address itself: the warning also goes
+to `triage.log` and to a phone on a `--host 0.0.0.0` bind). A refused commit (a hook said no)
 is a warning too, with the files staged. No `git` on the PATH: the folder and
 files are made, with a warning. Promote never creates a GitHub repo or
 pushes. **Undo** removes the folder including `.git` only while the repo

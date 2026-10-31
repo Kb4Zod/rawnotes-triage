@@ -1231,14 +1231,22 @@ class Tx:
         if os.path.isdir(gitdir) and not os.path.islink(gitdir): self.ops.append(("gitinit", path, None))
         if code: raise OSError(f"git init failed: {_last_line(err)}")
         i = len(self.ops) - 1; name = os.path.basename(path)
-        how = f"commit by hand: git -C {shlex.quote(path)} add -A && git -C {shlex.quote(path)} commit -m {shlex.quote(message)}"
-        suffix = noreply_suffix(); bad = [e or "(not set)" for e in git_identity(path) if not (e or "").endswith(suffix)]
-        if bad: return f"{name}: git repo made, but no commit: the email git would use is {bad[0]}, not a {suffix} address. Set it in git yourself, then {how}"
+        # The warning goes to whichever browser asked (a phone, on a --host 0.0.0.0 bind) and into triage.log: it names
+        # the folder relative to the projects root and never the email address git would use.
+        rel = os.path.relpath(path, PROJECTS) if PROJECTS and _within(path, PROJECTS) else name
+        how = f"commit by hand in {rel}: git add -A && git commit -m {shlex.quote(message)}"
+        suffix = noreply_suffix(); emails = git_identity(path); bad = [e for e in emails if not (e or "").endswith(suffix)]
+        if bad:
+            why = "git has no email set" if not all(emails) else f"the email git would use is not a {suffix} address"
+            return f"{name}: git repo made, but no commit: {why}. Set a {suffix} email in git yourself, then {how}"
         try:
             code, _, err = _git(path, ["add", "-A"])
             if not code: code, _, err = _git(path, ["commit", "-q", "-m", message])
         except (OSError, subprocess.TimeoutExpired) as e: code, err = 1, str(e)
-        if code: return f"{name}: git repo made, but the first commit failed ({_last_line(err)}). The files are staged; {how}"
+        if code:
+            err = _last_line(err).replace(path, rel)
+            if PROJECTS: err = err.replace(PROJECTS.rstrip(os.sep) + os.sep, "")
+            return f"{name}: git repo made, but the first commit failed ({err}). The files are staged; {how}"
         sha = _git(path, ["rev-parse", "HEAD"])[1]
         self.ops[i] = ("gitinit", path, sha)
         return ""

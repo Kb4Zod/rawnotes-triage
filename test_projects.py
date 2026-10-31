@@ -185,7 +185,10 @@ class PromoteSkeleton(PromoteBase):
     def test_a_non_noreply_identity_gets_a_repo_but_no_commit_and_a_warning(self):
         self.set_email("me@example.com")
         r = self.promote(); proj = os.path.join(self.tmp, "active", "a")
-        self.assertIn("no commit", r["warning"]); self.assertIn("me@example.com", r["warning"]); self.assertIn("@users.noreply.github.com", r["warning"])
+        self.assertIn("no commit", r["warning"]); self.assertIn("@users.noreply.github.com", r["warning"])
+        # the warning reaches a phone on a --host 0.0.0.0 bind and triage.log: no email address, no absolute path
+        self.assertNotIn("me@example.com", r["warning"]); self.assertNotIn(self.tmp, r["warning"])
+        self.assertIn("in active/a: git add -A && git commit -m", r["warning"])
         self.assertTrue(os.path.isdir(os.path.join(proj, ".git")))
         self.assertEqual(self.git(proj, "rev-parse", "-q", "--verify", "HEAD"), "")
         self.assertEqual(self.git(proj, "config", "--local", "user.email"), "")  # never set an identity
@@ -197,17 +200,18 @@ class PromoteSkeleton(PromoteBase):
         server.log = self.saved[2]; server.LOG_PATH = os.path.join(self.tmp, "triage.log")
         self.set_email("me@example.com"); self.promote()
         lines = open(server.LOG_PATH).read().splitlines()
+        self.assertNotIn("me@example.com", "\n".join(lines))
         self.assertEqual([l.split(" ", 2)[1] for l in lines], ["promote", "warning"])
         self.assertEqual(sum(w["decided"] for w in self.get("/api/stats")["weeks"]), 1)
 
     def test_no_identity_at_all_is_a_warning_too(self):
         with open(self.gitconfig, "w") as fh: fh.write("[core]\n\thooksPath = /dev/null\n[user]\n\tuseConfigOnly = true\n")
         r = self.promote()
-        self.assertIn("no commit", r["warning"]); self.assertIn("(not set)", r["warning"])
+        self.assertIn("no commit", r["warning"]); self.assertIn("git has no email set", r["warning"])
 
     def test_an_environment_override_counts_as_the_identity(self):
         with mock.patch.dict(os.environ, {"GIT_AUTHOR_EMAIL": "leak@example.com"}): r = self.promote()
-        self.assertIn("leak@example.com", r["warning"])
+        self.assertIn("no commit", r["warning"]); self.assertNotIn("leak@example.com", r["warning"])
         self.assertEqual(self.git(os.path.join(self.tmp, "active", "a"), "rev-parse", "-q", "--verify", "HEAD"), "")
 
     def test_the_suffix_is_configurable(self):
@@ -223,7 +227,7 @@ class PromoteSkeleton(PromoteBase):
         os.chmod(os.path.join(hooks, "pre-commit"), 0o755)
         with open(self.gitconfig, "a") as fh: fh.write(f"[core]\n\thooksPath = {hooks}\n")
         r = self.promote(); proj = os.path.join(self.tmp, "active", "a")
-        self.assertIn("first commit failed", r["warning"]); self.assertIn("secret found", r["warning"])
+        self.assertIn("first commit failed", r["warning"]); self.assertIn("secret found", r["warning"]); self.assertNotIn(self.tmp, r["warning"])
         self.assertEqual(self.git(proj, "rev-parse", "-q", "--verify", "HEAD"), "")
         self.assertFalse(os.path.exists(self.a))
         self.post("/api/undo", {}); self.assertFalse(os.path.exists(proj)); self.assertTrue(os.path.exists(self.a))
