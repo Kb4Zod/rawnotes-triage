@@ -41,6 +41,16 @@ class CloseBase(Fixture):
     def memory(self):
         d = os.path.join(self.sources.claude_projects, depcheck.claude_key(self.demo)); os.makedirs(d); return d
 
+    def remote(self, path, body=None, host="192.168.1.5"):
+        """A request from a browser that is not on this machine (needs BIND_HOST 0.0.0.0 for its Host name to pass)."""
+        import urllib.error, urllib.request
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}", method="GET" if body is None else "POST",
+                                     data=None if body is None else json.dumps(body).encode(),
+                                     headers={"Host": f"{host}:{self.port}", **({} if body is None else {"Content-Type": "application/json"})})
+        try:
+            with urllib.request.urlopen(req) as r: return r.status, json.loads(r.read())
+        except urllib.error.HTTPError as e: return e.code, json.loads(e.read())
+
 
 class Outcomes(CloseBase):
     def test_archive_moves_the_folder_and_writes_shipped_closed_and_moved(self):
@@ -310,15 +320,6 @@ class OffThisMachine(CloseBase):
         pid = os.path.join(self.tmp, "proc", "4242"); os.makedirs(pid)
         with open(os.path.join(pid, "cmdline"), "wb") as fh: fh.write(f"python3\0{self.demo}/app.py\0--token=hunter2\0".encode())
 
-    def remote(self, path, body=None, host="192.168.1.5"):
-        import json, urllib.error, urllib.request
-        req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}", method="GET" if body is None else "POST",
-                                     data=None if body is None else json.dumps(body).encode(),
-                                     headers={"Host": f"{host}:{self.port}", **({} if body is None else {"Content-Type": "application/json"})})
-        try:
-            with urllib.request.urlopen(req) as r: return r.status, json.loads(r.read())
-        except urllib.error.HTTPError as e: return e.code, json.loads(e.read())
-
     def test_deps_off_this_machine_hide_command_lines_crontab_lines_and_the_home_path(self):
         here = self.get("/api/project/deps?name=demo&kind=active")
         self.assertIn("--token=hunter2", str(here)); self.assertIn("--secret-flag", str(here))
@@ -345,6 +346,56 @@ class OffThisMachine(CloseBase):
             code, r = self.remote("/api/project/close", {"name": "demo", "kind": "active", "outcome": "next", "done": "Round two.", "due_days": 7})
             self.assertEqual(code, 200, r)  # a next round moves nothing: fine from the phone
             self.assertEqual(self.close()["moved_to"], "archive/demo")  # and from this machine a move still works
+
+
+class UndoOffThisMachine(CloseBase):
+    """Undo of a close out moves a folder back (and runs sync-apps); undo of a promote removes a .git. Neither may be
+    driven by a browser that isn't on this machine (a --host 0.0.0.0 bind, or a rebound DNS name)."""
+    def setUp(self):
+        super().setUp()
+        p = mock.patch.object(server, "BIND_HOST", "0.0.0.0"); p.start(); self.addCleanup(p.stop)
+
+    def refused_remotely(self):
+        before = self.snapshot(); n = len(server._undo)
+        code, r = self.remote("/api/undo", {})
+        self.assertEqual(code, 400, r); self.assertIn("machine running the server", r["error"])
+        self.assertEqual((self.snapshot(), len(server._undo)), (before, n))
+
+    def test_off_machine_undo_of_a_close_out_is_refused_and_the_folder_stays(self):
+        original = self.snapshot(); self.close()
+        self.refused_remotely()
+        self.assertTrue(os.path.isdir(os.path.join(self.tmp, "archive", "demo"))); self.assertFalse(os.path.exists(self.demo))
+        self.post("/api/undo", {})  # from this machine it works
+        self.assertEqual(self.snapshot(), original)
+
+    def test_off_machine_undo_of_a_promote_is_refused(self):
+        self.note("2026-10-01-p.md", title="P")
+        self.post("/api/action", {"file": "2026-10-01-p.md", "action": "promote", "dest": "experiments", "note": "We know."})
+        self.assertTrue(os.path.isdir(os.path.join(self.tmp, "experiments", "p", ".git")))
+        self.refused_remotely()
+        self.post("/api/undo", {}); self.assertFalse(os.path.exists(os.path.join(self.tmp, "experiments", "p")))
+
+    def test_off_machine_undo_of_a_note_change_still_works(self):
+        self.note("2026-10-01-k.md", title="K")
+        self.post("/api/action", {"file": "2026-10-01-k.md", "action": "keep"})
+        code, r = self.remote("/api/undo", {}); self.assertEqual(code, 200, r)
+
+
+class UndoReverseMoveBlockers(CloseBase):
+    """Undo of a move is a move too: what points at the folder in its new place blocks it, like close out."""
+    def test_a_blocker_on_the_new_place_refuses_the_undo_with_the_list(self):
+        original = self.snapshot(); self.close(); moved = os.path.join(self.tmp, "archive", "demo")
+        os.makedirs(self.sources.bin_dir, exist_ok=True)
+        with open(os.path.join(self.sources.bin_dir, "demo"), "w") as fh: fh.write(f"#!/bin/sh\nexec {moved}/app.py\n")
+        before = self.snapshot(); n = len(server._undo)
+        code, r = self.call("/api/undo", {})
+        self.assertEqual(code, 400, r); self.assertIn("Can't move demo back", r["error"]); self.assertIn("/.local/bin/demo", r["error"])
+        self.assertEqual([b["kind"] for b in r["blockers"]], ["bin"])
+        self.assertEqual((self.snapshot(), len(server._undo)), (before, n))
+        os.remove(os.path.join(self.sources.bin_dir, "demo"))
+        self.post("/api/undo", {})
+        self.assertEqual({k: v for k, v in self.snapshot().items() if not k.startswith("home/")},
+                         {k: v for k, v in original.items() if not k.startswith("home/")})
 
 
 if __name__ == "__main__":

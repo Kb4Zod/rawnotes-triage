@@ -556,7 +556,11 @@ Project folders get the same rule. Moving one (close out to `maintained/` or
 `archive/`, or Kill to `archive/<name>_abandoned`, through `/api/project/close`
 or `/api/project/status`) and **Create private GitHub repo** only work from a
 browser on the server's own machine with a localhost `Host`; a phone (or a
-rebound DNS name) gets a 400 and nothing moves. A **Next round** moves nothing
+rebound DNS name) gets a 400 and nothing moves. So does **Undo** of a change
+that moved a project folder or made a project's repo (a close out, a Kill, a
+Promote): undo of anything else still works from anywhere. Undo of a move is
+checked like the move: anything pointing at the folder in its new place blocks
+it, with the list. A **Next round** moves nothing
 and works from anywhere. **What points here** (`/api/project/deps`) still
 answers off this machine, redacted: every hit keeps its kind and fix, but the
 command line of a running process and the text of a crontab line are left out,

@@ -1386,14 +1386,26 @@ def mutation(label=""):
     for line in tx.logs: _log(line)  # after the undo entry exists and the lock is released: a log failure can't matter
     _note_commit(autocommit(tx.label or label, tx.ops))  # likewise: a commit that can't happen never fails the change
 
-def undo():
+UNDO_LOCAL_ONLY = ("movedir", "gitinit")  # undoing these moves a project folder back or deletes a repo: this machine only
+
+def undo(local=True):
     """Reverse the newest change. Checked on a dry run first: refuses (and changes nothing) if any file it
     touched has been edited, moved or added to since. If a step fails part-way, what it already reversed is put
-    back, so the change stays whole and undoable."""
+    back, so the change stays whole and undoable.
+    local=False (a browser not on this machine): a change that moved a project folder or made a repo is refused, like
+    the move itself. A folder move back is checked like close out's move: anything pointing at the folder in its new
+    place (depcheck) refuses it, with the list."""
     with _lock.write():
         if not _undo: raise ValueError("Nothing to undo.")
         entry = _undo[-1]; ops = entry["ops"]
+        if not local and any(op[0] in UNDO_LOCAL_ONLY for op in ops):
+            raise ValueError(f"Undoing “{entry['label']}” only works from the machine running the server (it moves a project "
+                             f"folder back or removes a repo). Nothing was changed.")
         _plan_inverse(ops)
+        for op in reversed(ops):
+            if op[0] == "movedir":
+                found = depcheck.check(op[2], dep_sources(), op[1])
+                if found["blockers"]: raise Blocked(blocked_message(f"Can't move {os.path.basename(op[2])} back", found["blockers"]), found)
         taken = []  # reversed so far, newest first
         try:
             for op in reversed(ops): _apply_inverse(op); taken.append(op)
@@ -1961,16 +1973,18 @@ def _moved_lines(t, old, new, todos):
     for x in todos: out.append(f"  - {x['fix']}" if x["kind"] == "t3" else f"  - {x['detail']}: `{x['fix']}`")
     return "\n".join(out)
 
+def blocked_message(head, blockers):
+    n = len(blockers)
+    return (f"{head}: {n} {'things point' if n > 1 else 'thing points'} at it. Fix {'each' if n > 1 else 'it'}, then try again:\n"
+            + "\n".join(f"- {b['where']}: {(b['detail'].splitlines() or [''])[0]} → {b['fix']}" for b in blockers))
+
 def _close_and_move(tx, req, path, kind, name, target, action, outcome):
     text, eol = read_note(target) if os.path.exists(target) else (f"# {name}\n", "\n")
     text, label, msg = _status_edit(text, {**req, "action": action}, name)
     dest = close_target(path, outcome)
     found = depcheck.check(path, dep_sources(), dest)
     blockers, todos = found["blockers"], found["todos"]
-    if blockers:
-        n = len(blockers)
-        raise Blocked(f"Can't move {name}: {n} {'things point' if n > 1 else 'thing points'} at it. Fix {'each' if n > 1 else 'it'}, then try again:\n"
-                      + "\n".join(f"- {b['where']}: {b['detail'].splitlines()[0]} → {b['fix']}" for b in blockers), found)
+    if blockers: raise Blocked(blocked_message(f"Can't move {name}", blockers), found)
     old, new = f"{kind}/{name}", os.path.relpath(dest, PROJECTS)
     text = append_to_section(text, "Moved", _moved_lines(today().isoformat(), old, new, todos))
     tx.write(target, text, eol)
@@ -2258,7 +2272,7 @@ class H(BaseHTTPRequestHandler):
             if path == "/api/setup":
                 if not self._this_machine(): raise ValueError("The notes folder can only be set up from the machine running the server.")
                 return self._send(200, setup_notes(req))
-            if path == "/api/undo": return self._send(200, undo())
+            if path == "/api/undo": return self._send(200, undo(self._this_machine()))
             if path == "/api/done": return self._send(200, set_done(req.get("name", ""), req.get("text", ""), req.get("expected", ""), req.get("kind")))
             if path == "/api/open":
                 if self.client_address[0] not in ("127.0.0.1", "::1", "::ffff:127.0.0.1"): raise ValueError("Open only works from the machine running the server.")
