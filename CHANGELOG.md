@@ -4,6 +4,186 @@ The version shows in the page heading ("RawNotes Triage version X.XX") and
 in the startup line. Bump `VERSION` in `server.py` and add an entry here
 with every change. Versions 1.00-1.03 were numbered after the fact from git history.
 
+## 2.13 — 2026-10-30
+Flow gaps (plan and tickets in `.scratch/flow-gaps/`; Hugh approved all 13 recommended decisions on 2026-10-30).
+- **RawNotes is committed after every change (01).** If the notes folder is a git repo, each decision, batch, merge,
+  restore, new note and undo is committed right after it succeeds: only the notes-folder paths it touched (both sides of
+  a move), message `triage: <what>`, body = the paths (plus any hand edits it swept in) and `via rawnotes-triage 2.13`.
+  Other edited or staged files are left alone; hooks always run; history is never rewritten. Not a repo, a merge or
+  rebase in progress, `index.lock`, no `user.email` or a refusing hook (gitleaks) skips the commit with a reason in the
+  toast and on stderr; the change always stands and stays undoable. Responses gain a `commit` object. Off with
+  `--no-commit` or `"autocommit": false` in `config.json`. Project folders and `../reference` are never committed.
+- **`rawtriage` triages from a terminal or any agent (02).** `bin/rawtriage` (linked to `~/.local/bin/rawtriage` by
+  the installer, backing up a hand-made one): `-l [status] [--summary] [--json]`, `where`, `check`, `new`, `keep`,
+  `kill`, `reference [--section --blurb | --unindexed]`, `index`, `promote`, `merge`, `undo`,
+  `project ship|extend|kill [--reason]`. Every command goes through the server (same rules, lock, undo list, log and
+  commit as the page). If the server is down it is started (systemd unit, else a detached `server.py`); if that fails it
+  exits 2 having changed nothing. New `GET /api/check` (header check, same verdicts as RawNotes' hook) and
+  `POST /api/new` (today's note from `_template.md`; logged as `new`, not a decision).
+- **One `rawnotes` skill for every agent (03).** `skills/rawnotes/` (`SKILL.md`, `capture.md`, `triage.md`,
+  `global-rule.md`), path-free: it asks `rawtriage where` and decides only through `rawtriage`. `install-webapp.sh`
+  links it into `~/.claude/skills`, `~/.agents/skills` and `~/.codex/skills` from the main checkout.
+- **Inbox limits (04).** `open` is stale after 14 days and `cooking` after 7 (from the last Keep); a note expires after
+  30 days in the Inbox (from capture, or from Restore) or 3 Keeps, and then Keep is refused on the page, in a batch
+  (one expired note refuses the whole batch) and through the API; Promote, Reference, Merge and Kill still work. Keep
+  writes `kept:`/`keeps:`, Restore writes `restored:` and clears `kept:`/`keeps:` (a restored note gets a fresh 30 days
+  and 3 Keeps). Rows show `kept 2×` and `expires in 3d`; an **Expired** filter
+  and Pulse count. All four numbers can be set in `config.json`. `inbox_summary()` gives the nudge line, also sent as
+  `summary` by `GET /api/notes` and printed by `rawtriage -l --summary`.
+- **Ship clock (05, 06).** Pushing a ship-by date needs a reason (at least 10 characters), recorded as `extensions: N`
+  and a `pushed <old> → <new>` line under `## Plan`; after two (`max_extensions`) it is refused and an overdue project
+  shows **Decide**. Killing a project needs a reason. Ship and kill write `closed: <date>`; the **Closed** column shows
+  the last 7 days (`closed_window_days`) with **Show all (N)**.
+- **Promote builds a real project (07, 08, 10).** Every destination, learning and templates included, gets a folder
+  from `starter/skeletons/<dest>/` (README, NOTES.md with `github: private`, AGENTS.md with the first build round,
+  CLAUDE.md, .gitignore, and `.scratch/`, `notes/` or `template/`), then `git init -b main` and one commit, all one undo
+  step (new Tx op `gitinit`; undo removes `.git` only while it still holds just that commit). A non-noreply identity, a
+  refused commit or no git is a `warning` in the response and toast, never a failure; the app never sets an identity.
+  Learning and templates folders are on the board only if promoted. Linked git worktrees are left off the board.
+- **Reference filing adds the index line (13).** The Reference form (and batch Reference all) picks an **Index
+  section** and a one-line summary; the same undoable step adds `- [Title](slug.md): summary` under `## Index` in
+  `reference/README.md` and records `section:` in the note. Nothing outside `## Index` is touched; no README or no
+  index means filed with a warning. The Archive lists unindexed reference notes with **Add to index**
+  (`GET /api/reference/unindexed`, `POST /api/reference/index`; `rawtriage reference --unindexed` / `rawtriage index`).
+- **What points here (11).** The panel of an open project folder lists what a move would break, read-only:
+  systemd user units, running processes, git worktrees, `~/.local/bin` links and scripts, and crontab lines block;
+  the agent memory folder under `~/.claude/projects` (with the exact `mv`) and T3 Code projects are to-dos. Each hit
+  has its fix. New `depcheck.py` (every scanner takes its root as an argument) and `GET /api/project/deps`.
+- **Close out: Next round, Maintained or Archive (12).** Mark shipped on a project folder asks what happens now,
+  with a suggestion (maintained when it has a GitHub origin, else archive). Next round keeps the folder, records the
+  finished round under `## Rounds` and starts a new one (done means and ship-by required, `extensions: 0`). Maintained
+  and Archive move the folder to `maintained/<name>` / `archive/<name>`; Kill moves it to `archive/<name>_abandoned`.
+  The dependency check (11) runs inside the change: a blocker refuses the move (400 with the list), to-dos go under
+  `## Moved` in the moved `NOTES.md` and into the toast. New Tx op `movedir` (a rename, same filesystem only): undo
+  and rollback move the folder back only while nothing in it changed (`.git` internals aside) and the old name is
+  free. `sync-apps` runs after a move or its undo if on `PATH` (best effort). Moved projects show in Closed for 7
+  days. A folder shipped (or `done`) before this and still in `active/` gets **Close out…** in its panel. New `POST /api/project/close`; `/api/project/status` ship/kill on a folder goes through it. CLI:
+  `rawtriage project close <name> --outcome next|maintained|archive`, `project ship --outcome`, `project deps`.
+  Project moves are never part of a RawNotes auto-commit.
+- **First push to GitHub (09).** A project with no GitHub origin shows a red **Not on GitHub** chip once it has a
+  commit after Promote's skeleton commit or was promoted 2+ days ago (older projects: by `promoted:` age alone).
+  For `active` and `templates` folders with no GitHub origin, close out (12) is gated ("Push it first"); experiments
+  and learning are never gated. New **Create private GitHub repo** button (`POST
+  /api/project/github`, `rawtriage project github <name>`): this machine only; refuses an existing origin, a dirty
+  tree, a branch other than `main` or no `gh` sign-in; runs `gh repo create <login>/<folder> --private --source <path>
+  --remote origin` then `git push -u origin main` with `ALLOW_PUSH_MAIN=1` in that process only. Never public, never
+  `--no-verify`. `github_state()` gains `after_skeleton` and `not_on_github`. Tests stub `gh` on PATH; the "remote"
+  is a local bare repo. Fixtures switch the gate off (`SHIP_NEEDS_GITHUB`); `test_github_push.py` switches it on.
+- **Where the GitHub gate meets close out (09 + 12).** The gate runs inside `close_project`, under the lock, so every
+  route that ships or closes a folder (`/api/project/close`, `/api/project/status`, the CLI, the page) passes it:
+  **maintained** needs a GitHub origin; **archive** needs one only when the folder is a git repo with a commit after
+  Promote's skeleton commit (any commit if there is no skeleton commit), so a folder with no `.git` or only the
+  skeleton archives freely; **next round** and **kill** (`_abandoned`) are never gated. New `work_commits()` /
+  `require_github_to_close()`; a repo git can't read counts as work (fails closed). The panel shows **Create private
+  GitHub repo** next to **Close out…** as well. `rawtriage project` takes `ship|extend|kill|close|deps|github`.
+- **Review fixes (pre-PR gate).**
+  - A project's `due:` reaches the board only when it is a real `YYYY-MM-DD` date (anything else counts as no ship-by
+    date), and the card's `ship by` text is escaped like every other server value (a header could inject markup).
+  - Moving a project folder (close out to maintained/archive, Kill) only works from a browser on the server's own
+    machine (`_this_machine()`), like Create private GitHub repo; Next round still works from anywhere. Off this machine
+    `GET /api/project/deps` is redacted: no process command lines, no crontab lines, home spelled `~` (a `--host
+    0.0.0.0` bind or a rebound DNS name could read them before). README "Network and safety".
+  - Git facts count every local branch (and a detached HEAD), not just the checked-out one: the **Not on GitHub**
+    chip, `GH ↑N`, and the work the GitHub gate protects (`work_commits`) include side branches, and a repo whose HEAD
+    is unborn still counts commits on its other branches.
+  - The GitHub gate at close out checks that the work is on GitHub, not just that an `origin` exists: maintained (and
+    archive of a repo with work) needs a GitHub origin that has been pushed to and no commit on any local branch
+    missing from it. An origin added but never pushed, or a Create private GitHub repo whose push failed, is refused.
+  - Auto-commit works when the notes folder's path goes through a symlink (for example a symlinked `~/Projects`): it
+    compared resolved and unresolved paths, found nothing inside the notes folder and silently made no commit.
+  - The board's promoted-file cards (`inflight()`) follow the same rule as its folders: nothing inside a linked git
+    worktree, or inside a learning/templates folder Promote didn't make, becomes a card.
+  - `rawtriage`: a connection lost after a change was sent exits **3** ("the server may have finished it: check
+    `rawtriage -l` or the page"), no longer 2 / "nothing was changed". Promote, merge, close out, ship/kill and
+    `project github` (and undo, which may move a folder back and run sync-apps) wait up to 300 s (others 60 s; `RAWTRIAGE_TIMEOUT` overrides). README, `SKILL.md`, `triage.md`.
+  - An Undo's commit no longer claims it "includes edits made by hand" every time: hand edits are now judged against
+    what the undo started from.
+  - Promote and Reference slugs (typed, from a merge, or from the note's filename) are lowercase kebab-case that starts
+    and ends with a letter or digit; a leading dash is dropped (`--x` → `x`). `/api/new` already refused one.
+  - The dependency check no longer lists the app's own `git`/`gh` children (a push, `gh repo create`) as processes
+    blocking a move; a `git` you run yourself in the folder still blocks.
+  - Undo of a Promote is refused once the new repo has a remote (after **Create private GitHub repo**): it would delete
+    the folder and orphan the GitHub repo. Delete the GitHub repo first (and the remote), or keep the project.
+  - Close out: if the dependency lookup fails, the form says why and **Ship it** works (the server checks again inside
+    the change) instead of staying on "Checking…" with the button disabled.
+  - Undo of a close out, a Kill or a Promote (anything that moved a project folder or made its repo) only works from
+    the server's own machine: from a phone or a rebound DNS name on a `--host 0.0.0.0` bind it is refused (400, nothing
+    changed). Undo of a move first runs the dependency check on the move back, and anything pointing at the folder
+    in its new place refuses it with the list, like close out.
+  - `/api/open` uses the same this-machine check as the other local-only routes (peer address and a localhost `Host`),
+    not the peer address alone: under `--host 0.0.0.0` a DNS-rebound page could ask it to open a project folder.
+  - Promote's "no commit" warning no longer shows the email address git would use or the project's absolute path
+    (it went to `triage.log` and to whichever browser asked, a phone included): it says the address isn't a noreply
+    one (or that none is set) and gives the commands to run in `<kind>/<name>`.
+  - An inherited `GIT_DIR` (or `GIT_WORK_TREE`, `GIT_INDEX_FILE`, …: a server started from a git hook or a `git -C`
+    alias) no longer reaches `gh` (whose `repo create --source` adds the remote with git), the project panel's git reads
+    (branch, history), or a server `rawtriage` starts when none is running.
+  - Git run in a project folder reads only that folder's own `.git` (`GIT_CEILING_DIRECTORIES` is set to its parent):
+    with the projects root inside an outer repo, a half-made `.git` (a failed `git init`) made git read the outer repo,
+    whose remote then refused the rollback and left the folder behind. The dependency check's worktree scan does the same.
+  - **Create private GitHub repo** holds the lock (read side) across its checks and `gh repo create`: an undo of the
+    promote sent meanwhile used to delete the folder under `gh` (orphaning the new GitHub repo); now it waits, finds the
+    remote and refuses. A close out waits the same way. The push runs after the lock is released.
+  - The close-out gate's "not on GitHub yet" check fails closed: if git can't count the unpushed commits (an error or a
+    timeout) the move is refused, where it used to count 0 and let it through. The refusal names each branch with its
+    count and gives both ways out: `git push origin <branch>`, or `git branch -D <branch>` for a side branch already
+    merged on GitHub (a squash or rebase merge leaves its own commits behind).
+  - Off this machine, `/api/project/deps` also hides the home folder inside Claude Code memory-folder names (the
+    `-home-<user>-…` key form), not only in paths.
+  - The dependency check no longer lists the `rawtriage` command asking for the move (run from inside the folder) as a
+    process blocking it; the shell or agent it runs in still blocks, and `triage.md` tells agents not to close out from
+    inside the project folder and to show a blocker's fix (`kill <pid>` and the like) to the user, never run it.
+  - A folder too big for Undo to check (over 200,000 entries, or partly unreadable) is flagged before the move: the
+    close-out form shows "can't be undone from here", as do `rawtriage project deps` and `/api/project/deps`
+    (`undo_warning`, with the `mv` to move it back by hand, relative to the projects folder).
+  - README and the spec say what the GitHub gate checks (commits and pushes, not uncommitted changes) and that Next
+    round is never gated (a change from user story 22, noted in `spec.md`).
+  - Auto-commit names hand edits also when the notes folder is a subfolder of a bigger repo (it looked the note up from
+    the repo's top, found nothing and never said so).
+  - "Pushed twice already" and the CLI's extend hint say the configured `max_extensions` ("once", "twice", "3 times"),
+    not always "twice".
+  - A Promote or Reference slug (and a merged note's name) cut to its maximum length no longer ends in `-`; Create
+    private GitHub repo refuses a folder name with non-ASCII letters up front (GitHub accepts only `A-Z a-z 0-9 _ . -`).
+  - **Create private GitHub repo** shows only for a repo with no `origin` at all: a folder whose origin is somewhere
+    else (a self-hosted git) got the button and then a refusal. `github_state()` gains `origin`.
+  - The **Not on GitHub** chip (`after_skeleton`) and the close-out gate (`work_commits`) follow one rule for root
+    commits: a second root (an orphan branch) next to Promote's skeleton commit is work for both (the chip ignored it).
+  - A tag with the same name as a branch (a tag `main`, say) no longer breaks the close-out gate or **Create private
+    GitHub repo**: git shortened the branch to `heads/main`, so the gate couldn't count and refused a fully pushed repo
+    ("couldn't check with git"), and Create refused with "Switch to the main branch first". Full ref names are used now.
+  - The close-out gate's suggested `git push origin <branch>` and `git branch -D <branch>` quote the branch name for
+    the shell (a branch may legally be called `x$(id)`).
+  - **Create private GitHub repo** asks GitHub who you're signed in as before it takes the lock: that check can wait on
+    the network for a long while, and holding the lock meanwhile froze every change. The repo checks run again under
+    the lock, around `gh repo create`.
+  - No home folder path in the messages that reach a browser: a refusing pre-commit hook is named as `~/…` (and what it
+    printed spells home as `~`), as are Promote's "git init failed" error and its "first commit failed" warning.
+    `POST /api/new` answers `path` with home as `~`; `rawtriage new` still prints the full path.
+  - The git variables the app never passes on (to git, `gh`, or a server `rawtriage` starts) are one list, in
+    `depcheck.py`, and it is longer: `GIT_CONFIG_PARAMETERS` (`git -c`), `GIT_CONFIG_COUNT` with
+    `GIT_CONFIG_KEY_*`/`GIT_CONFIG_VALUE_*`, `GIT_NAMESPACE`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`, and every
+    `GIT_AUTHOR_*`/`GIT_COMMITTER_*` (git exports them to its hooks). Promote's identity check and commit use the identity
+    in git's config.
+  - Git's search ceiling for a project folder (`GIT_CEILING_DIRECTORIES`) is the real path of its parent, so a
+    projects root reached through a symlink is covered too, and is left out for a parent whose path has a `:` (the
+    variable's separator would split it into nonsense). One `git_env` in `depcheck.py` for the server and the
+    dependency check.
+  - The "can't be undone from here" warning before a move also shows for a folder with an entry the app can list but
+    not stat (a folder you can read but not enter): Undo refused such a move, and the warning didn't say so.
+  - Undo of a close out (or a Kill) lists the to-dos for the way back, as close out lists them for the way there: the
+    memory folder `mv` back (if you had moved it) and the T3 Code path back, in the answer (`todos`), the toast and
+    `rawtriage undo`'s output.
+  - `rawtriage` exits **4** when the change failed in the server (HTTP 500, e.g. it stopped part-way and some steps
+    are left for Undo), no longer 1, which means "refused, nothing changed". README, `SKILL.md`, `triage.md`.
+- **Test fix.** `test_runtime.HttpLimits` reads the 413 right after the headers and tolerates the server closing
+  before the oversized body is sent (it was flaky with BrokenPipe under load); it now also asserts no file changed
+  and no undo step was added.
+- **Integration.** One config reader (`read_config` / `config_value` / `config_int`) behind every setting, with a
+  settings table in the README. The reader hides every header key the app writes (`kept`, `keeps`, `restored`,
+  `extensions`, `closed`, `github`). Tests: every git-running test uses `testkit.isolate_git`; testkit points the config
+  folder at a temp one for the whole run, and `test_zz_isolation.py` fails if `~/.config/rawnotes-triage` changed.
+  `ReferenceIndexTestCase` no longer reruns the decision tests.
+
 ## 2.12 — 2026-10-24
 - **First run asks where the notes live.** When the notes folder doesn't exist (a fresh install), the page opens a
   **Welcome** dialog, prefilled with `~/Projects/RawNotes`, before anything else. It creates the folder (or adopts an

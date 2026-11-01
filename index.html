@@ -221,6 +221,8 @@ h1.title{font-size:38px;line-height:1.05;margin:16px 0 10px;overflow-wrap:anywhe
 #toast.bad{background:var(--toast-bad);color:#fff;border-color:transparent}
 #toast button{background:none;border:0;font-weight:900;color:var(--toast-acc);cursor:pointer;display:flex;gap:6px;align-items:center;white-space:nowrap;min-height:32px;padding:4px 8px;border-radius:8px}
 #toast.bad button{color:#fff}
+#toast .tlist{display:block;margin-top:6px;font-size:12.5px}#toast .tlist .mono{display:block;margin-top:3px;word-break:break-all;color:var(--toast-acc)}
+#toast .cwarn{display:block;margin-top:4px;font-size:12.5px;font-weight:700;color:var(--toast-acc)}
 #toast kbd{background:transparent;color:inherit;border-color:currentColor;opacity:.7}
 /* batch */
 .btable{width:100%;border-collapse:collapse;margin-top:6px;font-size:13.5px}
@@ -228,7 +230,7 @@ h1.title{font-size:38px;line-height:1.05;margin:16px 0 10px;overflow-wrap:anywhe
 .btable tr td:first-child{width:96px}
 /* projects */
 .scroll{overflow:auto;height:100vh;padding:0 28px 40px}
-.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:6px 0 22px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:6px 0 22px}
 .tile{padding:14px 16px;text-align:left;cursor:default}
 button.tile{cursor:pointer;font:inherit;color:inherit}
 .tile .num{font-size:38px;font-weight:700;line-height:1}
@@ -260,6 +262,8 @@ button.tile{cursor:pointer;font:inherit;color:inherit}
 .tl li{display:grid;grid-template-columns:12px 1fr auto;gap:8px;padding:4px 0;align-items:baseline}
 .tl li:before{content:"";width:7px;height:7px;border-radius:50%;background:var(--green);margin-top:5px}
 .tl .muted{font-size:11.5px}
+.deps{list-style:none;margin:0;padding:0;font-size:13px}.deps li{padding:6px 0;border-top:1px solid var(--line)}.deps li:first-child{border-top:0}
+.deps .fix{display:block;margin-top:3px;word-break:break-all;color:var(--green-ink);white-space:pre-wrap}.deps .det{white-space:pre-wrap}
 .acts{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px}
 .clockbar{height:8px;border-radius:4px;background:var(--sunk);margin-top:8px;overflow:hidden}
 .clockbar i{display:block;height:100%}
@@ -394,7 +398,14 @@ const I={
 async function api(path,body,signal){
   const r=await fetch(path,{...(body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}),signal});
   let j;try{j=await r.json()}catch(e){if(e.name==='AbortError')throw e;throw Error('The triage server sent something unexpected.')}
-  if(j&&j.error&&!j.weeks)throw Error(j.error);return j}
+  if(j&&j.error&&!j.weeks)throw Error(j.error);
+  if(j&&j.commit&&!j.commit.ok)noteCommit(j.commit);return j}
+/* A change that worked but couldn't be committed to git: the next toast carries a warning. "Not a git repo" is said
+   once per page load, not on every change. */
+let commitWarn=null,saidNoRepo=false;
+function noteCommit(c){const why=c.error||c.skipped||'unknown reason';
+  if(/not a git repo/.test(why)){if(saidNoRepo)return;saidNoRepo=true}
+  commitWarn='Not committed to git: '+why}
 /* A screen asks for its data through a scope. Starting a new scope of the same name cancels the old request, and
    scope.ok(el) is only true while that request is still the newest AND the element it will write into is still on the
    page. Every await in a loader is followed by that check, for the success path and the failure path alike, so a late
@@ -409,7 +420,7 @@ function cancelScopes(){for(const k in SC)SC[k].c.abort()}
 const S={route:'inbox',notes:null,projects:null,activity:null,gh:null,stats:null,
   sel:null,mode:null,expanded:null,batch:new Set(),batchMode:'merge',
   f:{q:'',status:'all',type:null},af:{q:'',fate:'all'},asel:null,
-  psel:null,pdetail:null,repo:null,undoCount:0,
+  psel:null,pdetail:null,deps:null,showAllClosed:false,repo:null,undoCount:0,
   dods:{},   // unsaved "done means" edits by project: {mode:'edit'|'confirm', text}
   forms:{},  // unsaved decision forms by note+mode
   armed:null};  // the stack whose batch action was chosen on purpose (Enter submits only then)
@@ -444,27 +455,29 @@ function md(src,min=2){ // small markdown renderer: headings, lists, code, bold/
 
 /* ---------- toast + undo ---------- */
 let toastTimer,toastClear;
-function toast(msg,{undo=false,bad=false}={}){
+function toast(msg,{undo=false,bad=false,list=null,listHead='Left to do by hand (also under ## Moved in its NOTES.md):'}={}){
   const t=$('#toast');t.className=bad?'bad':'';clearTimeout(toastClear);
-  t.innerHTML=`<span>${bad?'':I.check} ${esc(msg)}</span>${undo?`<button type="button" id="tUndo">${I.undo}Undo ${kbh('Z')}</button>`:''}`;
+  const warn=bad?'':commitWarn;commitWarn=null;
+  t.innerHTML=`<span>${bad?'':I.check} ${esc(msg)}${list&&list.length?`<span class="tlist">${esc(listHead)}${list.map(x=>`<span class="mono">${esc(x)}</span>`).join('')}</span>`:''}${warn?`<span class="cwarn">⚠ ${esc(warn)}</span>`:''}</span>${undo?`<button type="button" id="tUndo">${I.undo}Undo ${kbh('Z')}</button>`:''}`;
   if(undo)$('#tUndo').onclick=doUndo;
   requestAnimationFrame(()=>t.classList.add('show'));
   const hide=()=>{t.classList.remove('show');toastClear=setTimeout(()=>{if(!t.classList.contains('show'))t.innerHTML=''},300)};  // an invisible Undo must not stay tabbable
-  clearTimeout(toastTimer);toastTimer=setTimeout(hide,bad?7000:9000);
+  clearTimeout(toastTimer);toastTimer=setTimeout(hide,bad?7000:list&&list.length?20000:9000);
   // on a phone, float above whatever is fixed to the bottom (tab bar or decision sheet) instead of covering it
   t.style.bottom=narrow()?(Math.max(0,...['#decide','#tabbar'].map(s=>{const el=$(s);return el&&getComputedStyle(el).position==='fixed'&&getComputedStyle(el).display!=='none'?innerHeight-el.getBoundingClientRect().top:0}))+12)+'px':'';
   t.onfocusin=t.onmouseenter=()=>clearTimeout(toastTimer);t.onfocusout=t.onmouseleave=()=>{clearTimeout(toastTimer);toastTimer=setTimeout(hide,3000)}}
+const withWarning=r=>r.warning?r.msg+'. Warning: '+r.warning:r.msg;  // e.g. promote made the repo but no commit
 async function doUndo(){
   try{const r=await api('/api/undo',{});S.undoCount=r.left;
     await changed();
     if(r.select){if(r.select.startsWith('done/')){if(S.notes.live.some(n=>n.file===r.select.slice(5)))S.sel=r.select.slice(5)}else if(S.notes.live.some(n=>n.file===r.select)){S.sel=r.select;S.expanded=null}}
-    render();toast(r.msg,{undo:r.left>0})}
+    render();toast(r.msg,{undo:r.left>0,list:(r.todos||[]).map(t=>t.fix),listHead:'Now that it is back, by hand:'})}
   catch(e){toast(e.message,{bad:true})}}
 
 /* ---------- data ---------- */
 // Two loads can overlap (a refresh and a save): the newest request's answer is the one kept.
 let notesSeq=0,notesP=null,projSeq=0,projP=null;
-function loadNotes(){const my=++notesSeq;const p=notesP=api('/api/notes').then(d=>{if(my===notesSeq)S.notes=d});return p.then(()=>my===notesSeq?undefined:notesP)}
+function loadNotes(){const my=++notesSeq;const p=notesP=Promise.all([api('/api/notes'),api('/api/reference/unindexed').catch(()=>null)]).then(([d,r])=>{if(my===notesSeq){S.notes=d;S.ref=r}});return p.then(()=>my===notesSeq?undefined:notesP)}
 function loadProjects(fresh){const my=++projSeq;const p=projP=api('/api/projects'+(fresh?'?refresh=1':'')).then(d=>{if(my===projSeq)S.projects=d.projects});return p.then(()=>my===projSeq?undefined:projP)}
 // After ANY change (decide, batch, merge, restore, project action, done means, undo) what the other screens cached is wrong:
 // drop it, and reload what the current screen needs.
@@ -513,6 +526,7 @@ function passes(n){const f=S.f;
   if(f.status==='open'&&n.status!=='open')return false;
   if(f.status==='cooking'&&n.status!=='cooking')return false;
   if(f.status==='stale'&&!n.stale)return false;
+  if(f.status==='expired'&&!n.expired)return false;
   if(f.type&&n.type!==f.type)return false;
   if(f.q){const q=f.q.toLowerCase();if(!(n.title+' '+n.question+' '+n.file).toLowerCase().includes(q))return false}
   return true}
@@ -538,14 +552,15 @@ function renderInbox(){
   const ord=navOrder(m);
   if(!S.sel||!ord.includes(S.sel))S.sel=ord[0]||null;
   if(S.sel&&S.sel.startsWith('stack:'))S.expanded=S.sel.slice(6);
-  const cnt=s=>live.filter(n=>s==='stale'?n.stale:s==='stuck'?stuck(n):n.status===s).length,nstuck=cnt('stuck');
+  const cnt=s=>live.filter(n=>s==='stale'?n.stale:s==='expired'?n.expired:s==='stuck'?stuck(n):n.status===s).length,nstuck=cnt('stuck');
   if(S.f.status==='stuck'&&!nstuck)S.f.status='all';
+  const nexp=cnt('expired');if(S.f.status==='expired'&&!nexp)S.f.status='all';
   const chip=(v,label,n,cls='')=>`<button class="chip ${cls} ${S.f.status===v?'on':''}" data-st="${v}" aria-pressed="${S.f.status===v}">${label} <b>${n}</b></button>`;
   const tchip=v=>`<button class="chip ${(S.f.type||'')===v?'on':''}" data-ty="${v}" aria-pressed="${(S.f.type||'')===v}">${v?v[0].toUpperCase()+v.slice(1):'Any type'}</button>`;
   $('#main').innerHTML=`<div class="split"><div class="listpane"><div class="pane-h"><h1>Inbox</h1>
     <div class="sub">${live.length} note${live.length===1?'':'s'} waiting on a decision · oldest first</div>
     <div class="search">${I.search}<input id="q" type="search" aria-label="Search notes" placeholder="Search notes…" value="${esc(S.f.q)}" autocomplete="off" aria-keyshortcuts="/">${kbh('/')}</div>
-    <div class="chips" role="group" aria-label="Status">${chip('all','All',live.length)}${chip('open','Open',cnt('open'))}${chip('cooking','Cooking',cnt('cooking'))}${chip('stale','Stale',cnt('stale'))}${nstuck?chip('stuck','Stuck',nstuck,'warn'):''}</div>
+    <div class="chips" role="group" aria-label="Status">${chip('all','All',live.length)}${chip('open','Open',cnt('open'))}${chip('cooking','Cooking',cnt('cooking'))}${chip('stale','Stale',cnt('stale'))}${nexp?chip('expired','Expired',nexp,'warn'):''}${nstuck?chip('stuck','Stuck',nstuck,'warn'):''}</div>
     <div class="chips sm" role="group" aria-label="Type">${tchip('')}${tchip('question')}${tchip('research')}${tchip('issue')}</div></div>
     <div class="list" id="list"></div></div><div class="reader" id="reader"></div></div>`;
   $('#q').oninput=e=>{S.f.q=e.target.value;renderInboxList(true)};
@@ -555,7 +570,7 @@ function renderInbox(){
 function renderInboxList(fromSearch){
   const m=inboxModel(),el=$('#list');if(!el)return;
   const row=n=>{const a=n.age??0,c=ageCls(a);return `<div class="item ${n.file===S.sel?'sel':''}" data-f="${esc(n.file)}" role="button" tabindex="0"${n.file===S.sel?' aria-current="true"':''}>
-    <span class="bar ${c?'h'+c:''}"></span><div><div class="t">${esc(n.title)}</div><div class="m">${st(n.status)}<span>${esc(n.type)}</span>${n.stale?'<span class="err">stale</span>':''}${stuck(n)?'<span class="err" title="Its status says it was decided, but it is still in the Inbox">not moved</span>':''}</div></div><span class="age ${c?'a'+c:''}" title="waiting ${a} days"><span class="sr">waiting </span>${a}d</span></div>`};
+    <span class="bar ${c?'h'+c:''}"></span><div><div class="t">${esc(n.title)}</div><div class="m">${st(n.status)}<span>${esc(n.type)}</span>${n.keeps?`<span title="Kept ${n.keeps} time${n.keeps===1?'':'s'}">kept ${n.keeps}×</span>`:''}${n.expired?'<span class="err" title="Over the Inbox limit: promote, file, merge or kill it">expired</span>':n.stale?'<span class="err">stale</span>':''}${!n.expired&&n.expires_in!=null?`<span title="Days until the Inbox limit">expires in ${n.expires_in}d</span>`:''}${stuck(n)?'<span class="err" title="Its status says it was decided, but it is still in the Inbox">not moved</span>':''}</div></div><span class="age ${c?'a'+c:''}" title="waiting ${a} days"><span class="sr">waiting </span>${a}d</span></div>`};
   // A stack member is a row with TWO real controls (the tick box and the open button), so the row itself is not a button.
   const member=n=>`<div class="item member ${n.file===S.sel?'sel':''}" data-f="${esc(n.file)}"><span class="bar"></span>
     <input type="checkbox" class="cb" data-cb="${esc(n.file)}" ${S.batch.has(n.file)?'checked':''} aria-label="Select ${esc(n.title)}, ${esc(n.file)}">
@@ -563,7 +578,7 @@ function renderInboxList(fromSearch){
   const ent=e=>{if(e.kind==='note')return row(e.n);const open=S.expanded===e.key,id='stack:'+e.key;
     const dates=e.members.map(n=>n.date).sort();
     return `<div class="item stack ${S.sel===id?'sel':''}" data-f="${esc(id)}" role="button" tabindex="0" aria-expanded="${open}"${S.sel===id?' aria-current="true"':''}><span class="bar"></span><div><div class="t">${esc(e.name)}</div>
-      <div class="m">${e.members.length} related notes · ${dates[0]===dates.at(-1)?dates[0]:dates[0].slice(5)+' – '+dates.at(-1).slice(5)} · ${open?'decide them together':'open to decide them together'}</div></div><span class="count">${e.members.length}</span></div>`+(open?e.members.map(member).join(''):'')};
+      <div class="m">${e.members.length} related notes · ${esc(dates[0]===dates.at(-1)?dates[0]:dates[0].slice(5)+' – '+dates.at(-1).slice(5))} · ${open?'decide them together':'open to decide them together'}</div></div><span class="count">${e.members.length}</span></div>`+(open?e.members.map(member).join(''):'')};
   const grp=(label,es)=>es.length?`<div class="grp-h"><h2>${label}</h2><span>${es.reduce((s,e)=>s+(e.kind==='note'?1:e.members.length),0)}</span></div>${es.map(ent).join('')}`:'';
   el.innerHTML=m.count?grp('Waiting 2+ weeks',m.older)+grp('This fortnight',m.recent):`<div class="empty">${S.notes.live.length?'Nothing matches.':'Inbox zero. Go build something.'}</div>`;
   el.querySelectorAll('[data-f]').forEach(r=>{
@@ -587,8 +602,9 @@ function selectNote(f,nav){
   if(inList){const r=[...$$('#list [data-f]')].find(x=>x.dataset.f===f);if(r)(r.matches('[role=button]')?r:r.querySelector('.rowmain')).focus({preventScroll:true})}  // the row you were on survives the re-render
   if(nav&&narrow()){document.body.classList.add('note');scrollTo(0,0)}}
 
-function optCards(on){const o=(id,ic,v,d,k)=>`<button type="button" class="opt ${id} ${on===id?'on':on?'dim':''}" data-m="${id}" aria-pressed="${on===id}" aria-keyshortcuts="${k}"><span class="k">${kbh(k)}</span><div class="v"><i>${I[ic]}</i>${v}</div><div class="d">${d}</div></button>`;
-  return `<div class="opts">${o('promote','up','Promote','Make it a project with a ship-by date','P')}${o('reference','ref','Reference','File it in reference/ for lookup','R')}${o('keep','pot','Keep','Still cooking: stays in the Inbox','C')}${o('kill','x','Kill','Not worth it: off to the Archive','X')}</div>`}
+function expiredMsg(n){const L=S.notes.limits||{};return n.keeps>=(L.max_keeps||3)&&n.expires_in>=0?`Used all ${L.max_keeps||3} Keeps: promote, file, merge or kill`:`Over the ${L.inbox_limit_days||30}-day limit: promote, file, merge or kill`}
+function optCards(on,n){const o=(id,ic,v,d,k)=>`<button type="button" class="opt ${id} ${on===id?'on':on?'dim':''}" data-m="${id}" aria-pressed="${on===id}" aria-keyshortcuts="${k}"><span class="k">${kbh(k)}</span><div class="v"><i>${I[ic]}</i>${v}</div><div class="d">${d}</div></button>`;
+  return `<div class="opts">${o('promote','up','Promote','Make it a project with a ship-by date','P')}${o('reference','ref','Reference','File it in reference/ for lookup','R')}${n&&n.expired?`<div class="opt keep dim" role="note" aria-label="Keep is not available"><div class="v"><i>${I.pot}</i>No more Keeps</div><div class="d err">${expiredMsg(n)}</div></div>`:o('keep','pot','Keep','Still cooking: stays in the Inbox','C')}${o('kill','x','Kill','Not worth it: off to the Archive','X')}</div>`}
 function seg(name,items,on){return `<div class="seg" data-seg="${name}">${items.map(([v,l,s])=>`<button type="button" data-v="${v}" class="${v===on?'on':''}">${l}${s?`<small>${s}</small>`:''}</button>`).join('')}</div>`}
 const segVal=name=>{const b=document.querySelector(`[data-seg="${name}"] .on`);return b?b.dataset.v:null};
 function wireSegs(root,onChange){root.querySelectorAll('[data-seg]').forEach(s=>s.querySelectorAll('button').forEach(b=>b.onclick=()=>{s.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b));onChange&&onChange()}))}
@@ -604,6 +620,13 @@ const shipDate=()=>{const dd=$('#dueDate');return dd&&dd.value?dd.value:addDays(
 const shipBody=dest=>{if(dest==='experiments')return{};const dd=$('#dueDate');return dd&&dd.value?{due:dd.value}:{due_days:segVal('due')}};
 function syncShipBy(dest){const sb=$('#shipby');if(sb)sb.style.display=dest==='experiments'?'none':'';
   const n=$('#note');if(n)n.placeholder=dest==='experiments'?'What will you know or have when this experiment is done?':'What does shipped look like? One or two sentences.'}
+const firstSentence=t=>((t||'').replace(/\s+/g,' ').trim().split(/(?<=[.?!])\s/)[0]||'').slice(0,200);
+const NEW_SEC='__new__';
+function secField(id){const r=S.ref;if(!r||!r.has_index)return '';
+  return `<div class="field"><label class="label" for="${id}">Index section</label><select class="input" id="${id}"><option value="">Don’t index</option>${r.sections.map(x=>`<option>${esc(x)}</option>`).join('')}<option value="${NEW_SEC}">New section…</option></select>
+   <input class="input" id="${id}New" placeholder="name of the new section" style="display:none;margin-top:6px" aria-label="New section name"></div>`}
+const secVal=id=>{const e=document.getElementById(id);if(!e||!e.value)return '';return e.value===NEW_SEC?(document.getElementById(id+'New')?.value||'').trim():e.value};
+function wireSec(root,id,onChange){const e=root.querySelector('#'+id);if(!e)return;const nw=root.querySelector('#'+id+'New'),sync=()=>{nw.style.display=e.value===NEW_SEC?'':'none';onChange&&onChange()};e.onchange=sync;nw.addEventListener('input',()=>onChange&&onChange());sync()}
 function formHtml(mode,n){const s=slugOf(n.file);
   const foot=(btn,cls,hint)=>`<div class="formfoot"><button type="submit" class="btn ${cls}" id="go">${btn} ${kbh('↵')}</button><button type="button" class="btn ghost" id="cancel">Cancel ${kbh('Esc')}</button><span class="err" id="ferr" role="alert"></span><span class="hint">${hint}</span></div>`;
   if(mode==='promote')return `<form class="form promote" id="form"><div>
@@ -614,7 +637,8 @@ function formHtml(mode,n){const s=slugOf(n.file);
     <div class="preview" id="pv"></div>${foot(I.up+'Promote &amp; next','primary','Undo afterwards with Z · every move is logged')}</form>`;
   if(mode==='reference')return `<form class="form reference" id="form"><div>
     <div class="field"><label class="label" for="slug">File name</label><input class="input mono" id="slug" value="${esc(s)}" autocomplete="off"></div>
-    <div class="field"><label class="label" for="note">Why keep it</label><input class="input" id="note" placeholder="optional: what this is a reference for"></div></div>
+    <div class="field"><label class="label" for="note">Why keep it</label><input class="input" id="note" placeholder="optional: what this is a reference for"></div>
+    ${secField('rsec')}${S.ref&&S.ref.has_index?`<div class="field" id="blurbField"><label class="label" for="blurb">One-line summary</label><input class="input" id="blurb" value="${esc(firstSentence(n.question))}" autocomplete="off"></div>`:''}</div>
     <div class="preview" id="pv"></div>${foot(I.ref+'File as reference','primary','Shows up in Obsidian under Reference/')}</form>`;
   if(mode==='keep')return `<form class="form keep" id="form"><div>
     <div class="field"><span class="label">Status</span>${seg('status',[['cooking','Cooking',"I'm working it"],['open','Open','still just a question']],n.status==='open'?'open':'cooking')}</div>
@@ -623,12 +647,12 @@ function formHtml(mode,n){const s=slugOf(n.file);
   return `<form class="form kill" id="form"><div>
     <div class="field"><label class="label" for="note">Why not</label><input class="input" id="note" placeholder="one line: why this died (optional)"></div></div>
     <div class="preview"><div class="label">What will happen</div><ol><li>Sets <b>status: dead</b> and writes your reason under ## Outcome</li><li>Moves the note to <span class="mono">RawNotes/done/</span>; it shows up in the <b>Archive</b></li></ol></div>${foot(I.x+'Kill &amp; next','danger','Restore it from the Archive any time')}</form>`}
-function updatePreview(){const pv=$('#pv');if(!pv||!S.mode)return;const slug=($('#slug')?.value||'').toLowerCase().replace(/[^a-z0-9-]/g,'')||'…';
-  if(S.mode==='promote'){const d=segVal('dest'),folder=d==='active'||d==='experiments',exp=d==='experiments',due=shipDate();syncShipBy(d);
+function updatePreview(){const pv=$('#pv');if(!pv||!S.mode)return;const slug=($('#slug')?.value||'').toLowerCase().replace(/[^a-z0-9-]/g,'').replace(/-+/g,'-').replace(/^-|-$/g,'')||'…';
+  if(S.mode==='promote'){const d=segVal('dest'),folder=true,exp=d==='experiments',due=shipDate();syncShipBy(d);  // every destination is a project folder
     const days=Math.round((new Date(due+'T00:00')-new Date(addDays(0)+'T00:00'))/864e5);
-    pv.innerHTML=`<div class="label">What will happen</div><ol><li>Creates <span class="mono">~/Projects/${d}/${slug}${folder?'/NOTES.md':'.md'}</span></li>
+    pv.innerHTML=`<div class="label">What will happen</div><ol><li>Creates <span class="mono">~/Projects/${d}/${slug}${folder?'/':'.md'}</span>${folder?' with README, NOTES.md (this note), AGENTS.md and CLAUDE.md, as a git repo on <b>main</b> with a first commit (private; push it in the first build round)':''}</li>
       <li>Stamps <b>promoted</b> today · ${exp?'<b>no ship-by date</b> (open-ended)':`<b>ship by ${fmtDate(due)}</b>`}</li><li>Writes your <b>done means</b> into its ## Plan</li><li>Moves the capture to <span class="mono">RawNotes/done/</span></li><li>Shows up in <b>Projects</b> ${exp?'under Experiments, no clock':`with a ${days}-day clock`}</li></ol>`}
-  if(S.mode==='reference')pv.innerHTML=`<div class="label">What will happen</div><ol><li>Copies to <span class="mono">~/Projects/reference/${slug}.md</span> with Obsidian properties</li><li>Moves the capture to <span class="mono">RawNotes/done/</span></li><li>Add it to <span class="mono">reference/README.md</span> if it belongs in the index</li></ol>`}
+  if(S.mode==='reference')pv.innerHTML=`<div class="label">What will happen</div><ol><li>Copies to <span class="mono">~/Projects/reference/${slug}.md</span> with Obsidian properties</li><li>Moves the capture to <span class="mono">RawNotes/done/</span></li>${secVal('rsec')?`<li>Adds a line to <span class="mono">reference/README.md</span> under <b>${esc(secVal('rsec'))}</b></li>`:'<li>Not added to <span class="mono">reference/README.md</span> (pick an Index section to add it)</li>'}</ol>`}
 
 function renderReader(){const r=$('#reader');if(!r)return;r.scrollTop=0;
   if(!S.sel){r.innerHTML=`<div class="empty">${S.notes.live.length?'Pick a note.':'Inbox zero. Nothing to decide.'}</div>`;return}
@@ -637,23 +661,25 @@ function renderReader(){const r=$('#reader');if(!r)return;r.scrollTop=0;
   r.innerHTML=`<h1 class="sr rh1">Inbox</h1><button class="back" onclick="backToList()">‹ Inbox</button>
    <div class="card decide ${S.mode?'open':''}" id="decide"><div class="q"><h2>What happens to this note?</h2><span class="muted">waiting ${n.age} day${n.age===1?'':'s'}</span><span class="muted kh" style="margin-left:auto">${kbh('J')} ${kbh('K')} next / prev</span></div>
    ${stuck(n)?`<div class="flag"><b>Stuck:</b> this note says <span class="mono">status: ${esc(n.status)}</span> but never left the Inbox. Check that its destination exists, then move it to <span class="mono">done/</span> yourself, or Keep it to put it back in play.</div>`:''}
-   ${optCards(S.mode)}${S.mode?formHtml(S.mode,n):''}</div><div id="doc" class="card doc"><div class="muted">Loading…</div></div>`;
+   ${optCards(S.mode,n)}${S.mode?formHtml(S.mode,n):''}</div><div id="doc" class="card doc"><div class="muted">Loading…</div></div>`;
   wireDecide(n);loadDoc(n)}
 // What was typed into a decision form is kept per note and decision, so a refresh or a trip to another note doesn't lose it.
-function formState(f){const o={};f.querySelectorAll('input.input,textarea.input').forEach(i=>{if(i.id)o[i.id]=i.value});f.querySelectorAll('[data-seg]').forEach(s=>{const b=s.querySelector('.on');if(b)o['seg:'+s.dataset.seg]=b.dataset.v});return o}
+function formState(f){const o={};f.querySelectorAll('input.input,textarea.input,select.input').forEach(i=>{if(i.id)o[i.id]=i.value});f.querySelectorAll('[data-seg]').forEach(s=>{const b=s.querySelector('.on');if(b)o['seg:'+s.dataset.seg]=b.dataset.v});return o}
 function restoreForm(f,o){if(!o)return;for(const k in o){if(k.startsWith('seg:')){const s=f.querySelector(`[data-seg="${k.slice(4)}"]`);s&&s.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.v===o[k]))}
   else{const i=document.getElementById(k);if(i&&f.contains(i)){i.value=o[k];if(k==='dueDate'){i.classList.toggle('on',!!o[k]);if(o[k])f.querySelectorAll('[data-seg=due] button').forEach(b=>b.classList.remove('on'))}}}}}
 function wireDecide(n){
   $$('#decide .opt').forEach(b=>b.onclick=()=>setMode(S.mode===b.dataset.m?null:b.dataset.m));
   const f=$('#form');if(!f)return;
   const key=n.file+'|'+S.mode;restoreForm(f,S.forms[key]);
-  wireSegs(f,updatePreview);wireShipBy(f,updatePreview);$('#slug')&&($('#slug').oninput=updatePreview);updatePreview();
+  wireSegs(f,updatePreview);wireShipBy(f,updatePreview);$('#slug')&&($('#slug').oninput=updatePreview);
+  if(S.mode==='reference'){wireSec(f,'rsec',updatePreview);const b=$('#blurb'),nt=$('#note');if(b&&nt){b.addEventListener('input',()=>b.dataset.t='1');if(b.value!==firstSentence(n.question))b.dataset.t='1';nt.addEventListener('input',()=>{if(!b.dataset.t)b.value=nt.value.trim()||firstSentence(n.question)})}}
+  updatePreview();
   const save=()=>{S.forms[key]=formState(f)};f.addEventListener('input',save);f.addEventListener('click',e=>{if(e.target.closest('[data-seg]'))save()});
   f.onsubmit=e=>{e.preventDefault();apply()};$('#cancel').onclick=()=>{delete S.forms[key];setMode(null)};
   const first=f.querySelector('textarea,input#note')||f.querySelector('input');if(first&&!narrow())first.focus()}
-function setMode(m){if(!S.sel||S.sel.startsWith('stack:'))return;S.mode=m;const n=S.notes.live.find(x=>x.file===S.sel);
+function setMode(m){if(!S.sel||S.sel.startsWith('stack:'))return;S.mode=m;const n=S.notes.live.find(x=>x.file===S.sel);if(m==='keep'&&n&&n.expired){toast(expiredMsg(n));return}
   const d=$('#decide');d.classList.toggle('open',!!m);
-  d.innerHTML=d.innerHTML.split('<div class="opts">')[0]+optCards(m)+(m?formHtml(m,n):'');wireDecide(n);
+  d.innerHTML=d.innerHTML.split('<div class="opts">')[0]+optCards(m,n)+(m?formHtml(m,n):'');wireDecide(n);
   if(m&&!narrow())d.scrollIntoView({block:'nearest'})}
 async function loadDoc(n){
   const sc=scope('doc'),el=$('#doc'),mine=()=>sc.ok(el)&&S.route==='inbox'&&S.sel===n.file;  // still the newest request, still on this note, element still on the page
@@ -680,14 +706,15 @@ async function apply(){
   if(S.sel&&S.sel.startsWith('stack:'))return applyBatch();
   if(!S.mode||!S.sel)return;const go=$('#go'),err=$('#ferr');
   const val=id=>{const e=document.getElementById(id);return e?e.value.trim():undefined};
-  const body={file:S.sel,action:S.mode,note:val('note'),slug:val('slug'),dest:segVal('dest'),status:segVal('status'),...(S.mode==='promote'?shipBody(segVal('dest')):{})};
+  const body={file:S.sel,action:S.mode,note:val('note'),slug:val('slug'),dest:segVal('dest'),status:segVal('status'),...(S.mode==='promote'?shipBody(segVal('dest')):{}),...(S.mode==='reference'&&secVal('rsec')?{section:secVal('rsec'),blurb:val('blurb')}:{})};
+  if(S.mode==='reference'&&$('#rsec')&&$('#rsec').value===NEW_SEC&&!secVal('rsec')){err.textContent='Name the new section.';$('#rsecNew').focus();return}
   if(S.mode==='promote'&&!body.note){err.textContent='Say what done means first.';$('#note').focus();return}
   go.disabled=true;err.textContent='';submitting=true;
   try{const ord=navOrder(inboxModel()),i=ord.indexOf(S.sel);
     const r=await api('/api/action',body);S.undoCount++;
     const next=ord.slice(i+1).find(f=>!f.startsWith('stack:'))||ord.slice(0,i).reverse().find(f=>!f.startsWith('stack:'));
     delete S.forms[S.sel+'|'+S.mode];await changed();S.sel=next&&S.notes.live.some(n=>n.file===next)?next:null;S.mode=null;
-    render();toast(r.msg,{undo:true})}
+    render();toast(withWarning(r),{undo:true,bad:!!r.warning})}
   catch(e){go.disabled=false;err.textContent=e.message}
   finally{submitting=false}}
 
@@ -702,7 +729,7 @@ function renderBatch(){const k=S.sel.slice(6),stk=inboxModel().stacks[k];const r
   $$('[data-bm]').forEach(b=>b.onclick=()=>{S.batchMode=b.dataset.bm;S.armed=S.sel;renderBatch()});
   const f=$('#form'),sync=()=>{if(S.batchMode==='merge'){$('#promoteBits').style.display=segVal('then')==='promote'?'':'none';syncShipBy(segVal('dest'));batchPreview()}};wireSegs(f,sync);
   f.onsubmit=e=>{e.preventDefault();apply()};$('#cancel').onclick=()=>{S.sel=stk.members[0].file;S.expanded=k;renderInboxList();renderReader()};
-  f.querySelectorAll('input,textarea').forEach(i=>i.oninput=batchPreview);wireShipBy(f,sync);  // after: it owns #dueDate's oninput
+  f.querySelectorAll('input,textarea').forEach(i=>i.oninput=batchPreview);if(S.batchMode==='reference')wireSec(f,'rsec',batchPreview);wireShipBy(f,sync);  // after: it owns #dueDate's oninput
   renderBatchSummary()}
 function batchForm(stk){const m=S.batchMode;
   const foot=(btn,cls)=>`<div class="formfoot"><button type="submit" class="btn ${cls}" id="go">${btn} ${kbh('↵')}</button><button type="button" class="btn ghost" id="cancel">Cancel</button><span class="err" id="ferr" role="alert"></span><span class="hint" id="bleft"></span></div>`;
@@ -713,14 +740,14 @@ function batchForm(stk){const m=S.batchMode;
       <div class="field"><label class="label" for="slug">Project name</label><input class="input mono" id="slug" value="${esc(stackKey(stk.members[0]))}"></div>
       <div class="field"><label class="label" for="note">Done means <em>required</em></label><textarea class="input" id="note" rows="2"></textarea></div></div></div>
     <div class="preview" id="pv"></div>${foot(I.merge+'Merge','primary')}`;
-  if(m==='reference')return `<div><div class="field"><label class="label" for="note">Why keep them</label><input class="input" id="note" placeholder="optional, applied to each"></div></div><div class="preview" id="pv"></div>${foot(I.ref+'File all','primary')}`;
+  if(m==='reference')return `<div><div class="field"><label class="label" for="note">Why keep them</label><input class="input" id="note" placeholder="optional, applied to each"></div>${secField('rsec')}</div><div class="preview" id="pv"></div>${foot(I.ref+'File all','primary')}`;
   if(m==='keep')return `<div><div class="field"><span class="label">Status</span>${seg('status',[['cooking','Cooking'],['open','Open']],'cooking')}</div><div class="field"><label class="label" for="note">Next step</label><input class="input" id="note" placeholder="optional, added to each"></div></div><div class="preview" id="pv"></div>${foot(I.pot+'Keep all','primary')}`;
   return `<div><div class="field"><label class="label" for="note">Why not</label><input class="input" id="note" placeholder="one line, written into each note"></div></div><div class="preview" id="pv"></div>${foot(I.x+'Kill all','danger')}`}
 function batchPreview(){const pv=$('#pv');if(!pv)return;const n=S.batch.size,m=S.batchMode,t=new Date().toLocaleDateString('sv');
   if(m==='merge'){const title=($('#mtitle')?.value||'merged').trim(),slug=title.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,60),then=segVal('then');
     const kb_=S.notes.live.filter(x=>S.batch.has(x.file)).reduce((a,x)=>a+x.size,0)/1024,size=kb_>=1024?(kb_/1024).toFixed(1)+' MB':Math.round(kb_)+' KB';
     pv.innerHTML=`<div class="label">What will happen</div><ol><li>Writes <span class="mono">RawNotes/${t}-${esc(slug)}.md</span> with ${n} sections, newest first · <b ${kb_>200?'class="err" title="A big note: consider merging smaller groups (untick some)"':''}>about ${size}</b></li><li>Moves the ${n} sources to <span class="mono">done/</span>, each pointing at the merge</li>${then==='promote'?`<li>Promotes the merged note → <b>Projects</b>, ${segVal('dest')==='experiments'?'as an open-ended experiment':'ship by '+fmtDate(shipDate())}</li>`:then==='reference'?'<li>Files the merged note in <span class="mono">reference/</span></li>':'<li>The merged note waits in the Inbox</li>'}</ol>`}
-  else pv.innerHTML=`<div class="label">What will happen</div><ol><li>${m==='kill'?`Kills ${n} notes and moves them to the Archive`:m==='keep'?`Sets ${n} notes to ${segVal('status')}`:`Copies ${n} notes into <span class="mono">reference/</span>, captures to done/`}</li><li>One undo step for all of them</li></ol>`}
+  else pv.innerHTML=`<div class="label">What will happen</div><ol><li>${m==='kill'?`Kills ${n} notes and moves them to the Archive`:m==='keep'?`Sets ${n} notes to ${segVal('status')}`+(S.notes.live.some(x=>S.batch.has(x.file)&&x.expired)?` <b class="err">· ${S.notes.live.filter(x=>S.batch.has(x.file)&&x.expired).length} expired: Keep will be refused for the whole batch</b>`:''):`Copies ${n} notes into <span class="mono">reference/</span>, captures to done/${secVal('rsec')?`; adds ${n} lines under <b>${esc(secVal('rsec'))}</b> in the index (summary: each note’s question)`:''}`}</li><li>One undo step for all of them</li></ol>`}
 function renderBatchSummary(){if(!S.sel||!S.sel.startsWith('stack:'))return;const k=S.sel.slice(6),stk=inboxModel().stacks[k];if(!stk||!$('#btable'))return;
   const n=S.batch.size;$('#bcount').textContent=`${n} of ${stk.members.length} ${stk.name} notes selected`;
   $('#bleft').textContent=n<stk.members.length?`${stk.members.length-n} unticked stay in the Inbox`:'';
@@ -732,12 +759,15 @@ async function applyBatch(){const files=[...S.batch],m=S.batchMode,go=$('#go'),e
   if(m==='merge'&&segVal('then')==='promote'&&!val('note')){err.textContent='Say what done means first.';$('#note').focus();return}
   go.disabled=true;err.textContent='';submitting=true;
   try{const r=m==='merge'?await api('/api/merge',{files,title:val('mtitle'),then:segVal('then'),dest:segVal('dest'),...shipBody(segVal('dest')),slug:val('slug'),note:val('note')})
-      :await api('/api/batch',{files,action:m,note:val('note'),status:segVal('status')});
-    S.undoCount++;await changed();S.expanded=null;S.armed=null;S.batch=new Set();S.sel=r.file||null;render();toast(r.msg,{undo:true})}
+      :await api('/api/batch',{files,action:m,note:val('note'),status:segVal('status'),...(m==='reference'&&secVal('rsec')?{section:secVal('rsec')}:{})});
+    S.undoCount++;await changed();S.expanded=null;S.armed=null;S.batch=new Set();S.sel=r.file||null;render();toast(withWarning(r),{undo:true,bad:!!r.warning})}
   catch(e){go.disabled=false;err.textContent=e.message}
   finally{submitting=false}}
 
 /* ---------- Archive ---------- */
+function refBanner(){const r=S.ref;if(!r||!r.has_index||!r.files.length)return '';
+  return `<details class="unidx" style="margin:0 0 10px"><summary><b>${r.files.length}</b> reference note${r.files.length===1?'':'s'} ${r.files.length===1?'isn’t':'aren’t'} in the index</summary>${r.files.map((f,i)=>`<div data-row data-sid="us${i}" style="margin:10px 0;padding-top:8px;border-top:1px solid var(--line)"><div><b>${esc(f.title)}</b> <span class="mono muted">${esc(f.file)}</span></div>
+    ${secField('us'+i)}<div class="field"><input class="input blurb" value="${esc(f.blurb)}" aria-label="One-line summary for ${esc(f.title)}" autocomplete="off"></div><button type="button" class="btn sm" data-idx="${esc(f.file)}">Add to index</button> <span class="err" role="alert"></span></div>`).join('')}</details>`}
 function renderArchive(){
   const done=S.notes.done,af=S.af,q=af.q.toLowerCase();
   const items=done.filter(n=>(af.fate==='all'||n.fate===af.fate)&&(!q||(n.title+' '+n.file).toLowerCase().includes(q)));
@@ -747,10 +777,16 @@ function renderArchive(){
   $('#main').innerHTML=`<div class="split"><div class="listpane"><div class="pane-h"><h1>Archive</h1><div class="sub">Everything decided · newest first · nothing is ever deleted</div>
     <div class="search">${I.search}<input id="q" type="search" aria-label="Search the archive" placeholder="Search the archive…" value="${esc(af.q)}" autocomplete="off" aria-keyshortcuts="/">${kbh('/')}</div>
     <div class="chips stack" role="group" aria-label="Outcome">${chip('all','All')}${chip('promoted','Promoted')}${chip('reference','Reference')}${chip('killed','Killed')}${chip('merged','Merged')}</div></div>
+    ${refBanner()}
     <div class="list" id="list">${items.length?items.map(n=>`<div class="item ${n.file===S.asel?'sel':''}" data-f="${esc(n.file)}" role="button" tabindex="0"${n.file===S.asel?' aria-current="true"':''}><span class="bar"></span><div><div class="t">${esc(n.title)}</div><div class="m">${st(n.fate)}<span>${esc(n.date)}</span></div></div><span></span></div>`).join(''):'<div class="empty">Nothing here.</div>'}</div></div>
     <div class="reader" id="reader"></div></div>`;
   $('#q').oninput=e=>{S.af.q=e.target.value;const p=e.target.selectionStart;renderArchive();const i=$('#q');i.focus();i.setSelectionRange(p,p)};
   $$('[data-fate]').forEach(b=>b.onclick=()=>{S.af.fate=b.dataset.fate;renderArchive()});
+  $$('[data-idx]').forEach(b=>b.onclick=async()=>{const row=b.closest('[data-row]'),sec=secVal(row.dataset.sid),err=row.querySelector('.err');
+    if(!sec){err.textContent='Pick a section.';return}b.disabled=true;err.textContent='';
+    try{const r=await api('/api/reference/index',{file:b.dataset.idx,section:sec,blurb:row.querySelector('input.blurb').value.trim()});S.undoCount++;await changed();render();toast(r.msg,{undo:true})}
+    catch(e){b.disabled=false;err.textContent=e.message}});
+  $$('.unidx select').forEach(sel=>wireSec(sel.parentNode,sel.id));
   $$('#list [data-f]').forEach(r=>{r.onclick=()=>selectArchive(r.dataset.f,true);r.onkeydown=e=>{if((e.key==='Enter'||e.key===' ')&&e.target===r){e.preventDefault();selectArchive(r.dataset.f,true)}}});
   renderArchiveReader()}
 function selectArchive(f,nav){S.asel=f;$$('#list [data-f]').forEach(r=>{const on=r.dataset.f===f;r.classList.toggle('sel',on);on?r.setAttribute('aria-current','true'):r.removeAttribute('aria-current')});renderArchiveReader();if(nav&&narrow()){document.body.classList.add('note');scrollTo(0,0)}}
@@ -768,19 +804,21 @@ async function renderArchiveReader(){const r=$('#reader');const n=S.notes.done.f
 /* ---------- Projects ---------- */
 function projectCards(){
   const inf=S.notes.inflight,ps=S.projects||[];const byPath={};ps.forEach(p=>byPath[p.path]=p);
-  const card=(id,title,f,p)=>({id,title,f,p,exp:(p?p.kind:f.dest)==='experiments',status:f?f.status:p.status,closed:f?f.done:CLOSED.includes(p.status)});
+  const card=(id,title,f,p)=>({id,title,f,p,exp:(p?p.kind:f.dest)==='experiments',status:f?f.status:p.status,closed:f?f.done:CLOSED.includes(p.status),cdate:(f&&f.closed)||(p&&p.closed)||''});
   const cards=inf.map(f=>{const p=f.project&&byPath[f.dest+'/'+f.project];return card(f.path,p?p.name:(f.project||f.title),f,p)});
   const used=new Set(cards.filter(c=>c.p).map(c=>c.p.path));
   ps.filter(p=>!used.has(p.path)).forEach(p=>cards.push(card(p.path,p.name,null,p)));
   return cards}
 const CLOSED=['done','shipped','dead'];
-const expChip=c=>c.exp?st('exp','Experiment'):'';
+const KIND_LABEL={learning:'Learning',templates:'Template'};
+const expChip=c=>c.exp?st('exp','Experiment'):c.p&&KIND_LABEL[c.p.kind]?st('plain',KIND_LABEL[c.p.kind]):'';
+const decide=f=>f&&!f.done&&f.days_left!==null&&f.days_left<0&&f.extensions>=f.max_extensions?st('late','Decide'):'';  // overdue with no extensions left
 const pq=p=>'name='+enc(p.name)+'&kind='+enc(p.kind);
 function ring(f){if(!f||f.days_left===null)return'';const l=f.days_left;
   let total=7;if(f.promoted&&f.due){const t=(new Date(f.due)-new Date(f.promoted))/864e5;if(t>0)total=t}
   const p=l<0?1:Math.min(1,Math.max(.04,1-l/total)),c=l<0?'var(--rust)':l<=2?'var(--gold)':'var(--green)';
   return `<div class="ring" style="background:conic-gradient(${c} ${p*360}deg,var(--sunk) 0)" title="${l<0?-l+' days late':l+' days left'}"><span><span>${Math.abs(l)}d<small>${l<0?'LATE':'LEFT'}</small></span></span></div>`}
-function ghChip(g){if(!g)return'';return g.pushed?(g.unpushed?st('soon','GH ↑'+g.unpushed):st('ok','On GitHub')):g.repo?st('late','Not pushed'):g.git?st('plain','Local git'):st('plain','No git')}
+function ghChip(g){if(!g)return'';if(g.not_on_github)return st('late','Not on GitHub');return g.pushed?(g.unpushed?st('soon','GH ↑'+g.unpushed):st('ok','On GitHub')):g.repo?st('late','Not pushed'):g.git?st('plain','Local git'):st('plain','No git')}
 function renderProjects(){
   if(!S.projects){const sc=scope('projects'),fresh=S.freshProjects;S.freshProjects=false;
     $('#main').innerHTML='<div class="scroll"><div class="pane-h" style="padding-left:0"><h1>Projects</h1><div class="sub">Loading projects…</div></div></div>';
@@ -794,10 +832,14 @@ function renderProjects(){
   const card=c=>{const dm=c.p?(c.p.done_defined?null:'＋ Define “done means”'):null;
     return `<button type="button" class="card pc ${c.id===S.psel?'sel':''} ${c.closed?'closed':''}" data-pid="${esc(c.id)}"><div class="top"><div class="ct">${esc(c.title)}</div>${c.f&&!c.f.done?ring(c.f):''}</div>
       <div class="dm ${dm?'miss':''}">${dm||esc(c.f&&c.f.title!==c.title?c.f.title:(c.p?c.p.path:c.f.path))}</div>
-      <div class="row">${expChip(c)}${c.closed?st(c.status==='dead'?'killed':'shipped',stLabel[c.status]||c.status):''}${c.p?ghChip(c.p.gh):c.exp?'':st('plain',c.f.dest)}${c.f&&c.f.due&&!c.f.done?`<span class="st plain">ship by ${c.f.due.slice(5)}</span>`:''}${c.f&&c.f.open_ended&&!c.f.done?`<span class="st plain">since ${esc((c.f.promoted||'').slice(5))}</span>`:''}</div></button>`};
+      <div class="row">${expChip(c)}${c.closed?st(c.status==='dead'?'killed':'shipped',stLabel[c.status]||c.status):''}${c.p?ghChip(c.p.gh):c.exp?'':st('plain',c.f.dest)}${decide(c.f)}${c.f&&c.f.due&&!c.f.done?`<span class="st plain">ship by ${esc(c.f.due.slice(5))}</span>`:''}${c.f&&c.f.open_ended&&!c.f.done?`<span class="st plain">since ${esc((c.f.promoted||'').slice(5))}</span>`:''}</div></button>`};
   // Left to right by urgency; empty columns are hidden. The drawer opens right after the selected card's column.
-  const cols=[['late','Overdue',late],['soon','Due this week',week],['ok','Later',later],['plain','No ship date',none],['exp','Experiments',exps],['plain','Closed',closed]].filter(x=>x[2].length);
-  const board=cols.map(([cls,label,cs])=>`<div class="col"><h2>${st(cls,label)} ${cs.length}</h2>${cs.map(card).join('')}</div>`
+  // Closed shows only what closed within the window (a project with no date counts as old); "Show all" lifts that
+  const win=S.notes.closed_window_days,cut=new Date(S.notes.today+'T00:00:00Z');cut.setUTCDate(cut.getUTCDate()-win);
+  const recent=closed.filter(c=>c.cdate&&c.cdate>=cut.toISOString().slice(0,10)),shownClosed=S.showAllClosed?closed:recent;
+  const toggle=closed.length>recent.length||S.showAllClosed?`<button type="button" class="btn sm" id="closedAll" style="margin:0 0 10px">${S.showAllClosed?`Last ${win} days only`:`Show all (${closed.length})`}</button>`:'';
+  const cols=[['late','Overdue',late],['soon','Due this week',week],['ok','Later',later],['plain','No ship date',none],['exp','Experiments',exps],['plain',S.showAllClosed?'Closed (all)':`Closed (last ${win} days)`,shownClosed,toggle]].filter(x=>x[2].length||x[3]);
+  const board=cols.map(([cls,label,cs,extra])=>`<div class="col"><h2>${st(cls,label)} ${cs.length}</h2>${extra||''}${cs.map(card).join('')}</div>`
     +(cs.some(c=>c.id===S.psel)?'<div class="card drawer" id="drawer"></div>':'')).join('')||'<div class="muted" style="font-size:13px">No projects yet. Promote a note to start one.</div>';
   $('#main').innerHTML=`<div class="scroll" id="pscroll"><div class="pane-h" style="padding-left:0;display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap"><div><h1>Projects</h1><div class="sub">Active work by its ship-by date, experiments open-ended</div></div>
     <button class="btn sm" id="pref" style="margin-left:auto">Refresh</button></div>
@@ -806,6 +848,7 @@ function renderProjects(){
     <div class="card tile"><div class="num">${nodod}</div><div class="lab">${st('killed','No “done means”')}</div></div>
     <div class="card tile"><div class="num">${gh}<span style="font-size:20px;color:var(--mute)">/${act.length}</span></div><div class="lab">${st('ok','On GitHub')}</div></div></div>
    <div class="board">${board}</div></div>`;
+  $('#closedAll')&&($('#closedAll').onclick=()=>{S.showAllClosed=!S.showAllClosed;render()});
   $('#pref').onclick=async()=>{S.projects=null;S.pdetail=null;S.stats=null;S.freshProjects=true;await loadNotes();render()};
   $$('[data-pid]').forEach(b=>b.onclick=()=>selectProject(b.dataset.pid,true));
   renderDrawer()}
@@ -817,38 +860,98 @@ function selectProject(id,nav){const ph=nav&&narrow();S.psel=id===S.psel&&!ph?nu
 async function renderDrawer(){const d=$('#drawer');if(!d)return;const c=projectCards().find(x=>x.id===S.psel);if(!c){d.innerHTML='';return}
   const sc=scope('drawer'),f=c.f,p=c.p,linked=!!(p&&p.linked);
   const clock=f&&f.open_ended?`<h3 class="sec label">Clock</h3><div style="font-size:13px">${f.promoted?`Promoted <b>${esc(f.promoted)}</b> · `:''}open-ended experiment, no ship-by date${f.done?` · <b>${esc(stLabel[f.status]||f.status)}</b>`:''}</div>`
-    :f?`<h3 class="sec label">Clock</h3><div style="font-size:13px">${f.promoted?`Promoted <b>${esc(f.promoted)}</b> · `:''}ship by <b>${esc(f.due)}</b>${f.done?` · <b>${esc(stLabel[f.status]||f.status)}</b>`:''}
+    :f?`<h3 class="sec label">Clock</h3><div style="font-size:13px">${f.promoted?`Promoted <b>${esc(f.promoted)}</b> · `:''}${f.due?`ship by <b>${esc(f.due)}</b>`:'no ship-by date'}${f.done?` · <b>${esc(stLabel[f.status]||f.status)}</b>${f.closed?` ${esc(f.closed)}`:''}`:''}
      ${!f.done&&f.days_left!==null?`<div class="clockbar"><i style="width:${f.days_left<0?100:Math.max(4,100-f.days_left/Math.max(7,f.days_left)*100)}%;background:${f.days_left<0?'var(--rust)':f.days_left<=2?'var(--gold)':'var(--green)'}"></i></div>`:''}</div>`
     :c.exp?`<h3 class="sec label">Clock</h3><div class="muted" style="font-size:13px">Open-ended experiment in <span class="mono">experiments/</span>, no ship-by date.</div>`
     :`<h3 class="sec label">Clock</h3><div class="muted" style="font-size:13px">Not on the clock. Add a <span class="mono">- due: YYYY-MM-DD</span> line to the header at the top of its NOTES.md to give it a ship-by date.</div>`;
-  const open=`<button class="btn" id="openf">${I.folder}Open folder</button>`;
+  const mk=p&&!linked&&p.gh&&p.gh.git&&!p.gh.origin&&isLocalPage()&&!narrow()?`<button class="btn" id="ghmake">${I.gh}Create private GitHub repo</button>`:'';  // this machine only, and no origin at all (GitHub or not): the server refuses otherwise
+  const open=`<button class="btn" id="openf">${I.folder}Open folder</button>`+mk;
+  // shipped (or done by hand) but still in its project folder, as before close out existed: it can still be closed out
+  const reopen=!!(p&&!linked&&c.closed&&['shipped','done'].includes(c.status));
   const acts=linked?`<div class="acts">${p.gh&&p.gh.repo?`<button class="btn" id="browse">${I.gh}Browse repo</button>`:''}${open}</div>`
-    :!c.closed?`<div class="acts"><button class="btn primary" data-pa="shipped">${I.check}Mark shipped</button>${!f||f.open_ended?'':`<button class="btn" data-pa="extend">${I.clock}+7 days</button>`}
+    :!c.closed?`<div class="acts"><button class="btn primary" data-pa="shipped">${I.check}Mark shipped</button>${!f||f.open_ended?'':f.extensions>=f.max_extensions?`<button class="btn" disabled>${I.clock}No more extensions</button>`:`<button class="btn" data-pa="extend">${I.clock}+7 days</button>`}
      ${p&&p.gh&&p.gh.repo?`<button class="btn" id="browse">${I.gh}Browse repo</button>`:open}<button class="btn" data-pa="kill" style="color:var(--rust-ink)">${I.x}Kill</button></div>`
-    :`<div class="acts">${p&&p.gh&&p.gh.repo?`<button class="btn" id="browse">${I.gh}Browse repo</button>`:''}${open}</div>`;
-  const head=`<h1 class="sr rh1">Projects</h1><button class="back" onclick="backToList()">‹ Projects</button><div style="display:flex;gap:6px;flex-wrap:wrap">${expChip(c)}${f&&!f.done&&f.days_left!==null?st(f.days_left<0?'late':f.days_left<=2?'soon':'ok',f.days_left<0?`${-f.days_left} days late`:`${f.days_left} days left`):''}${p?ghChip(p.gh):''}</div>
+    :`<div class="acts">${reopen?`<button class="btn primary" data-pa="shipped" title="Next round, Maintained or Archive">${I.check}Close out…</button>`:''}${p&&p.gh&&p.gh.repo?`<button class="btn" id="browse">${I.gh}Browse repo</button>`:''}${open}</div>`;
+  const head=`<h1 class="sr rh1">Projects</h1><button class="back" onclick="backToList()">‹ Projects</button><div style="display:flex;gap:6px;flex-wrap:wrap">${expChip(c)}${f&&!f.done&&f.days_left!==null?st(f.days_left<0?'late':f.days_left<=2?'soon':'ok',f.days_left<0?`${-f.days_left} days late`:`${f.days_left} days left`):''}${decide(f)}${p?ghChip(p.gh):''}</div>
     <h2>${esc(c.title)}</h2><span class="copy mono" data-copy="${esc(p?p.abs_path:S.notes.notes_dir.replace(/RawNotes$/,'')+f.path)}" tabindex="0" role="button">${I.copy}<span>~/Projects/${esc(p?p.path:f.path)}</span></span>
     ${linked?'<div class="flag" style="margin:12px 0 0"><b>Symlink.</b> This folder points somewhere else, so Triage shows it but will not edit it.</div>':''}`;
-  d.innerHTML=head+`<div id="dodbox"></div>`+clock+`<div id="pmore"></div>`+acts+`<div class="err" id="perr" role="alert" style="margin-top:8px"></div>`;
+  d.innerHTML=head+`<div id="dodbox"></div>`+clock+`<div id="pmore"></div><div id="pdeps"></div>`+acts+`<div id="pform"></div><div class="err" id="perr" role="alert" style="margin-top:8px;white-space:pre-wrap"></div>`;
   const box=$('#dodbox'),more=$('#pmore');
   wireCopy(d);
   d.querySelectorAll('[data-pa]').forEach(b=>b.onclick=()=>projectAction(c,b.dataset.pa,b));
   $('#browse')&&($('#browse').onclick=()=>openRepo(p.gh.repo,'','projects'));
+  $('#ghmake')&&($('#ghmake').onclick=async ev=>{const b=ev.currentTarget,pe=$('#perr');pe&&(pe.textContent='');b.disabled=true;b.textContent='Creating…';
+    try{const r=await api('/api/project/github',{name:p.name,kind:p.kind});await changed();render();toast(r.msg)}
+    catch(e){b.disabled=false;b.innerHTML=I.gh+'Create private GitHub repo';pe&&(pe.textContent=e.message)}});
   $('#openf')&&($('#openf').onclick=()=>api('/api/open',p?{name:p.name,kind:p.kind}:{path:f.path}).catch(e=>toast(e.message,{bad:true})));
   if(narrow()&&$('#openf'))$('#openf').style.display='none';
   if(!p){box.innerHTML='';return}
   box.innerHTML='<h3 class="sec label">Done means</h3><div class="muted">Loading…</div>';
   try{const j=await api('/api/project?'+pq(p),undefined,sc.signal);if(!sc.ok(d,box,more)||S.psel!==c.id)return;S.pdetail=j;
     const dr=S.dods[j.path];renderDod(j,dr&&dr.mode,dr&&dr.text);  // an unsaved edit comes back as it was left
-    const prs=j.prs&&j.prs.length?`<h3 class="sec label">Pull requests</h3><ul class="tl">${j.prs.slice(0,5).map(x=>`<li><a href="${esc(ghUrl(x.url))}" target="_blank" rel="noopener noreferrer">#${x.number} ${esc(x.title)}</a><span class="muted">${esc(x.mergedAt?'merged':x.state.toLowerCase())}</span></li>`).join('')}</ul>`:'';
+    const prs=j.prs&&j.prs.length?`<h3 class="sec label">Pull requests</h3><ul class="tl">${j.prs.slice(0,5).map(x=>`<li><a href="${esc(ghUrl(x.url))}" target="_blank" rel="noopener noreferrer">#${esc(x.number)} ${esc(x.title)}</a><span class="muted">${esc(x.mergedAt?'merged':x.state.toLowerCase())}</span></li>`).join('')}</ul>`:'';
     more.innerHTML=(j.commits.length?`<h3 class="sec label">Recent activity${j.branch?' · '+esc(j.branch):''}</h3><ul class="tl">${j.commits.slice(0,5).map(x=>`<li><span>${esc(x.title)}</span><span class="muted">${esc(x.date.slice(5))}</span></li>`).join('')}</ul>`:'')
-      +prs+`<h3 class="sec label">From ${esc(j.summary_source||'the project')}</h3><div style="font-size:13px;color:var(--ink2);white-space:pre-wrap;max-height:9.5em;overflow:hidden">${esc(j.summary)}</div>`}
+      +prs+`<h3 class="sec label">From ${esc(j.summary_source||'the project')}</h3><div style="font-size:13px;color:var(--ink2);white-space:pre-wrap;max-height:9.5em;overflow:hidden">${esc(j.summary)}</div>`;
+    if(!linked&&(!c.closed||reopen))loadDeps(c)}
   catch(e){if(aborted(e)||!sc.ok(d,box)||S.psel!==c.id)return;box.innerHTML=`<p class="err">${esc(e.message)}</p>`}}
-async function projectAction(c,a,btn){
-  let note='';if(a==='kill'){if(btn.dataset.confirm!=='1'){btn.dataset.confirm='1';btn.innerHTML=`${I.x}Really kill?`;return}}
+// "What points here": the read-only dependency check of a project folder. Blockers stop a move until fixed; to-dos are
+// what is left to do by hand after one (the app never writes outside the notes and projects folders).
+function depsHtml(d){const li=x=>`<li><b>${esc(x.where)}</b> <span class="muted det">${esc(x.detail)}</span><span class="mono fix">${esc(x.fix)}</span></li>`;
+  return `<h3 class="sec label">What points here</h3>`+(d.blockers.length
+    ?`<div class="flag" role="note"><b>${d.blockers.length} ${d.blockers.length>1?'things':'thing'} would break</b> if this folder moved. Fix ${d.blockers.length>1?'each':'it'} first:</div><ul class="deps" id="blockers">${d.blockers.map(li).join('')}</ul>`
+    :`<div class="muted" style="font-size:13px">Nothing blocks a move to <span class="mono">${esc(d.dest)}/</span>.</div>`)
+    +(d.todos.length?`<div class="label" style="margin-top:8px">After a move, by hand</div><ul class="deps" id="todos">${d.todos.map(li).join('')}</ul>`:'')}
+async function loadDeps(c,to){const box=$('#pdeps');if(!box||!c.p)return;const sc=scope('deps');
+  if(!box.innerHTML)box.innerHTML='<h3 class="sec label">What points here</h3><div class="muted" style="font-size:13px">Checking…</div>';
+  try{const d=await api('/api/project/deps?'+pq(c.p)+(to?'&to='+enc(to):''),undefined,sc.signal);if(!sc.ok(box)||S.psel!==c.id)return;
+    S.deps={...d,id:c.id};box.innerHTML=depsHtml(d);return d}
+  catch(e){if(aborted(e))return;S.depsErr={id:c.id,msg:e.message};if(!sc.ok(box))return;box.innerHTML=`<h3 class="sec label">What points here</h3><p class="err">${esc(e.message)}</p>`}}
+// Shipping a project folder is a close out: Next round (stays), Maintained or Archive (the folder moves), with the
+// server's suggestion preselected. A move is refused while anything in "What points here" blocks it.
+const OUTCOMES=[['next','Next round','stays, new due'],['maintained','Maintained','moves to maintained/'],['archive','Archive','moves to archive/']];
+function closeOut(c){const box=$('#pform');if(!box)return;const pe=$('#perr');pe&&(pe.textContent='');
+  const p=c.p,exp=p.kind==='experiments',known=S.deps&&S.deps.id===c.id?S.deps.suggest:null;let touched=false,failed=null;  // failed: why the last lookup didn't answer
+  box.innerHTML=`<form id="pf" class="closeout" style="margin:10px 0;padding:12px;border-radius:10px;border:1px solid var(--green)"><div class="field"><span class="label" id="olab">What happens to it now?</span>
+    ${seg('outcome',OUTCOMES,known||'archive')}<div class="muted" id="osug" style="font-size:12px;margin-top:4px">${known?`Suggested: <b>${esc(known)}</b>${known==='maintained'?' (it has a GitHub origin)':' (no GitHub origin)'}`:'Checking…'}</div></div>
+    <div id="cnext"><div class="field"><label class="label" for="cdone">Done means, next round <em>required</em></label><textarea class="input" id="cdone" rows="2" maxlength="600" placeholder="What does shipped look like this time?"></textarea></div>${exp?'':shipBy([3,7,14,30])}</div>
+    <div id="cmove" style="font-size:13px"></div>
+    <div class="acts"><button class="btn primary" type="submit" id="cgo">${I.check}Ship it</button><button class="btn" type="button" id="pcancel">Cancel</button></div></form>`;
+  $('[data-seg=outcome]').setAttribute('aria-labelledby','olab');
+  const sync=()=>{const o=segVal('outcome'),next=o==='next',d=S.deps&&S.deps.id===c.id&&S.deps.to===o?S.deps:null;
+    $('#cnext').style.display=next?'':'none';
+    $('#cmove').innerHTML=next?`<span class="muted">Stays in <span class="mono">${esc(p.kind)}/</span>; this round goes under <b>## Rounds</b> in its NOTES.md.</span>`
+      :!d?(failed?`<span class="err">Couldn't check what points here (${esc(failed)}). It is checked again when you send this.</span>`:'<span class="muted">Checking what points here…</span>')
+      :d.blockers.length?`<span class="err">Blocked: ${d.blockers.length} ${d.blockers.length>1?'things point':'thing points'} at this folder (see What points here). Fix ${d.blockers.length>1?'them':'it'} first.</span>`
+      :`Moves to <span class="mono">${esc(d.dest)}/</span>${d.todos.length?` · ${d.todos.length} to-do${d.todos.length>1?'s':''} for after, written to its NOTES.md`:''}`;
+    if(!next&&d&&d.undo_warning)$('#cmove').insertAdjacentHTML('beforeend',`<div class="err" id="cundo" style="margin-top:4px">${esc(d.undo_warning)}</div>`);  // too big to check: Undo will refuse
+    $('#cgo').disabled=!next&&(d?!!d.blockers.length:!failed)};
+  const lookup=to=>{S.depsErr=null;return loadDeps(c,to).then(d=>{failed=d?null:(S.depsErr&&S.depsErr.id===c.id&&S.depsErr.msg)||'no answer';return d})};
+  const check=o=>{if(o==='next')return sync();lookup(o).then(()=>{if($('#pf'))sync()})};
+  wireSegs(box,()=>{touched=true;pe&&(pe.textContent='');check(segVal('outcome'))});wireShipBy(box);
+  $('#pcancel').onclick=()=>{box.innerHTML='';loadDeps(c)};
+  lookup().then(d=>{if(!$('#pf'))return;
+    if(!d){$('#osug').innerHTML=`<span class="err">Couldn't check what points here: ${esc(failed)}</span>`;return sync()}
+    $('#osug').innerHTML=`Suggested: <b>${esc(d.suggest)}</b>${d.suggest==='maintained'?' (it has a GitHub origin)':' (no GitHub origin)'}`;
+    if(!touched)$$('[data-seg=outcome] button').forEach(b=>b.classList.toggle('on',b.dataset.v===d.suggest));check(segVal('outcome'))});
+  sync();
+  $('#pf').onsubmit=async ev=>{ev.preventDefault();const o=segVal('outcome'),btn=$('#cgo');
+    const body={name:p.name,kind:p.kind,action:'shipped',outcome:o,...(o==='next'?{done:$('#cdone').value.trim(),...shipBody(p.kind)}:{})};
+    btn.disabled=true;
+    try{const r=await api('/api/project/close',body);S.undoCount++;await changed();render();toast(r.msg,{undo:true,list:(r.todos||[]).map(t=>t.fix)})}
+    catch(e){btn.disabled=false;pe&&(pe.textContent=e.message);if(o!=='next')lookup(o).then(()=>{if($('#pf'))sync()})}}}
+function projectAction(c,a,btn){
+  if(a==='shipped')return c.p?closeOut(c):sendProject(c,a,'',btn);
+  // pushing the date and killing both ask why first; the reason is written into the project file
+  const box=$('#pform');if(!box)return;const ext=a==='extend',pe=$('#perr');pe&&(pe.textContent='');
+  box.innerHTML=`<form id="pf" style="margin:10px 0;padding:12px;border-radius:10px;border:1px solid ${ext?'var(--gold)':'var(--rust)'}"><div class="field"><label class="label" for="pwhy">${ext?'Why do you need more time? <em>required, 10+ characters</em>':'Why are you killing it? <em>required</em>'}</label>
+    <textarea class="input" id="pwhy" rows="2" maxlength="300"></textarea></div>${!ext&&c.p?`<div class="muted" style="font-size:12px;margin:-4px 0 8px">The folder moves to <span class="mono">archive/${esc(c.p.name)}_abandoned/</span> (refused while anything in What points here blocks it).</div>`:''}
+    <div class="acts"><button class="btn ${ext?'primary':''}" type="submit" ${ext?'':'style="color:var(--rust-ink)"'}>${ext?I.clock+'Push 7 days':I.x+'Kill it'}</button><button class="btn" type="button" id="pcancel">Cancel</button></div></form>`;
+  $('#pwhy').focus();$('#pcancel').onclick=()=>{box.innerHTML=''};
+  $('#pf').onsubmit=ev=>{ev.preventDefault();sendProject(c,a,$('#pwhy').value.trim(),$('#pf button[type=submit]'))}}
+async function sendProject(c,a,note,btn){
   btn.disabled=true;
-  try{const r=await api('/api/project/status',c.f?{path:c.f.path,action:a,days:7,note}:{name:c.p.name,kind:c.p.kind,action:a,note});S.undoCount++;await changed();render();toast(r.msg,{undo:true})}
-  catch(e){btn.disabled=false;const pe=$('#perr');pe&&(pe.textContent=e.message)}}
+  try{const r=await api('/api/project/status',c.f?{path:c.f.path,action:a,days:7,note}:{name:c.p.name,kind:c.p.kind,action:a,note});S.undoCount++;await changed();render();toast(r.msg,{undo:true,list:(r.todos||[]).map(t=>t.fix)})}
+  catch(e){btn.disabled=false;const pe=$('#perr');pe&&(pe.textContent=e.message);if(a==='kill'&&c.p)loadDeps(c,'abandoned')}}
 // "Done means" editor: edit -> review before/after -> confirm (writes only on confirm; refused if the file changed).
 // The text being edited lives in S.dods, so a refresh, a re-render or a trip to another page doesn't lose it.
 function renderDod(p,mode,draft){const el=$('#dodbox');if(!el)return;const d=p.done,file=d.source||'NOTES.md',old=d.defined?d.text:'',key=p.path;
@@ -889,8 +992,8 @@ async function renderRepo(){const rs=S.repo,{name,path}=rs,sc=scope('repo');
       html=bar(r.url)+`<h1 class="title" style="font-size:38px">${r.private?'🔒 ':''}${esc(r.name)}</h1><p class="muted">${esc(r.description||'No description')} · default branch <code>${esc(r.default_branch)}</code> · last push ${esc(r.pushed_at)}${r.archived?' · archived':''}</p>
       <div class="md"><h2>Files</h2>${files(j.tree)}${note('tree')}<h2>${j.readme?esc(j.readme.name):'README'}</h2>${j.readme?md(j.readme.text,3):'<p class="muted">No README.</p>'}
       <h2>Recent commits</h2>${j.commits.length?'<ul>'+j.commits.map(c=>`<li>${esc(c.title)} <span class="muted">· ${esc(c.date)} · ${esc(c.sha)} · ${esc(c.author)}</span></li>`).join('')+'</ul>':'<p class="muted">No commits.</p>'}${note('commits')}
-      <h2>Pull requests</h2>${j.prs.length?'<ul>'+j.prs.map(x=>`<li>#${x.number} ${esc(x.title)} ${st(x.state==='merged'?'promoted':x.state==='open'?'cooking':'plain',x.state)} <span class="muted">${esc(x.updated)}</span></li>`).join('')+'</ul>':'<p class="muted">No pull requests.</p>'}${note('prs')}
-      <h2>Open issues</h2>${j.issues.length?'<ul>'+j.issues.map(x=>`<li>#${x.number} ${esc(x.title)} <span class="muted">${esc(x.updated)} · ${x.comments} comment${x.comments===1?'':'s'}</span></li>`).join('')+'</ul>':'<p class="muted">No open issues.</p>'}${note('issues')}</div>`}
+      <h2>Pull requests</h2>${j.prs.length?'<ul>'+j.prs.map(x=>`<li>#${esc(x.number)} ${esc(x.title)} ${st(x.state==='merged'?'promoted':x.state==='open'?'cooking':'plain',x.state)} <span class="muted">${esc(x.updated)}</span></li>`).join('')+'</ul>':'<p class="muted">No pull requests.</p>'}${note('prs')}
+      <h2>Open issues</h2>${j.issues.length?'<ul>'+j.issues.map(x=>`<li>#${esc(x.number)} ${esc(x.title)} <span class="muted">${esc(x.updated)} · ${esc(x.comments)} comment${x.comments===1?'':'s'}</span></li>`).join('')+'</ul>':'<p class="muted">No open issues.</p>'}${note('issues')}</div>`}
     else{const segs=path.split('/');const crumbs=`<div class="crumbs"><a href="#" data-rp="">${esc(name)}</a>`+segs.map((s,i)=>i===segs.length-1?` / <b>${esc(s)}</b>`:` / <a href="#" data-rp="${esc(segs.slice(0,i+1).join('/'))}">${esc(s)}</a>`).join('')+'</div>';
       let body;if(j.kind==='dir')body=files(j.entries);else if(j.too_large)body=`<p class="muted">Too large to show here (${fmtSize(j.size)}).</p>`;else if(j.binary||j.kind==='other')body=`<p class="muted">${j.binary?'Binary file':'Not a regular file'}; open it on GitHub.</p>`;
       else body=/\.(md|markdown)$/i.test(j.name)?`<div class="md">${md(j.text,2)}</div>`:`<div class="md"><pre>${esc(j.text)}</pre></div>`;
@@ -906,11 +1009,11 @@ function renderPulse(){
   let heat='<p class="muted">Loading GitHub activity…</p>',bars='';
   if(a&&a.weeks){let lm=-1;const day=d=>new Date(d+'T00:00');
     const months=a.weeks.map((w,i)=>{const m=day(w[0].date).getMonth();if(m===lm)return'';lm=m;return`<span style="grid-column:${i+1}">${M[m]}</span>`}).join('');
-    const cells=a.weeks.map((w,i)=>w.map(d=>`<i class="l${d.level}${d.date===today?' today':''}" style="grid-column:${i+1};grid-row:${day(d.date).getDay()+1}" title="${d.count} commit${d.count===1?'':'s'} on ${fmtDate(d.date)}"></i>`).join('')).join('');
+    const cells=a.weeks.map((w,i)=>w.map(d=>`<i class="l${esc(d.level)}${d.date===today?' today':''}" style="grid-column:${i+1};grid-row:${day(d.date).getDay()+1}" title="${esc(d.count)} commit${d.count===1?'':'s'} on ${esc(fmtDate(d.date))}"></i>`).join('')).join('');
     heat=`<div class="hmwrap" id="hmwrap"><div class="hmonths" style="grid-template-columns:repeat(${a.weeks.length},13px)">${months}</div><div class="hm">${cells}</div></div>
       <div class="legend" style="margin-top:10px;justify-content:flex-end">${a.error?`<span class="err" style="margin-right:auto">Showing saved data: ${esc(a.error)}</span>`:''}Less ${[0,1,2,3,4].map(n=>`<i style="background:var(--g${n});margin:0"></i>`).join('')} More <button class="btn sm" id="actRef">Refresh</button></div>`;
     const mx=Math.max(1,...a.repos.map(r=>r.count));
-    bars=a.repos.length?a.repos.slice(0,10).map(r=>`<button class="b" data-repo="${esc(r.name)}" title="${esc(r.name)} · ${r.count} commits · open read-only view"><span>${r.private?'🔒 ':''}${esc(r.name.split('/')[1])}</span><span><div class="fill" style="width:${r.count/mx*100}%"></div></span><span class="n">${r.count}</span></button>`).join(''):'<p class="muted">No commits pushed in the last 30 days.</p>'}
+    bars=a.repos.length?a.repos.slice(0,10).map(r=>`<button class="b" data-repo="${esc(r.name)}" title="${esc(r.name)} · ${esc(r.count)} commits · open read-only view"><span>${r.private?'🔒 ':''}${esc(r.name.split('/')[1])}</span><span><div class="fill" style="width:${r.count/mx*100}%"></div></span><span class="n">${esc(r.count)}</span></button>`).join(''):'<p class="muted">No commits pushed in the last 30 days.</p>'}
   else if(a&&a.error)heat=`<p class="err">GitHub activity unavailable: ${esc(a.error)}</p><button class="btn sm" id="actRef">Retry</button>`;
   const w=s.weeks||[],fm=Math.max(1,...w.flatMap(x=>[x.captured,x.decided])),H=150,bw=20,gap=Math.max(52,Math.floor(520/Math.max(1,w.length)));
   const chart=`<svg class="chart" width="100%" viewBox="0 0 ${50+w.length*gap} 200" role="img" aria-label="Notes captured and decided per week; a table follows">
@@ -924,6 +1027,7 @@ function renderPulse(){
   <div class="tiles"><div class="card tile"><div class="num">${a&&a.total!==undefined?a.total:'–'}</div><div class="lab">commits on GitHub this year</div></div>
    <div class="card tile"><div class="num">${a&&a.active_days!==undefined?a.active_days:'–'}</div><div class="lab">active days</div></div>
    <div class="card tile"><div class="num">${a&&a.streak!==undefined?a.streak:'–'}<span style="font-size:20px;color:var(--mute)">d</span></div><div class="lab">current streak</div></div>
+   <div class="card tile"><div class="num" style="color:${s.expired?'var(--rust)':'inherit'}">${s.expired==null?'–':s.expired}</div><div class="lab">expired in the Inbox${s.stale!=null?` · ${s.stale} stale`:''} · decide or kill</div></div>
    <div class="card tile"><div class="num" style="color:${s.median_wait>7?'var(--rust)':'inherit'}">${s.median_wait==null?'–':s.median_wait}${s.median_wait==null?'':'<span style="font-size:20px;color:var(--mute)">d</span>'}</div><div class="lab">${s.error?`couldn't load: ${esc(s.error)}`:s.median_wait==null?'median wait in the Inbox (goal ≤ 7) · Inbox is empty':`median wait in the Inbox (goal ≤ 7) · oldest ${s.oldest}d · ${s.live} notes`}</div></div></div>
   <div class="card panel" style="margin-bottom:16px"><h2>Commits on GitHub</h2><div class="cap">Your commits on default branches, counted by commit date (not by when they were pushed), last 52 weeks · private repos included · local-only repos never show</div>${a&&a.notice?`<div class="flag" role="note">${esc(a.notice)} The graph may be missing some commits.</div>`:''}${heat}</div>
   <div class="pgrid"><div class="card panel"><h2>Inbox flow</h2><div class="cap">Notes captured vs. notes decided, per week (decisions from triage.log)</div>

@@ -1,26 +1,86 @@
 """Shared fixture for the v2.05 regression suites: a real server on a temp projects root, never the real notes."""
+import atexit
 import json
 import os
 import shutil
 import tempfile
 import threading
 import unittest
+import unittest.mock
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
+from unittest import mock
 
+import depcheck
 import server
+
+
+TEST_EMAIL = "tester@users.noreply.github.com"
+
+# The real config folder, worked out the way server.py does before anything here patches HOME. No test may touch it:
+# importing testkit (every test module does) points server.CONFIG_DIR, and RAWTRIAGE_CONFIG_DIR for any server or CLI a
+# test starts as a subprocess, at a throwaway folder for the whole run; fixtures then use one of their own per test.
+# test_zz_isolation (run last) fails if the real folder changed during the run.
+REAL_CONFIG_DIR = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "rawnotes-triage")
+
+
+def config_dir_state(path=REAL_CONFIG_DIR):
+    """What a folder looks like (exists, and each entry's size and mtime), to tell whether anything touched it."""
+    if not os.path.lexists(path): return None
+    out = {".": os.lstat(path).st_mtime_ns}
+    for root, dirs, files in os.walk(path):
+        for f in dirs + files:
+            st = os.lstat(os.path.join(root, f)); out[os.path.relpath(os.path.join(root, f), path)] = (st.st_size, st.st_mtime_ns)
+    return out
+
+
+REAL_CONFIG_AT_START = config_dir_state()
+SESSION_DIR = tempfile.mkdtemp(prefix="rt-test-session-")
+atexit.register(shutil.rmtree, SESSION_DIR, ignore_errors=True)
+os.environ["RAWTRIAGE_CONFIG_DIR"] = server.CONFIG_DIR = os.path.join(SESSION_DIR, "config")
+
+# The dependency check (close out) never looks at this machine in tests: no real systemd units, ~/.local/bin, crontab,
+# ~/.claude or running processes. Every test sees an empty fake home and /proc unless it sets server.DEPS itself; a
+# folder move never runs the real sync-apps either (tests that want it point server.SYNC_APPS at a stub).
+FAKE_DEPS_HOME = os.path.join(SESSION_DIR, "deps-home"); FAKE_PROC = os.path.join(SESSION_DIR, "deps-proc")
+os.makedirs(FAKE_DEPS_HOME); os.makedirs(FAKE_PROC)
+server.DEPS = depcheck.Sources(FAKE_DEPS_HOME, proc=FAKE_PROC, crontab=lambda: "")
+server.SYNC_APPS = os.path.join(SESSION_DIR, "no-sync-apps")  # an absolute path that doesn't exist: never found on PATH
+
+
+def isolate_git(case, email=TEST_EMAIL):
+    """For the rest of `case`, git sees a throwaway HOME and global config (a fixture identity, hooks off), never the
+    real ~/.gitconfig, its hooks (gitleaks) or the system config, and never runs auto gc or maintenance. Returns the config file, for tests that change it."""
+    home = os.path.realpath(tempfile.mkdtemp(prefix="rt-githome-")); case.addCleanup(shutil.rmtree, home, ignore_errors=True)
+    cfg = os.path.join(home, ".gitconfig")
+    with open(cfg, "w", encoding="utf-8") as fh:
+        # no auto gc / maintenance: it could write .git/objects/maintenance.lock (or packs) between a test's snapshots
+        fh.write(f"[user]\n\tname = Test User\n\temail = {email}\n[core]\n\thooksPath = /dev/null\n"
+                 "[gc]\n\tauto = 0\n\tautoDetach = false\n[maintenance]\n\tauto = false\n")
+    p = mock.patch.dict(os.environ, {"HOME": home, "XDG_CONFIG_HOME": os.path.join(home, ".config"), "GIT_CONFIG_GLOBAL": cfg,
+                                     "GIT_CONFIG_NOSYSTEM": "1"})
+    p.start(); case.addCleanup(p.stop)
+    for var in ("GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL", "GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME", "EMAIL"): os.environ.pop(var, None)
+    return cfg
 
 
 class Fixture(unittest.TestCase):
     """HTTP server bound to a temporary RawNotes + projects root. Helpers read/write only inside it."""
+    relax_limits = True
+
     def setUp(self):
+        self.gitconfig = isolate_git(self)
         self.tmp = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self.notes = os.path.join(self.tmp, "RawNotes"); os.makedirs(self.notes)
         self.saved = (server.NOTES, server.PROJECTS, server.log, server.LOG_PATH, server.CONFIG_DIR)
-        server.CONFIG_DIR = os.path.join(self.tmp, "config")  # never read or write the real saved GitHub token
+        server.CONFIG_DIR = os.path.join(self.tmp, "config")  # never read or write the real config.json or saved GitHub token
+        p = mock.patch.dict(os.environ, {"RAWTRIAGE_CONFIG_DIR": server.CONFIG_DIR}); p.start(); self.addCleanup(p.stop)  # nor a server a test spawns
         server.forget_github()
+        p = mock.patch.object(server, "SHIP_NEEDS_GITHUB", ()); p.start(); self.addCleanup(p.stop)  # the GitHub gate on Ship has its own tests (test_github_push.py)
+        if self.relax_limits:  # fixtures use fixed 2026-10 dates: keep the Inbox limits from expiring them as the real date moves on
+            p = unittest.mock.patch.dict(server.LIMIT_DEFAULTS, {"inbox_limit_days": 36500, "max_keeps": 1000}); p.start(); self.addCleanup(p.stop)
         server.NOTES, server.PROJECTS = self.notes, self.tmp
         server.log = lambda msg: None  # never write test actions into the real triage.log
         server.LOG_PATH = os.path.join(self.tmp, "triage.log")

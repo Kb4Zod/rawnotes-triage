@@ -44,7 +44,7 @@ class Header(unittest.TestCase):
         self.assertEqual(out.count("- status: quoted"), 1); self.assertIn("- due: 2026-10-30", out)
         self.assertLess(out.index("- due: 2027-01-01"), out.index("## What's"))
 
-    def test_header_after_a_subtitle_paragraph_still_counts(self):  # real notes look like this (eight-rings handoff)
+    def test_header_after_a_subtitle_paragraph_still_counts(self):  # real notes look like this (a handoff note)
         t = "# The Eight Rings\n\n*A subtitle.*\n\n- date: 2026-10-17\n- due: 2026-10-25\n- status: promoted\n\n## Q\n"
         self.assertEqual((field(t, "due"), field(t, "status")), ("2026-10-25", "promoted"))
 
@@ -74,6 +74,12 @@ class Review2(unittest.TestCase):
         self.assertEqual(set_field(t, "status", "dead"), "---\ntags: [a]\n---\n# T\n\n- date: x\n- status: dead\n")
         self.assertEqual(set_field("---\ntags: [a]\n---\n# T\n", "status", "dead"), "---\ntags: [a]\n---\n# T\n\n- status: dead\n")
         self.assertEqual(set_field("---\nnever closed\n# T\n", "status", "dead").count("- status: dead"), 1)
+
+    def test_every_header_key_the_app_writes_is_hidden_from_the_reader_body(self):
+        keys = ("date", "status", "type", "promoted", "due", "shipped", "extensions", "closed", "kept", "keeps", "restored", "github")
+        self.assertEqual(set(notemeta.SHOWN_KEYS), set(keys))
+        t = "# T\n\n" + "".join(f"- {k}: v\n" for k in keys) + "- owner: me\n\nBody\n"
+        self.assertEqual(notemeta.note_body(t), "- owner: me\n\nBody")
 
     def test_question_with_a_fenced_heading_is_not_cut(self):
         q = "Q1\n\n```\n## foo\n```\n\nafter"
@@ -107,7 +113,7 @@ class HeaderThroughTheApp(Fixture):
         path = os.path.join(self.notes, "2026-10-01-blank.md")
         with open(path, "w") as fh: fh.write("# X\n- status:\n- type: research\n")
         self.post("/api/action", {"file": "2026-10-01-blank.md", "action": "keep"})
-        self.assertEqual(open(path).read(), "# X\n- status: cooking\n- type: research\n")
+        self.assertEqual(open(path).read(), "# X\n- status: cooking\n- type: research\n- kept: %s\n- keeps: 1\n" % server.today().isoformat())
 
     def test_note_without_a_header_gets_one(self):
         path = os.path.join(self.notes, "2026-10-01-bare.md")

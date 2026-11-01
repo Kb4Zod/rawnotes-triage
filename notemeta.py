@@ -9,7 +9,7 @@ import re
 
 HEAD_LINE = re.compile(r"^- ([A-Za-z][\w-]*):([ \t]*)(.*)$")
 SECTION = re.compile(r"^#{2,6}\s")
-SHOWN_KEYS = ("date", "status", "type", "promoted", "due", "shipped")  # the page shows these itself
+SHOWN_KEYS = ("date", "status", "type", "promoted", "due", "shipped", "extensions", "closed", "kept", "keeps", "restored", "github")  # the page shows these itself
 PROSE_MAX = 3  # at most this many non-blank lines (a subtitle, say) may sit between the title and the header
 
 
@@ -106,13 +106,33 @@ def title_of(text, fname):
     return m.group(1).strip() if m else fname
 
 
-def append_outcome(text, line):
-    """Add `line` to the end of the ## Outcome section (adding the section at the end of the note if it has none)."""
-    m = re.search(r"^## Outcome[ \t]*$", text, re.M)
-    if not m: return text.rstrip("\n") + f"\n\n## Outcome\n\n{line}\n"
+def append_to_section(text, heading, line):
+    """Add `line` to the end of the `## heading` section (adding the section at the end of the note if it has none)."""
+    m = re.search(r"^## " + re.escape(heading) + r"[ \t]*$", text, re.M)
+    if not m: return text.rstrip("\n") + f"\n\n## {heading}\n\n{line}\n"
     nxt = re.compile(r"^## ", re.M).search(text, m.end())
     if not nxt: return text.rstrip("\n") + f"\n{line}\n"
     return text[:nxt.start()].rstrip("\n") + f"\n{line}\n\n" + text[nxt.start():]
+
+
+def append_outcome(text, line):
+    """Add `line` to the end of the ## Outcome section (adding the section at the end of the note if it has none)."""
+    return append_to_section(text, "Outcome", line)
+
+
+DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+KILLED_RE = re.compile(r"^\*\*Killed (\d{4}-\d{2}-\d{2}):\*\*", re.M)
+
+
+def closed_date(text):
+    """When a project was closed: its `closed:` header, else `shipped:`, else the date in `**Killed YYYY-MM-DD:**`
+    under ## Outcome, else ""."""
+    for key in ("closed", "shipped"):
+        v = field(text, key)
+        if DATE_RE.fullmatch(v): return v
+    out = text.split("## Outcome", 1)[1] if "## Outcome" in text else ""
+    m = KILLED_RE.search(out)
+    return m.group(1) if m else ""
 
 
 QUESTION_HEAD = re.compile(r"^##[ \t]+What.?s the question[^\n]*$", re.M | re.I)

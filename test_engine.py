@@ -114,7 +114,7 @@ class Faults(Fixture):
         self.post("/api/action", {"file": "2026-10-02-b.md", "action": "promote", "dest": "active", "note": "x", "due_days": 3}); server._undo.clear()
         mid = self.snapshot()
         self.fail_nth("os.replace", 1)
-        self.post("/api/project/status", {"path": "active/b/NOTES.md", "action": "shipped"}, ok=False)
+        self.post("/api/project/status", {"path": "active/b/NOTES.md", "action": "extend", "note": "Waiting on the parts."}, ok=False)
         self.assertEqual((self.snapshot(), server._undo), (mid, []))
 
     # ---- 1: partial failure stays recoverable
@@ -208,21 +208,21 @@ class Faults(Fixture):
             try: self.post("/api/done", {"name": f"r{i}", "text": f"New {i}", "expected": "Old."})
             except Exception as e: errors.append(e)
         def ship(i):
-            try: self.post("/api/project/status", {"name": f"r{i}", "action": "shipped"})
+            try: self.post("/api/project/status", {"path": f"active/r{i}/NOTES.md", "action": "extend", "note": "Waiting on the parts."})
             except Exception as e: errors.append(e)
         ts = [threading.Thread(target=f, args=(i,)) for i in range(12) for f in (edit, ship)]
         [t.start() for t in ts]; [t.join() for t in ts]
         self.assertEqual(errors, [])
         for i in range(12):
             text = open(os.path.join(self.tmp, "active", f"r{i}", "NOTES.md")).read()
-            self.assertIn(f"definition of done: New {i}", text); self.assertIn("- status: shipped", text)
+            self.assertIn(f"definition of done: New {i}", text); self.assertIn("- extensions: 1", text)
         self.assertEqual(len(server._undo), server.UNDO_MAX)  # 24 changes, the newest UNDO_MAX kept
 
     def test_done_means_refuses_a_stale_edit_after_a_status_change(self):
-        self.project("s", notes="# S\n\n- status: promoted\n\n- definition of done: Old.\n")
-        self.post("/api/project/status", {"name": "s", "action": "shipped"})
+        self.project("s", notes="# S\n\n- status: promoted\n- due: 2026-12-01\n\n- definition of done: Old.\n")
+        self.post("/api/project/status", {"path": "active/s/NOTES.md", "action": "extend", "note": "Waiting on the parts."})
         self.post("/api/done", {"name": "s", "text": "Mine", "expected": "Something else"}, ok=False)
-        self.assertIn("- status: shipped", open(os.path.join(self.tmp, "active", "s", "NOTES.md")).read())
+        self.assertIn("- extensions: 1", open(os.path.join(self.tmp, "active", "s", "NOTES.md")).read())
 
     # ---- every page mutation can be undone
     def test_every_mutation_endpoint_pushes_an_undo_step(self):
@@ -230,12 +230,13 @@ class Faults(Fixture):
         steps = [("/api/action", {"file": "2026-10-01-a.md", "action": "keep", "note": "n"}),
                  ("/api/batch", {"files": ["2026-10-02-b.md", "2026-10-03-c.md"], "action": "kill"}),
                  ("/api/restore", {"file": "done/2026-10-02-b.md"}),
-                 ("/api/project/status", {"name": "p", "action": "shipped"}),
-                 ("/api/done", {"name": "p", "text": "New", "expected": "Old."})]
+                 ("/api/project/status", {"path": "active/p/NOTES.md", "action": "extend", "note": "Waiting on the parts."}),
+                 ("/api/done", {"name": "p", "text": "New", "expected": "Old."}),
+                 ("/api/project/close", {"name": "p", "outcome": "archive"})]
         for i, (path, body) in enumerate(steps, 1):
             self.post(path, body); self.assertEqual(len(server._undo), i, path)
         for _ in steps: self.post("/api/undo", {})
-        self.assertEqual(self.snapshot().keys() - self.before.keys(), {"active/", "active/p/", "active/p/NOTES.md"})
+        self.assertEqual(self.snapshot().keys() - self.before.keys(), {"active/", "active/p/", "active/p/NOTES.md"})  # archive/ made by the close is gone again
 
 
 class UndoContainment(Fixture):
@@ -259,20 +260,20 @@ class UndoContainment(Fixture):
 
     def shipped_demo(self):
         p = self.project("demo", notes="# Demo\n\n- status: promoted\n- due: 2026-12-01\n")
-        self.post("/api/project/status", {"path": "active/demo/NOTES.md", "action": "shipped"})
+        self.post("/api/project/status", {"path": "active/demo/NOTES.md", "action": "extend", "note": "Waiting on the parts."})  # an edit in place
         return p
 
     def test_undo_refuses_when_the_project_folder_became_a_symlink_to_the_renamed_folder_inside_the_projects_root(self):
         p = self.shipped_demo(); ext = os.path.join(self.tmp, "external")
         self.swap_for_link(p, ext); before = self.snapshot(); outside_text = open(ext + "/NOTES.md").read()
         self.assertRefused(before)
-        self.assertEqual(open(ext + "/NOTES.md").read(), outside_text); self.assertIn("shipped", outside_text)
+        self.assertEqual(open(ext + "/NOTES.md").read(), outside_text); self.assertIn("- extensions: 1", outside_text)
 
     def test_undo_refuses_when_the_project_folder_became_a_symlink_to_a_folder_outside_the_roots(self):
         p = self.shipped_demo(); ext = os.path.join(self.outside, "demo")
         self.swap_for_link(p, ext); before = self.snapshot(self.outside); n = len(server._undo)
         r = self.post("/api/undo", {}, ok=False); self.assertIn("symlink", r["error"])
-        self.assertEqual((self.snapshot(self.outside), len(server._undo)), (before, n)); self.assertIn("shipped", open(ext + "/NOTES.md").read())
+        self.assertEqual((self.snapshot(self.outside), len(server._undo)), (before, n)); self.assertIn("- extensions: 1", open(ext + "/NOTES.md").read())
 
     def test_undo_refuses_when_the_file_itself_was_swapped_for_a_link_with_identical_content(self):
         p = self.shipped_demo(); copy = os.path.join(self.outside, "NOTES.md")

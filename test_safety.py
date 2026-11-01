@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """v2.05: where the app may write, what /api/open may launch, and what --restart may stop."""
 import http.server
+import json
 import os
 import signal
 import subprocess
 import sys
 import threading
 import unittest
+import urllib.error
+import urllib.request
 from unittest import mock
 
 import safefs
@@ -92,6 +95,17 @@ class Containment(Fixture):
 REAL_OPEN = server.open_path
 
 
+class BoardDataIsNeverMarkup(Fixture):
+    """A project file's `due:` reaches the page: only a real YYYY-MM-DD date is passed on (the page escapes it too)."""
+    def test_a_due_that_is_not_an_iso_date_is_dropped(self):
+        for name, due in (("xss", "2026-<img src=x onerror=alert(1)>"), ("junk", "next week"), ("bad", "2026-13-40")):
+            self.project(name, notes=f"# {name}\n\n- status: promoted\n- promoted: 2026-10-01\n- due: {due}\n")
+        self.project("good", notes="# good\n\n- status: promoted\n- promoted: 2026-10-01\n- due: 2026-12-01\n")
+        flights = self.get("/api/notes")["inflight"]
+        self.assertEqual([(f["project"], f["due"]) for f in flights], [("good", "2026-12-01")])
+        self.assertFalse(any("<" in json.dumps(f) for f in flights))
+
+
 class OpenEndpoint(Fixture):
     def setUp(self):
         super().setUp()
@@ -113,6 +127,16 @@ class OpenEndpoint(Fixture):
                {"name": "../demo", "kind": "active"}, {"name": "demo", "kind": "learning"}, {"name": "nope"}, {"name": "https://evil.example", "kind": "active"},
                {"name": ".hidden"}, {"name": "demo/x"}, {}, {"name": None}]
         for b in bad: self.post("/api/open", b, ok=False)
+        self.assertEqual(self.opened, [])
+
+    def test_refuses_a_rebound_host_name_on_an_all_interfaces_bind(self):
+        """--host 0.0.0.0: a DNS name rebound to 127.0.0.1 reaches the server from this machine's own address, but its
+        Host is not localhost, so it is not a browser on this machine (the same _this_machine() check as the other routes)."""
+        with mock.patch.object(server, "BIND_HOST", "0.0.0.0"):
+            req = urllib.request.Request(f"http://127.0.0.1:{self.port}/api/open", method="POST", data=json.dumps({"name": "demo", "kind": "active"}).encode(),
+                                         headers={"Content-Type": "application/json", "Host": f"rebound.example:{self.port}"})
+            with self.assertRaises(urllib.error.HTTPError) as cm: urllib.request.urlopen(req)
+            self.assertIn("machine running the server", json.loads(cm.exception.read())["error"])
         self.assertEqual(self.opened, [])
 
     def test_refuses_a_symlinked_project_folder(self):

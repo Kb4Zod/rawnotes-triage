@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """v2.05: reads that stay correct beside writes, bounded caches, and honest GitHub activity."""
 import concurrent.futures
+import json
 import os
 import subprocess
 import threading
@@ -43,10 +44,10 @@ class ReadsBesideWrites(Fixture):
     def test_a_note_edited_or_removed_by_hand_while_listing_is_tolerated(self):
         for i in range(30): self.note(f"2026-10-0{i % 9 + 1}-n{i}.md", f"n{i}")
         real = server.summarize; calls = []
-        def flaky(path, sub=""):
+        def flaky(path, *rest):
             calls.append(path)
             if len(calls) % 7 == 0: os.remove(path)  # a hand edit removes it between listing and reading
-            return real(path, sub)
+            return real(path, *rest)
         with mock.patch.object(server, "summarize", flaky):
             d = self.get("/api/notes")
         self.assertGreater(len(d["live"]), 20); self.assertLess(len(d["live"]), 30)
@@ -222,12 +223,33 @@ class GithubActivity(Fixture):
 
 
 class HttpLimits(Fixture):
+    def oversized_post(self, body):
+        """POST `body` over a raw socket. The server answers 413 from the Content-Length alone and closes without
+        reading the body, so under load sending the body races that close (BrokenPipe / ConnectionReset). Read the
+        answer right after the headers (it doesn't wait for the body), then send the body, tolerating the early close."""
+        import http.client, socket
+        with socket.create_connection(("127.0.0.1", self.port), timeout=10) as sock:
+            sock.sendall(f"POST /api/action HTTP/1.1\r\nHost: 127.0.0.1:{self.port}\r\nContent-Type: application/json\r\n"
+                         f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode())
+            resp = http.client.HTTPResponse(sock); resp.begin()
+            code, answer = resp.status, json.loads(resp.read())
+            try: sock.sendall(body)
+            except (BrokenPipeError, ConnectionResetError): pass  # the server already closed: that is the refusal
+            return code, answer
+
     def test_oversized_and_malformed_bodies_are_refused_without_changes(self):
         import urllib.request, urllib.error
-        for body, code in ((b"x" * (server.MAX_BODY + 1), 413), (b"{not json", 400), (b"[1,2]", 400)):
+        self.note("2026-10-01-keep-me.md")
+        before, undo = self.snapshot(), len(server._undo)
+        big = json.dumps({"file": "2026-10-01-keep-me.md", "action": "kill", "note": "x" * (server.MAX_BODY + 1)}).encode()
+        self.assertGreater(len(big), server.MAX_BODY)
+        code, answer = self.oversized_post(big)
+        self.assertEqual((code, answer), (413, {"error": "request too large"}))
+        for body in (b"{not json", b"[1,2]"):
             req = urllib.request.Request(f"http://127.0.0.1:{self.port}/api/action", method="POST", data=body, headers={"Content-Type": "application/json"})
             with self.assertRaises(urllib.error.HTTPError) as cm: urllib.request.urlopen(req)
-            self.assertEqual(cm.exception.code, code)
+            self.assertEqual(cm.exception.code, 400)
+        self.assertEqual((self.snapshot(), len(server._undo)), (before, undo))  # nothing written, no undo step
 
     def test_responses_are_not_cached_or_sniffed(self):
         import urllib.request

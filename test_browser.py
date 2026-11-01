@@ -223,6 +223,15 @@ class Flows(BrowserCase):
         text = self.read("2026-10-15-recent.md"); self.assertIn("- status: cooking", text); self.assertIn("next step", text); self.assertIn("call the vendor", text)
         self.page.click("#tUndo"); self.settle(0.5); self.assertIn("- status: open", self.read("2026-10-15-recent.md"))
 
+    def test_expired_note_has_a_chip_a_badge_and_no_keep(self):
+        with unittest.mock.patch.dict(server.LIMIT_DEFAULTS, {"inbox_limit_days": 30}):
+            self.open(); self.page.wait("document.querySelector('[data-st=expired]')")
+            self.page.click("[data-st=expired]"); self.settle(0.2)
+            self.assertIn("expired", self.text("#list")); self.assertNotIn("Recent note", self.text("#list"))
+            self.page.click("#list .item[data-f='2026-08-01-lone.md']"); self.settle(0.2)
+            self.assertIn("30-day limit", self.text("#reader")); self.assertIsNone(self.page.eval("document.querySelector('[data-m=keep]')"))
+            self.page.key("c"); self.settle(0.2); self.assertIsNone(self.page.eval("document.querySelector('#form.keep')"))
+
     def test_kill_then_undo_with_the_z_key(self):
         self.page.click("#list .item[data-f='2026-10-15-recent.md']"); self.page.key("x"); self.page.wait("document.querySelector('#form.kill')")
         self.page.type("dupe"); self.page.key("Enter"); self.done_toast()
@@ -240,6 +249,16 @@ class Flows(BrowserCase):
         self.focus("#note"); self.page.type("Works on my phone"); self.page.click("#go"); self.done_toast()
         notes = open(os.path.join(self.tmp, "active", "recent", "NOTES.md")).read()
         self.assertIn("- definition of done: Works on my phone", notes); self.assertIn("- due:", notes)
+        self.assertTrue(os.path.isdir(os.path.join(self.tmp, "active", "recent", ".git")))
+
+    def test_promote_with_a_personal_git_email_shows_the_warning(self):
+        with open(self.gitconfig, "w") as fh: fh.write("[user]\n\tname = Me\n\temail = me@example.com\n[core]\n\thooksPath = /dev/null\n")
+        self.page.click("#list .item[data-f='2026-10-15-recent.md']"); self.page.key("p"); self.page.wait("document.querySelector('#form.promote')")
+        self.assertIn("git repo on main", self.page.eval("document.querySelector('#pv').textContent"))
+        self.focus("#note"); self.page.type("Works on my phone"); self.page.click("#go"); self.done_toast()
+        text = self.page.eval("document.querySelector('#toast').textContent")
+        self.assertIn("Warning:", text); self.assertIn("not a @users.noreply.github.com address", text); self.assertNotIn("me@example.com", text)
+        self.assertTrue(self.page.eval("document.querySelector('#toast').classList.contains('bad') && !!document.querySelector('#tUndo')"))
 
     def test_reference_files_the_note(self):
         self.page.click("#list .item[data-f='2026-10-15-recent.md']"); self.page.key("r"); self.page.wait("document.querySelector('#form.reference')")
@@ -260,11 +279,144 @@ class Flows(BrowserCase):
         self.assertTrue(os.path.exists(os.path.join(self.notes, "2026-10-01-arcane-bomb-a.md")))
 
     def test_mark_shipped_from_projects_then_undo(self):
+        """Mark shipped on a folder opens the close-out choice with the suggestion preselected; Archive moves it, Undo
+        brings it back exactly."""
+        demo = os.path.join(self.tmp, "active", "demo"); original = open(os.path.join(demo, "NOTES.md"), "rb").read()
         self.open("projects"); self.page.click("[data-pid='active/demo/NOTES.md']"); self.page.wait("document.querySelector('[data-pa=shipped]')")
-        self.page.click("[data-pa=shipped]"); self.done_toast()
-        self.assertIn("- status: shipped", open(os.path.join(self.tmp, "active", "demo", "NOTES.md")).read())
+        self.page.click("[data-pa=shipped]"); self.page.wait("document.querySelector('#pf.closeout')")
+        self.page.wait("document.querySelector('#cmove').textContent.includes('Moves to archive/demo/')")
+        self.assertEqual(self.page.eval("segVal('outcome')"), "archive"); self.assertIn("Suggested: archive", self.text("#osug"))
+        self.assertEqual(self.posts(), [])  # choosing is not doing
+        self.page.click("#cgo"); self.done_toast()
+        self.assertFalse(os.path.exists(demo))
+        moved = open(os.path.join(self.tmp, "archive", "demo", "NOTES.md")).read()
+        self.assertIn("- status: shipped", moved); self.assertIn("## Moved", moved)
+        toast = self.text("#toast"); self.assertIn("archive/demo", toast); self.assertIn("Update any T3 Code project whose folder is", toast)
+        self.page.wait("[...document.querySelectorAll('#pscroll .col')].some(c=>c.querySelector('h2').textContent.startsWith('Closed')&&c.querySelector('[data-pid=\"archive/demo/NOTES.md\"]'))")
         self.page.click("#tUndo"); self.settle(0.6)
+        self.assertEqual(open(os.path.join(demo, "NOTES.md"), "rb").read(), original)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "archive")))
+        toast = self.text("#toast"); self.assertIn("Now that it is back, by hand:", toast)  # the reverse T3 to-do
+        self.assertIn(f"{os.path.join(self.tmp, 'archive', 'demo')} to {demo}", toast); self.assertNotIn("## Moved", toast)
+
+    def test_the_close_out_form_warns_when_the_move_cannot_be_undone(self):
+        with mock.patch.object(server, "TREE_LIMIT", 0):  # the fixture's demo holds just NOTES.md
+            self.open("projects"); self.page.click("[data-pid='active/demo/NOTES.md']"); self.page.wait("document.querySelector('[data-pa=shipped]')")
+            self.page.click("[data-pa=shipped]"); self.page.wait("document.querySelector('#cmove').textContent.includes('Moves to archive/demo/')")
+            self.assertIn("can't be undone", self.text("#cmove"))
+            self.page.click("[data-seg=outcome] [data-v=next]"); self.page.wait("!document.querySelector('#cmove').textContent.includes(\"can't be undone\")")
+
+    def test_create_github_repo_is_offered_only_with_no_origin_at_all(self):
+        import subprocess
+        for name, origin in (("fresh-repo", None), ("selfhosted", "https://git.example.com/me/selfhosted.git")):
+            path = self.project(name, notes=f"# {name}\n\n- status: promoted\n- promoted: 2026-10-01\n")
+            for args in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-qm", "start"]) + ((["remote", "add", "origin", origin],) if origin else ()):
+                subprocess.run(["git", *args], cwd=path, check=True, capture_output=True)
+        self.open("projects")
+        for name, offered in (("fresh-repo", True), ("selfhosted", False)):
+            self.page.click(f"[data-pid='active/{name}']"); self.page.wait(f"document.querySelector('#drawer #openf') && document.querySelector('#drawer h2,#drawer h3')")
+            self.settle(0.2); self.assertEqual(self.exists("#ghmake"), offered, name)
+
+    def test_close_out_next_round_asks_for_done_means_and_stays(self):
+        nodod = os.path.join(self.tmp, "active", "nodod", "NOTES.md")
+        self.open("projects"); self.page.click("[data-pid='active/nodod/NOTES.md']"); self.page.wait("document.querySelector('[data-pa=shipped]')")
+        self.page.click("[data-pa=shipped]"); self.page.wait("document.querySelector('#pf.closeout') && !document.querySelector('#cmove').textContent.includes('Checking')")
+        self.page.click("[data-seg=outcome] [data-v=next]"); self.page.wait("document.querySelector('#cnext').style.display===''")
+        self.assertTrue(self.exists("#shipby"))
+        self.page.click("#cgo"); self.page.wait("document.querySelector('#perr').textContent.includes('done means')")
+        self.assertNotIn("Rounds", open(nodod).read())
+        self.focus("#cdone"); self.page.type("Round two ships"); self.page.click("[data-seg=due] [data-v='14']"); self.page.click("#cgo"); self.done_toast()
+        text = open(nodod).read(); due = (server.today() + server.dt.timedelta(days=14)).isoformat()
+        self.assertEqual((server.field(text, "status"), server.field(text, "due"), server.field(text, "extensions"), server.field(text, "closed")), ("promoted", due, "0", ""))
+        self.assertIn("## Rounds", text); self.assertIn("- definition of done: Round two ships", text)
+        self.assertIn("Next round ships by " + due, self.text("#toast"))
+
+    def test_a_project_shipped_before_close_out_existed_can_still_be_closed_out(self):
+        self.project("legacy", notes=f"# Legacy\n\n- status: done\n- closed: {server.today().isoformat()}\n")
+        self.open("projects"); self.page.click("[data-pid='active/legacy']"); self.page.wait("document.querySelector('#drawer [data-pa=shipped]')")
+        self.assertIn("Close out", self.text("#drawer .acts")); self.assertFalse(self.exists("#drawer [data-pa=kill]"))
+        self.page.click("[data-pa=shipped]"); self.page.wait("document.querySelector('#cmove').textContent.includes('Moves to archive/legacy/')")
+        self.page.click("#cgo"); self.done_toast()
+        self.assertIn("- status: shipped", open(os.path.join(self.tmp, "archive", "legacy", "NOTES.md")).read())
+
+    def test_a_blocked_close_out_cannot_be_sent_and_kill_shows_why(self):
+        import depcheck
+        home = os.path.join(self.tmp, "fakehome"); os.makedirs(os.path.join(home, ".local", "bin"))
+        with open(os.path.join(home, ".local", "bin", "demo-run"), "w") as fh: fh.write(f"#!/bin/sh\nexec {self.tmp}/active/demo/run\n")
+        with mock.patch.object(server, "DEPS", depcheck.Sources(home, proc=os.path.join(self.tmp, "noproc"), crontab=lambda: "")):
+            self.open("projects"); self.page.click("[data-pid='active/demo/NOTES.md']"); self.page.wait("document.querySelector('#pdeps #blockers')")
+            self.page.click("[data-pa=shipped]"); self.page.wait("document.querySelector('#cmove .err')")
+            self.assertIn("Blocked", self.text("#cmove")); self.assertTrue(self.page.eval("document.querySelector('#cgo').disabled"))
+            self.page.click("[data-seg=outcome] [data-v=next]"); self.page.wait("!document.querySelector('#cgo').disabled")  # a next round moves nothing
+            self.page.click("#pcancel"); self.page.click("[data-pa=kill]"); self.page.wait("document.querySelector('#pwhy')")
+            self.assertIn("archive/demo_abandoned/", self.text("#pform"))
+            self.focus("#pwhy"); self.page.type("Not needed"); self.page.click("#pf button[type=submit]")
+            self.page.wait("document.querySelector('#perr').textContent.includes(\"Can't move demo\")")
+            self.assertIn("demo-run", self.text("#perr"))
         self.assertIn("- status: promoted", open(os.path.join(self.tmp, "active", "demo", "NOTES.md")).read())
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "archive")))
+
+    def test_a_failed_dependency_lookup_shows_why_and_leaves_the_form_usable(self):
+        with mock.patch.object(server, "project_deps", side_effect=ValueError("deps exploded")):
+            self.open("projects"); self.page.click("[data-pid='active/demo/NOTES.md']"); self.page.wait("document.querySelector('[data-pa=shipped]')")
+            self.page.click("[data-pa=shipped]"); self.page.wait("document.querySelector('#pf.closeout')")
+            self.page.wait("document.querySelector('#cmove').textContent.includes('deps exploded')")
+            self.assertIn("deps exploded", self.text("#osug")); self.assertNotIn("Checking", self.text("#osug") + self.text("#cmove"))
+            self.assertFalse(self.page.eval("document.querySelector('#cgo').disabled"))  # the server checks again on send
+        self.page.click("#cgo"); self.done_toast()
+        self.assertTrue(os.path.isdir(os.path.join(self.tmp, "archive", "demo")))
+
+    def test_promoted_learning_and_template_folders_are_labelled_cards(self):
+        for kind, name in (("learning", "study"), ("templates", "kit")):
+            self.project(name, kind=kind, notes=f"# {name}\n\n- date: 2026-10-01\n- status: promoted\n- promoted: 2026-10-01\n- due: 2026-12-01\n\n## Plan\n\n- definition of done: Done.\n")
+        self.project("handmade", kind="learning")
+        self.open("projects"); self.page.wait("document.querySelector('[data-pid=\"templates/kit/NOTES.md\"]')")
+        label = lambda pid: self.page.eval(f"document.querySelector('[data-pid=\"{pid}\"] .row').textContent")
+        self.assertIn("Learning", label("learning/study/NOTES.md")); self.assertIn("Template", label("templates/kit/NOTES.md"))
+        self.assertFalse(self.page.eval("!!document.querySelector('[data-pid^=\"learning/handmade\"]')"))
+
+    def read_file(self, path):
+        with open(path, encoding="utf-8") as fh: return fh.read()
+
+    def test_extending_asks_why_and_stops_after_two(self):
+        demo = os.path.join(self.tmp, "active", "demo", "NOTES.md")
+        self.open("projects"); self.page.click("[data-pid='active/demo/NOTES.md']"); self.page.wait("document.querySelector('[data-pa=extend]')")
+        self.page.click("[data-pa=extend]"); self.page.wait("document.querySelector('#pwhy')")
+        self.page.click("#pf button[type=submit]"); self.page.wait("document.querySelector('#perr').textContent.includes('why')")
+        self.assertNotIn("extensions", self.read_file(demo))
+        for n in (1, 2):
+            if n == 2: self.page.click("[data-pa=extend]"); self.page.wait("document.querySelector('#pwhy')")
+            self.focus("#pwhy"); self.page.type("Waiting on the parts"); self.page.click("#pf button[type=submit]"); self.done_toast(); self.settle(0.4)
+            self.page.eval("document.querySelector('#toast').classList.remove('show')")
+        self.assertIn("- extensions: 2", self.read_file(demo))
+        self.page.wait("document.querySelector('#drawer .acts .btn[disabled]')")
+        self.assertIn("No more extensions", self.text("#drawer .acts"))
+
+    def test_closed_column_shows_the_window_with_a_show_all_toggle(self):
+        old = (server.today() - server.dt.timedelta(days=30)).isoformat()
+        self.project("ancient", notes=f"# Ancient\n\n- status: shipped\n- closed: {old}\n")
+        self.project("fresh", notes=f"# Fresh\n\n- status: shipped\n- closed: {server.today().isoformat()}\n")
+        self.open("projects"); self.page.wait("document.querySelector('#closedAll')")
+        col = lambda: self.page.eval("(()=>{const c=[...document.querySelectorAll('#pscroll .col')].find(c=>c.querySelector('h2').textContent.startsWith('Closed'));return [c.querySelector('h2').textContent.trim(),[...c.querySelectorAll('[data-pid]')].map(b=>b.dataset.pid)]})()")
+        h, pids = col(); self.assertIn("last 7 days", h); self.assertEqual(pids, ["active/fresh"])
+        self.assertIn("Show all (2)", self.text("#closedAll"))
+        self.page.click("#closedAll"); self.page.wait("document.querySelector('#closedAll').textContent.includes('Last 7')")
+        self.assertEqual(sorted(col()[1]), ["active/ancient", "active/fresh"])
+
+    def test_the_drawer_shows_what_points_at_the_folder(self):
+        import depcheck
+        home = os.path.join(self.tmp, "fakehome"); os.makedirs(os.path.join(home, ".local", "bin"))
+        with open(os.path.join(home, ".local", "bin", "demo-run"), "w") as fh: fh.write(f"#!/bin/sh\nexec {self.tmp}/active/demo/run\n")
+        with mock.patch.object(server, "DEPS", depcheck.Sources(home, proc=os.path.join(self.tmp, "noproc"), crontab=lambda: "")):
+            self.open("projects"); self.page.click("[data-pid='active/demo/NOTES.md']")
+            self.page.wait("document.querySelector('#pdeps #blockers')")
+            text = self.text("#pdeps")
+            self.assertIn("What points here", text); self.assertIn("1 thing would break", text)
+            self.assertIn("demo-run", text); self.assertIn("Update any T3 Code project whose folder is", text)
+            os.remove(os.path.join(home, ".local", "bin", "demo-run"))
+            self.page.click("[data-pid='active/nodod/NOTES.md']"); self.page.wait("document.querySelector('#pdeps #todos')")
+            self.assertIn("Nothing blocks a move to archive/nodod/", self.text("#pdeps"))
+        self.assertEqual(self.posts(), [])  # looking is read-only
 
     def test_an_open_ended_experiment_is_only_under_experiments(self):
         self.project("spike", kind="experiments", notes="# Spike\n\n- date: 2026-10-01\n- status: promoted\n- promoted: 2026-10-01\n\n## Plan\n\n- definition of done: We know.\n")
@@ -274,6 +426,14 @@ class Flows(BrowserCase):
         self.assertEqual(len(where), 1, cols); self.assertIn("Experiments", where[0])
         week = sum(len(pids) for h, pids in cols if h.startswith("Due this week"))
         self.assertEqual(self.page.eval("[...document.querySelectorAll('.card.tile')].find(t=>t.textContent.includes('Due this week')).querySelector('.num').textContent"), str(week))
+
+    def test_server_text_on_a_card_is_shown_as_text_not_markup(self):
+        real = server.inflight
+        evil = lambda *a, **k: [{**f, "due": "2026-<img id=pwn src=x onerror=window.__pwn=1>"} if f["project"] == "demo" else f for f in real(*a, **k)]
+        with mock.patch.object(server, "inflight", evil):
+            self.open("projects"); self.settle(0.3)
+            self.assertFalse(self.exists("#pwn")); self.assertFalse(self.page.eval("!!window.__pwn"))
+            self.assertIn("<img id=pwn", self.page.eval("document.querySelector(\"[data-pid='active/demo/NOTES.md']\").textContent"))
 
     def test_h_l_and_side_arrows_scroll_the_projects_board(self):
         self.page.resize(900, 800); self.open("projects")

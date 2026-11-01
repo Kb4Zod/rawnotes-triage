@@ -13,16 +13,21 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 
 import server
+from testkit import isolate_git
 
 
 class ApiTestCase(unittest.TestCase):
     def setUp(self):
+        isolate_git(self)  # promote runs git: never with the real global config or hooks
+        p = unittest.mock.patch.object(server, "SHIP_NEEDS_GITHUB", ()); p.start(); self.addCleanup(p.stop)  # the GitHub gate on Ship has its own tests (test_github_push.py)
         self.tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self.notes = os.path.join(self.tmp, "RawNotes")
         os.makedirs(self.notes)
         self.old_notes, self.old_projects, self.old_log = server.NOTES, server.PROJECTS, server.log
         self.old_log_path = server.LOG_PATH
+        self.old_config_dir = server.CONFIG_DIR
+        server.CONFIG_DIR = os.path.join(self.tmp, "config")  # tunables are read from config.json: never the real one
         server.NOTES = self.notes
         server.PROJECTS = self.tmp
         server.log = lambda msg: None  # never write test actions into the real triage.log
@@ -36,6 +41,7 @@ class ApiTestCase(unittest.TestCase):
 
     def _restore(self):
         server.NOTES, server.PROJECTS = self.old_notes, self.old_projects
+        server.CONFIG_DIR = self.old_config_dir
         server.log = self.old_log
 
     def make_project(self, name):
@@ -463,11 +469,11 @@ class ApiTestCase(unittest.TestCase):
         self.git(ahead, "commit", "-q", "--allow-empty", "-m", "one"); self.git(ahead, "update-ref", "refs/remotes/origin/main", "HEAD")
         self.git(ahead, "commit", "-q", "--allow-empty", "-m", "two"); self.git(ahead, "commit", "-q", "--allow-empty", "-m", "three")
         states = {p["name"]: p["gh"] for p in self.get("/api/projects")["projects"]}
-        self.assertEqual(states["folder"], {"git": False, "repo": "", "pushed": False, "unpushed": 0})
-        self.assertEqual(states["local"], {"git": True, "repo": "", "pushed": False, "unpushed": 0})  # git, never on GitHub
-        self.assertEqual(states["fresh"], {"git": True, "repo": "me/fresh", "pushed": False, "unpushed": 0})  # remote set, nothing pushed
-        self.assertEqual(states["pushed"], {"git": True, "repo": "me/pushed", "pushed": True, "unpushed": 0})
-        self.assertEqual(states["ahead"], {"git": True, "repo": "me/ahead", "pushed": True, "unpushed": 2})
+        self.assertEqual(states["folder"], {"git": False, "origin": False, "repo": "", "pushed": False, "unpushed": 0, "after_skeleton": 0, "not_on_github": False})
+        self.assertEqual(states["local"], {"git": True, "origin": False, "repo": "", "pushed": False, "unpushed": 0, "after_skeleton": 0, "not_on_github": False})  # git, never on GitHub
+        self.assertEqual(states["fresh"], {"git": True, "origin": True, "repo": "me/fresh", "pushed": False, "unpushed": 0, "after_skeleton": 0, "not_on_github": False})  # remote set, nothing pushed
+        self.assertEqual(states["pushed"], {"git": True, "origin": True, "repo": "me/pushed", "pushed": True, "unpushed": 0, "after_skeleton": 0, "not_on_github": False})
+        self.assertEqual(states["ahead"], {"git": True, "origin": True, "repo": "me/ahead", "pushed": True, "unpushed": 2, "after_skeleton": 0, "not_on_github": False})
 
     def test_project_with_ssh_443_remote_gets_repo_link_and_state(self):
         path = self.make_project("viaport"); self.git(path, "init", "-q")
@@ -477,8 +483,8 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(d["gh"]["repo"], "me/viaport")
 
 
-class DecisionTestCase(unittest.TestCase):
-    """2.00: decisions, batch, merge, restore, project status and undo, all through the HTTP API."""
+class DecisionBase(unittest.TestCase):
+    """The decision fixture and helpers, with no tests of its own (so subclasses don't run DecisionTestCase twice)."""
     _restore, get = ApiTestCase._restore, ApiTestCase.get
 
     def setUp(self):
@@ -509,6 +515,10 @@ class DecisionTestCase(unittest.TestCase):
                 p = os.path.join(root, f)
                 with open(p, "rb") as fh: out[os.path.relpath(p, self.tmp)] = fh.read()
         return out
+
+
+class DecisionTestCase(DecisionBase):
+    """2.00: decisions, batch, merge, restore, project status and undo, all through the HTTP API."""
 
     def test_kill_then_undo_puts_everything_back(self):
         self.note("2026-10-01-a.md"); before = self.snapshot()
@@ -585,9 +595,11 @@ class DecisionTestCase(unittest.TestCase):
         self.post("/api/action", {"file": "2026-10-01-a.md", "action": "promote", "dest": "active", "note": "x", "due_days": 2})
         f = self.get("/api/notes")["inflight"][0]
         self.assertEqual((f["path"], f["project"]), ("active/a/NOTES.md", "a"))
-        self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "extend", "days": 7})
+        self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "extend", "days": 7, "note": "Waiting on the parts to arrive."})
         self.assertEqual(self.get("/api/notes")["inflight"][0]["days_left"], 9)
-        self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "shipped"})
+        err = self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "shipped"}, ok=False)["error"]
+        self.assertIn("What happens to a now?", err); self.assertIn("suggested: archive", err)  # a folder needs an outcome
+        self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "shipped", "outcome": "archive"})
         self.assertTrue(self.get("/api/notes")["inflight"][0]["done"])
         self.post("/api/undo", {}); self.assertFalse(self.get("/api/notes")["inflight"][0]["done"])
         self.assertIn("unknown", self.post("/api/project/status", {"path": "../etc/passwd", "action": "shipped"}, ok=False)["error"])
@@ -598,16 +610,156 @@ class DecisionTestCase(unittest.TestCase):
         with open(os.path.join(old, "notes.md"), "w") as fh: fh.write("# old\n\nSome notes.\n")
         status = lambda: {p["path"]: p["status"] for p in self.get("/api/projects")["projects"]}
         self.assertEqual(status(), {"experiments/spike": "", "experiments/old": ""})
-        self.post("/api/project/status", {"name": "spike", "kind": "experiments", "action": "shipped"})
-        self.assertEqual(status()["experiments/spike"], "shipped")
+        self.post("/api/project/status", {"name": "spike", "kind": "experiments", "action": "shipped", "outcome": "archive"})
+        self.assertNotIn("experiments/spike", status())
+        self.assertIn("- status: shipped", open(os.path.join(self.tmp, "archive", "spike", "NOTES.md")).read())
         self.post("/api/undo", {})
+        self.assertEqual(status()["experiments/spike"], "")
         self.assertFalse(os.path.exists(os.path.join(spike, "NOTES.md")))  # undo removes the file it created
+        self.post("/api/project/status", {"name": "spike", "kind": "experiments", "action": "kill"}, ok=False)  # a reason is required
         self.post("/api/project/status", {"name": "old", "kind": "experiments", "action": "kill", "note": "Went nowhere."})
-        text = open(os.path.join(old, "notes.md")).read()  # existing file kept its name and content
+        text = open(os.path.join(self.tmp, "archive", "old_abandoned", "notes.md")).read()  # existing file kept its name and content
         self.assertIn("- status: dead", text); self.assertIn("Some notes.", text); self.assertIn("Went nowhere.", text)
-        for bad in ({"name": "spike", "kind": "experiments", "action": "extend"}, {"name": "spike", "action": "shipped"},
-                    {"name": "../experiments/spike", "kind": "active", "action": "shipped"}, {"name": "spike", "kind": "learning", "action": "shipped"}):
+        for bad in ({"name": "spike", "kind": "experiments", "action": "extend"}, {"name": "spike", "action": "shipped", "outcome": "archive"},
+                    {"name": "../experiments/spike", "kind": "active", "action": "shipped", "outcome": "archive"},
+                    {"name": "spike", "kind": "learning", "action": "shipped", "outcome": "archive"},
+                    {"name": "spike", "kind": "experiments", "action": "shipped", "outcome": "elsewhere"}):
             self.post("/api/project/status", bad, ok=False)
+
+    def _promoted(self, extra=""):
+        self.note("2026-10-01-a.md")
+        self.post("/api/action", {"file": "2026-10-01-a.md", "action": "promote", "dest": "active", "note": "x", "due_days": 2})
+        path = os.path.join(self.tmp, "active", "a", "NOTES.md")
+        if extra:
+            with open(path) as fh: text = fh.read()
+            with open(path, "w") as fh: fh.write(server.set_field(text, "extensions", extra))
+        return path
+
+    def _push(self, **kw):
+        return {"path": "active/a/NOTES.md", "action": "extend", "days": 7, "note": "Waiting on the parts to arrive.", **kw}
+
+    def test_extend_needs_a_reason_and_changes_nothing_without_one(self):
+        self._promoted(); before = self.snapshot()
+        for bad in ({"note": ""}, {"note": "too short"}, {"note": "          "}, {"note": None}):
+            self.post("/api/project/status", self._push(**bad), ok=False); self.assertEqual(self.snapshot(), before)
+        for days in (0, 8, 30, "x"):
+            self.post("/api/project/status", self._push(days=days), ok=False); self.assertEqual(self.snapshot(), before)
+
+    def test_extend_records_count_and_plan_line_then_stops_after_two(self):
+        path = self._promoted(); t = server.today()
+        due0 = server.field(open(path).read(), "due")
+        self.post("/api/project/status", self._push(days=3))
+        text = open(path).read(); due1 = (max(t, server.dt.date.fromisoformat(due0)) + server.dt.timedelta(days=3)).isoformat()
+        self.assertEqual((server.field(text, "due"), server.field(text, "extensions")), (due1, "1"))
+        plan = text.split("## Plan", 1)[1]
+        self.assertIn(f"- pushed {due0} → {due1} ({t.isoformat()}): Waiting on the parts to arrive.", plan)
+        [f] = self.get("/api/notes")["inflight"]; self.assertEqual((f["extensions"], f["max_extensions"]), (1, 2))
+        self.post("/api/project/status", self._push())
+        before = self.snapshot()
+        err = self.post("/api/project/status", self._push(), ok=False)["error"]
+        self.assertEqual(err, "Pushed twice already: ship it or kill it."); self.assertEqual(self.snapshot(), before)
+        self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "shipped", "outcome": "archive"})  # shipping is still allowed
+
+    def test_the_refusal_says_the_configured_number_of_pushes(self):
+        os.makedirs(server.CONFIG_DIR, exist_ok=True)
+        for limit, words in ((3, "Pushed 3 times already"), (1, "Pushed once already")):
+            with self.subTest(limit=limit):
+                with open(server.config_path(), "w") as fh: json.dump({"max_extensions": limit}, fh)
+                path = self._promoted() if limit == 3 else path
+                with open(path) as fh: text = fh.read()
+                with open(path, "w") as fh: fh.write(server.set_field(text, "extensions", str(limit)))
+                self.assertEqual(self.post("/api/project/status", self._push(), ok=False)["error"], f"{words}: ship it or kill it.")
+
+    def test_missing_extensions_counts_as_zero_and_undo_restores_exactly(self):
+        path = self._promoted(); original = open(path, "rb").read()
+        self.assertNotIn(b"extensions", original)
+        self.post("/api/project/status", self._push()); self.assertNotEqual(open(path, "rb").read(), original)
+        self.post("/api/undo", {}); self.assertEqual(open(path, "rb").read(), original)
+
+    def test_extend_adds_a_plan_section_when_missing(self):
+        path = self._promoted()
+        with open(path) as fh: text = fh.read()
+        with open(path, "w") as fh: fh.write(text.split("## Plan")[0].rstrip() + "\n")
+        original = open(path, "rb").read()
+        self.post("/api/project/status", self._push())
+        self.assertIn("\n## Plan\n\n- pushed ", open(path).read())
+        self.post("/api/undo", {}); self.assertEqual(open(path, "rb").read(), original)
+
+    def test_extension_limit_comes_from_config(self):
+        self._promoted(); os.makedirs(server.CONFIG_DIR, exist_ok=True)
+        with open(os.path.join(server.CONFIG_DIR, "config.json"), "w") as fh: fh.write('{"max_extensions": 1}')
+        self.post("/api/project/status", self._push())
+        self.post("/api/project/status", self._push(), ok=False)
+
+    def test_project_kill_needs_a_reason_and_files_it_under_outcome(self):
+        path = self._promoted(); before = self.snapshot()
+        self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "kill"}, ok=False)
+        self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "kill", "note": "  "}, ok=False)
+        self.assertEqual(self.snapshot(), before)
+        self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "kill", "note": "Not worth it."})
+        path = os.path.join(self.tmp, "archive", "a_abandoned", "NOTES.md")
+        self.assertIn("**Killed", open(path).read().split("## Outcome", 1)[1]); self.assertIn("Not worth it.", open(path).read())
+
+    def project(self, name, kind="active", notes=None):
+        path = os.path.join(self.tmp, kind, name); os.makedirs(path)
+        if notes is not None:
+            with open(os.path.join(path, "NOTES.md"), "w", encoding="utf-8") as fh: fh.write(notes)
+        return path
+
+    def _days_ago(self, n): return (server.today() - server.dt.timedelta(days=n)).isoformat()
+
+    def test_ship_and_kill_write_closed_and_undo_removes_it(self):
+        path = self._promoted(); original = open(path, "rb").read(); t = server.today().isoformat()
+        self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "shipped", "outcome": "maintained"})
+        text = open(os.path.join(self.tmp, "maintained", "a", "NOTES.md")).read()
+        self.assertEqual((server.field(text, "closed"), server.field(text, "shipped")), (t, t))
+        [f] = self.get("/api/notes")["inflight"]; self.assertEqual((f["path"], f["closed"]), ("maintained/a/NOTES.md", t))
+        self.post("/api/undo", {}); self.assertEqual(open(path, "rb").read(), original)
+        self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "kill", "note": "Not worth it."})
+        self.assertEqual(server.field(open(os.path.join(self.tmp, "archive", "a_abandoned", "NOTES.md")).read(), "closed"), t)
+        self.post("/api/undo", {}); self.assertEqual(open(path, "rb").read(), original)
+
+    def test_folder_ship_and_kill_write_closed_and_listing_reports_it(self):
+        for name in ("s", "k"): os.makedirs(os.path.join(self.tmp, "experiments", name))
+        t = server.today().isoformat()
+        self.post("/api/project/status", {"name": "s", "kind": "experiments", "action": "shipped", "outcome": "archive"})
+        self.post("/api/project/status", {"name": "k", "kind": "experiments", "action": "kill", "note": "No."})
+        self.assertEqual(self.get("/api/projects")["projects"], [])  # both moved out of experiments/
+        closed = {f["path"]: f["closed"] for f in self.get("/api/notes")["inflight"]}  # and show as recently closed
+        self.assertEqual(closed, {"archive/s/NOTES.md": t, "archive/k_abandoned/NOTES.md": t})
+        self.post("/api/undo", {}); self.assertEqual({p["name"]: p["closed"] for p in self.get("/api/projects")["projects"]}, {"k": ""})
+
+    def test_closed_date_falls_back_to_shipped_then_the_killed_date(self):
+        from notemeta import closed_date
+        self.assertEqual(closed_date("# x\n\n- shipped: 2026-10-01\n- closed: 2026-10-05\n"), "2026-10-05")
+        self.assertEqual(closed_date("# x\n\n- shipped: 2026-10-01\n"), "2026-10-01")
+        self.assertEqual(closed_date("# x\n\n- status: dead\n\n## Outcome\n\n**Killed 2026-09-30:** no.\n"), "2026-09-30")
+        self.assertEqual(closed_date("# x\n\n- status: dead\n"), "")
+        self.assertEqual(closed_date("# x\n\n- closed: soon\n"), "")
+        self.assertEqual(closed_date("# x\n\n**Killed 2026-09-30:** in prose, not Outcome\n"), "")
+        # an old project killed before 06: the date is far down the file, past the header
+        d = self.project("old", "experiments", "# old\n\n- status: dead\n\n" + "filler\n" * 2000 + "\n## Outcome\n\n**Killed 2026-09-30:** no.\n")
+        self.assertEqual({p["name"]: p["closed"] for p in self.get("/api/projects")["projects"]}["old"], "2026-09-30")
+
+    def test_closed_window_covers_maintained_and_archive_and_comes_from_config(self):
+        mk = lambda kind, name, closed: self.project(name, kind, f"# {name}\n\n- status: shipped\n- closed: {closed}\n")
+        mk("maintained", "m-new", self._days_ago(2)); mk("maintained", "m-old", self._days_ago(30))
+        mk("archive", "a-new", self._days_ago(7)); mk("archive", "a-old", self._days_ago(8))
+        os.makedirs(os.path.join(self.tmp, "archive", "open")); mk("archive", "no-date", "n/a")
+        with open(os.path.join(self.tmp, "archive", "2026-10-01-note.md"), "w") as fh:  # a dated file at the top of archive/
+            fh.write(f"# Dated\n\n- status: dead\n- closed: {self._days_ago(1)}\n")
+        n = self.get("/api/notes"); self.assertEqual(n["closed_window_days"], 7)
+        self.assertEqual(sorted(x["path"] for x in n["inflight"]),
+                         ["archive/2026-10-01-note.md", "archive/a-new/NOTES.md", "maintained/m-new/NOTES.md"])
+        self.assertTrue(all(x["done"] for x in n["inflight"]))
+        os.makedirs(server.CONFIG_DIR, exist_ok=True)
+        with open(os.path.join(server.CONFIG_DIR, "config.json"), "w") as fh: fh.write('{"closed_window_days": 1}')
+        n = self.get("/api/notes"); self.assertEqual(n["closed_window_days"], 1)
+        self.assertEqual(sorted(x["path"] for x in n["inflight"]), ["archive/2026-10-01-note.md"])
+
+    def test_old_closed_active_projects_stay_listed_for_show_all(self):
+        self.project("done-long-ago", "active", f"# d\n\n- status: shipped\n- closed: {self._days_ago(40)}\n")
+        [p] = self.get("/api/projects")["projects"]; self.assertEqual((p["status"], p["closed"]), ("shipped", self._days_ago(40)))
 
     def test_stats_counts_captures_and_decisions_by_week(self):
         server.LOG_PATH = os.path.join(self.tmp, "triage.log"); self.addCleanup(setattr, server, "LOG_PATH", self.old_log_path)
@@ -637,8 +789,8 @@ class DecisionTestCase(unittest.TestCase):
         self.assertIn("open-ended experiment", notes)
         [f] = self.get("/api/notes")["inflight"]
         self.assertEqual((f["dest"], f["due"], f["days_left"], f["open_ended"], f["done"]), ("experiments", "", None, True, False))
-        self.post("/api/project/status", {"path": f["path"], "action": "shipped"})
-        self.assertTrue(self.get("/api/notes")["inflight"][0]["done"])
+        self.post("/api/project/status", {"path": f["path"], "action": "shipped", "outcome": "archive"})
+        [f] = self.get("/api/notes")["inflight"]; self.assertEqual((f["path"], f["done"]), ("archive/spike/NOTES.md", True))
 
     def test_promote_active_to_an_exact_ship_by_date(self):
         self.note("2026-10-01-a.md"); self.note("2026-10-02-b.md")
@@ -762,6 +914,129 @@ class ServiceTestCase(unittest.TestCase):
             self.assertEqual(server.in_own_scope(argv), ["systemd-run", "--user", "--scope", "--quiet", "--collect", *argv])
         with mock.patch.object(server, "service_owns", return_value=False):
             self.assertEqual(server.in_own_scope(argv), argv)  # from a terminal or the launcher: unchanged
+
+
+INDEX = """# reference
+
+## Index
+
+### Azure
+- [A](x1.md): first
+- [B](x2.md): second
+
+### Hardware
+- [H](h.md): hw
+
+## Other
+
+- [Z](z.md): not the index
+"""
+
+class IndexInsertTest(unittest.TestCase):
+    def test_adds_at_end_of_existing_section_and_touches_nothing_else(self):
+        out = server.index_insert(INDEX, "Azure", "- [N](n.md): new")
+        self.assertEqual(out, INDEX.replace("- [B](x2.md): second\n", "- [B](x2.md): second\n- [N](n.md): new\n"))
+
+    def test_last_section_stays_above_next_heading(self):
+        out = server.index_insert(INDEX, "Hardware", "- [N](n.md): new")
+        self.assertIn("- [H](h.md): hw\n- [N](n.md): new\n\n## Other", out)
+
+    def test_new_section_goes_at_end_of_index(self):
+        out = server.index_insert(INDEX, "Cooking", "- [N](n.md): new")
+        self.assertIn("- [H](h.md): hw\n\n### Cooking\n- [N](n.md): new\n\n## Other", out)
+
+    def test_refuses_without_index_or_when_already_linked(self):
+        self.assertIsNone(server.index_insert("# x\n\n## Notes\n", "A", "- [N](n.md)"))
+        self.assertIsNone(server.index_insert(INDEX, "Azure", "- [Again](h.md): dup"))
+        self.assertIsNone(server.index_insert(INDEX, "Azure", "- [Y](x1.md)"))
+
+    def test_link_elsewhere_in_readme_does_not_count(self):
+        self.assertIsNotNone(server.index_insert(INDEX, "Azure", "- [Z](z.md): ok"))
+
+    def test_index_at_end_of_file_without_trailing_newline(self):
+        out = server.index_insert("## Index\n\n### A\n- [x](x.md)", "A", "- [y](y.md)")
+        self.assertEqual(out, "## Index\n\n### A\n- [x](x.md)\n- [y](y.md)")
+
+    def test_brackets_and_newlines_removed(self):
+        self.assertEqual(server.index_line("A [b]\nc", "n.md", "see [x]\n\nnow"), "- [A b c](n.md): see x now")
+
+
+class ReferenceIndexTestCase(DecisionBase):
+    def readme(self, text=INDEX):
+        os.makedirs(os.path.join(self.tmp, "reference"), exist_ok=True)
+        p = os.path.join(self.tmp, "reference", "README.md")
+        with open(p, "w") as fh: fh.write(text)
+        return p
+
+    def read(self, p):
+        with open(p) as fh: return fh.read()
+
+    def test_reference_with_section_indexes_and_undo_reverts_both(self):
+        self.note("2026-10-01-a.md", title="My [odd] note"); p = self.readme(); before = self.snapshot()
+        r = self.post("/api/action", {"file": "2026-10-01-a.md", "action": "reference", "note": "why", "section": "Azure", "blurb": "does a thing"})
+        self.assertNotIn("warning", r)
+        self.assertIn("- [My odd note](a.md): does a thing\n\n### Hardware", self.read(p))
+        self.assertIn('section: "Azure"', self.read(os.path.join(self.tmp, "reference", "a.md")))
+        self.post("/api/undo", {})
+        self.assertEqual(self.snapshot(), before)
+
+    def test_default_blurb_is_first_sentence_of_question(self):
+        self.note("2026-10-01-a.md", title="T"); p = self.readme()
+        self.post("/api/action", {"file": "2026-10-01-a.md", "action": "reference", "section": "Azure"})
+        self.assertIn("- [T](a.md): Why T?", self.read(p))
+
+    def test_no_section_leaves_readme_alone(self):
+        self.note("2026-10-01-a.md"); p = self.readme()
+        self.post("/api/action", {"file": "2026-10-01-a.md", "action": "reference"})
+        self.assertEqual(self.read(p), INDEX)
+        self.assertNotIn("section:", self.read(os.path.join(self.tmp, "reference", "a.md")))
+
+    def test_missing_readme_or_index_still_files_with_warning(self):
+        self.note("2026-10-01-a.md"); self.note("2026-10-01-b.md")
+        r = self.post("/api/action", {"file": "2026-10-01-a.md", "action": "reference", "section": "Azure"})
+        self.assertIn("No reference/README.md", r["warning"])
+        self.assertTrue(os.path.exists(os.path.join(self.tmp, "reference", "a.md")))
+        p = self.readme("# reference\n\nno index here\n")
+        r = self.post("/api/action", {"file": "2026-10-01-b.md", "action": "reference", "section": "Azure"})
+        self.assertIn("no ## Index", r["warning"])
+        self.assertEqual(self.read(p), "# reference\n\nno index here\n")
+        self.assertNotIn("section:", self.read(os.path.join(self.tmp, "reference", "b.md")))
+
+    def test_undo_refuses_when_readme_changed_since(self):
+        self.note("2026-10-01-a.md"); p = self.readme()
+        self.post("/api/action", {"file": "2026-10-01-a.md", "action": "reference", "section": "Azure"})
+        with open(p, "a") as fh: fh.write("edited\n")
+        self.assertIn("changed", self.post("/api/undo", {}, ok=False)["error"])
+        self.assertTrue(os.path.exists(os.path.join(self.tmp, "reference", "a.md")))
+
+    def test_batch_reference_all_one_section_one_undo(self):
+        self.note("2026-10-01-a.md", title="A1"); self.note("2026-10-01-b.md", title="B1"); p = self.readme(); before = self.snapshot()
+        self.post("/api/batch", {"files": ["2026-10-01-a.md", "2026-10-01-b.md"], "action": "reference", "section": "New one"})
+        t = self.read(p)
+        self.assertIn("### New one\n- [A1](a.md): Why A1?\n- [B1](b.md): Why B1?\n", t)
+        self.post("/api/undo", {})
+        self.assertEqual(self.snapshot(), before)
+
+    def test_unindexed_list_and_add(self):
+        p = self.readme(); d = os.path.join(self.tmp, "reference")
+        for n in ("x1.md", "new.md"):
+            with open(os.path.join(d, n), "w") as fh: fh.write(f"---\ncreated: x\n---\n\n# Title {n}\n\n## What's the question / problem?\n\nHow does it work? More.\n")
+        j = self.get("/api/reference/unindexed")
+        self.assertEqual(j["sections"], ["Azure", "Hardware"])
+        self.assertEqual([f["file"] for f in j["files"]], ["new.md"])
+        self.assertEqual(j["files"][0]["blurb"], "How does it work?")
+        before = self.snapshot()
+        r = self.post("/api/reference/index", {"file": "new.md", "section": "Hardware", "blurb": "mine"})
+        self.assertIn("- [Title new.md](new.md): mine", self.read(p))
+        self.assertIn('section: "Hardware"', self.read(os.path.join(d, "new.md")))
+        self.assertEqual(self.get("/api/reference/unindexed")["files"], [])
+        self.post("/api/undo", {})
+        self.assertEqual(self.snapshot(), before)
+
+    def test_index_add_rejects_bad_input(self):
+        self.readme()
+        for body in ({"file": "../x.md", "section": "A"}, {"file": "README.md", "section": "A"}, {"file": "nope.md", "section": "A"}, {"file": "nope.md", "section": ""}):
+            self.assertIn("error", self.post("/api/reference/index", body, ok=False))
 
 
 if __name__ == "__main__":
