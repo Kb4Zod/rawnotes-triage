@@ -1,20 +1,22 @@
 # RawNotes Triage
 
-I wanted a notes system that would help **Drive me to DONE.** I have discovered that I am good at coming up with ideas and bad at deciding. Ideas pile up in a folder, and each one is a small promise I never keep. RawNotes Triage is a small local web app that turns that pile into a short list of decisions.
+I wanted a notes system that would help **Drive me to DONE.** I have discovered that I am good at coming up with ideas and bad at deciding. Ideas pile up in a folder, and each one is a small promise I never keep. RawNotes Triage is a local web app that turns that pile into decisions and tracks the work afterward.
 
-Point it at a folder of Markdown notes. It shows an Inbox, oldest first, split into notes that have waited two weeks or more and notes from this fortnight. Pick a note and decide:
+Point it at a folder of Markdown notes. On a fresh setup, Welcome asks where they should live and remembers the choice. The Inbox shows the oldest notes first. Pick a note and decide:
 
-- **Promote** it to a project, with a written "done means" and a ship-by date.
-- **Reference** it: file a clean copy for later.
-- **Keep** it in the pot, with a dated next step.
-- **Kill** it, with a reason.
+- **Promote** it into a project folder with a written “done means,” a local git repo and a ship-by date. Experiments can stay open-ended.
+- **Reference** it: file a copy for later, optionally adding it to a reference index in the same step.
+- **Keep** it with a next step, within a limit: by default, three Keeps or 30 days in the Inbox.
+- **Kill** it and move the capture to the Archive.
 
-Each decision moves real files, stamps the note's status, and lands in an archive. Nothing is overwritten, changes are all-or-nothing, and the last 20 can be undone with one key.
+Decisions update real files. The app checks changes and attempts rollback on failure; the newest 20 tracked changes can be undone while the server runs, provided their files have not changed since. If the notes folder is in git, touched notes are committed automatically with your normal hooks. The terminal command and agent skill use the same server rules and undo list.
 
-Promoted notes show up on a Projects board sorted by deadline: Overdue, Due this week, Later, Experiments, Closed. Each card shows a countdown, the definition of done, and recent commits and pull requests (if you use git and the GitHub CLI), with one-click Mark shipped, +7 days or Kill. A Pulse page tracks your commits and how fast you clear the Inbox.
+A Projects board tracks deadlines, done means, commits and pull requests. Extensions need a reason and are limited to two by default. When a round ships, choose another round, move the project to Maintained, or archive it; killing moves it to an abandoned archive folder. Before a move, the app checks what points at the folder and reports blockers and follow-up tasks. Active and template projects must have their committed work pushed to GitHub before closing into Maintained, or Archive when they have work beyond the starter commit. A localhost action can create a private GitHub repo and make the first push.
 
-The goal: every promoted note is shipped or killed within 3 to 7 days.
+The goal is to ship or kill promoted work within **3–7 days**. Pulse shows Inbox flow and GitHub commits so you can see whether ideas are turning into finished work.
 
-It is plain Python 3 (no dependencies) plus one HTML page, runs on your own machine, works offline, is keyboard-driven, and has a phone layout (in progress). There is no login, so keep it on localhost or a private network.
+It is Python 3 with no third-party Python dependencies and one HTML page. It runs locally, supports keyboard and phone use, and works offline for core triage. GitHub features need `gh` and a connection. Folder moves and other machine-specific actions require localhost. There is no app login, so keep it on localhost or a trusted network.
 
-Written and tested on Linux. The core should run anywhere Python does, but macOS and Windows are untested.
+Written and tested on Linux; macOS and Windows are untested. Omarchy users can install a desktop launcher and an always-on user service.
+
+Start with [First-run Setup](SETUP.md), then the [User Guide](USER-GUIDE.md).
