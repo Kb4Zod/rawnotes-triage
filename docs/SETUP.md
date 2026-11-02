@@ -150,7 +150,7 @@ gh auth login
 gh auth status
 ```
 
-Restart or refresh the app and check the rail's **Signed in as** line. GitHub features use that account. The repo viewer opens its owned repos; Pulse can also count commits in collaborator repos. Without GitHub, basic triage continues to work.
+Restart the app, or wait a minute for the cached status to expire and reload the page, then check the rail's **Signed in as** line. GitHub features use that account. The repo viewer opens its owned repos; Pulse can also count commits in collaborator repos. Without GitHub, basic triage continues to work.
 
 Alternatively, click the rail's GitHub status on a localhost page to save a personal access token. The app validates it and stores it as `github-token` in the config directory (directory `0700`, file `0600`); `gh` is still required. A saved token takes precedence over environment tokens and the CLI's own login. **Remove saved token** returns to the environment/CLI credentials. Token entry and removal are unavailable from a phone on the network.
 
@@ -204,4 +204,14 @@ Open **RawNotes Triage** with `SUPER + SPACE`; `SUPER + F` toggles full screen. 
 
 You are ready when the page opens without Welcome, `rawtriage where` shows the right paths, a dated note appears in the Inbox, and a Keep/Undo cycle succeeds. GitHub and auto-commit may remain optional; read any warnings so you know whether commits and remote features are available.
 
-For a phone, start the server with `--host 0.0.0.0` and open its LAN/Tailscale address on the same port. The default installed service binds localhost; this flag applies to a manually started server unless you separately configure the service. There is no login: anyone able to reach that port can read and change notes and use your repo viewer. Use a trusted network. Folder moves, GitHub repo creation, token changes and certain undo operations require localhost; see [phone restrictions](USER-GUIDE.md#appearance-and-phone-use).
+For a phone, a server must listen on a LAN/Tailscale address. The installed service binds localhost on port 8765. If it is running, use a separate free port for a manual session, from the app checkout:
+
+```bash
+python3 server.py --host 0.0.0.0 --port 8766
+```
+
+Leave that terminal open and visit `http://<server-LAN-or-Tailscale-address>:8766` on the phone. To send CLI commands to this session, prefix them with `RAWTRIAGE_PORT=8766`; otherwise the CLI still uses the service on 8765. Each server has its own in-memory undo list. Stop the manual session with `Ctrl+C` when finished.
+
+Alternatively, stop the service with `systemctl --user stop rawtriage-web` before starting a manual server on 8765. Restarting the installed service with `--restart --host 0.0.0.0` does not apply the host flag. Resume the normal localhost service afterward with `systemctl --user start rawtriage-web`.
+
+There is no login: anyone able to reach the listening port can read and change notes and use your repo viewer. Use a trusted network. Folder moves, GitHub repo creation, token changes and certain undo operations require localhost; see [phone restrictions](USER-GUIDE.md#appearance-and-phone-use).

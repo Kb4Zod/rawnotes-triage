@@ -148,7 +148,7 @@ Select a card again or press `Esc` to close its panel. Git facts cache for 20 se
 
 **Done means:** Edit/Fill in → Review change (before/after) → Confirm and save. Maximum 600 characters. Empty placeholders count as missing and show **Define done means**. Saving is refused if the definition changed on disk. To give an undated project a ship-by date, add `- due: YYYY-MM-DD` to the header of its project note, before the first `##` heading.
 
-**+7 days:** asks for a reason of at least 10 characters, records it under `## Plan`, and increments `extensions:`. The new due date is seven days after today or the existing deadline, whichever is later. Not offered for open-ended experiments or undated folders. After two extensions by default, the button reads **No more extensions**; an overdue project shows **Decide**.
+**+7 days:** asks for a reason of at least 10 characters, records it under `## Plan`, and increments `extensions:`. The new due date is seven days after today or the existing deadline, whichever is later. Not offered for open-ended experiments or undated folders. After two extensions by default, the button reads **No more extensions**; an overdue project with no extensions left shows **Decide**.
 
 ### Close out a round or a project
 
@@ -169,7 +169,7 @@ Moves use a rename on the same filesystem. Undo checks the folder for changed/ad
 
 ### Put work on GitHub
 
-Git badges come from the local clone. **On GitHub** means origin tracking refs exist; **GH ↑N** means local HEAD commits are not on those refs. **Not on GitHub** appears for a promoted project with no GitHub origin once it has work beyond the skeleton commit or is at least two days old.
+Git badges come from the local clone. **On GitHub** means origin tracking refs exist; **GH ↑N** counts commits on any local branch (plus a detached HEAD) that are not on those refs. **Not on GitHub** appears for a promoted project with no GitHub origin once it has work beyond the skeleton commit or is at least two days old.
 
 A local repo with **no origin** offers **Create private GitHub repo** on the server's own desktop page. It requires signed-in `gh`, a clean tree, a first commit and the `main` branch. It creates a private repo under your signed-in account, adds origin and pushes main with hooks enabled. If creation succeeds but the push fails, the message explains how to finish manually; do not try to create the repo again.
 
@@ -263,7 +263,7 @@ There is **no app login**. Anyone who can reach the listening port can read/chan
 | No Welcome on first launch | The selected notes folder already exists; this is expected |
 | Empty Inbox | Use dated `YYYY-MM-DD-topic.md` names directly in the notes folder; run `rawtriage where` and `rawtriage check` |
 | Port in use | Use another port, or `--restart` for an existing triage server |
-| New flags seem ignored | An existing server was reopened; restart it with the intended options |
+| New flags seem ignored | An existing server was reopened. Stop it or use another port for new command-line flags. For the installed service, change saved config and restart, or stop the service before a manual run |
 | Reload banner | Reload after the server update |
 | Keep refused | The note exceeded the Inbox age/count limit; promote, file, merge or kill it |
 | Auto-commit warning | The decision still happened; check git identity, hook output, locks or an in-progress merge/rebase |
