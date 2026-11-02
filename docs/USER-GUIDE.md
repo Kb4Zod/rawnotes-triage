@@ -43,7 +43,7 @@ To try it on copies:
 python3 server.py --notes /tmp/copy/RawNotes --log /tmp/copy/triage.log --port 8766
 ```
 
-Promotions and reference copies go beside that copied notes folder. An existing triage server on the chosen port is reopened, so stop it or use another port when changing folders. Restart after updating the app; a tab with a different version asks you to reload.
+Promotions and reference copies go beside that copied notes folder. An existing triage server on the chosen port is reopened, so stop it or use another port when changing folders. If `--restart` restarts the installed service, that service uses its own saved configuration rather than new flags such as `--notes`. Restart after updating the app; a tab with a different version asks you to reload.
 
 ### First launch and desktop installation
 

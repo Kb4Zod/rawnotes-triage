@@ -58,7 +58,7 @@ To start with a particular path:
 python3 server.py --notes ~/Projects/RawNotes
 ```
 
-A running triage server on the same port is reopened rather than replaced. Stop it first, use `--restart`, or choose a different port to test another folder. Otherwise the new `--notes` argument does not reconfigure the running process.
+A running triage server on the same port is reopened rather than replaced. Stop it first or choose a different port to test another folder. For a manually started server, `--restart --notes PATH` also replaces it with the requested options. If the existing server belongs to the installed systemd service, however, `--restart` restarts that service with its own configuration; it does not apply the new `--notes` flag. To change the service's notes folder, update the saved config and restart the service.
 
 ## 3. Complete the Welcome dialog
 
@@ -122,7 +122,7 @@ bin/rawtriage check
 
 You can also create a note in your editor from `_template.md`. Name it `YYYY-MM-DD-topic.md`, fill in the title, date and question, and keep the header's `status` (`open` or `cooking`) and `type` (`question`, `research` or `issue`). `_template.md` itself is not an Inbox note. An empty Inbox is normal until a dated note exists.
 
-Open the note in the page. Try **Keep** with a next step, then **Z** to undo it. This checks writes and the shared undo list without creating a project. Keep counts toward the default three-Keep limit. Undo lives in memory and is cleared by a server restart.
+Open the note in the page. Try **Keep** with a next step, then **Z** to undo it. This checks writes and the shared undo list without creating a project. Keep counts toward the default three-Keep limit; undoing it restores the previous count and date. Undo lives in memory and is cleared by a server restart.
 
 ## 6. Decide whether to version your notes
 
