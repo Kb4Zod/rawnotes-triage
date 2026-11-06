@@ -4,6 +4,14 @@ The version shows in the page heading ("RawNotes Triage version X.XX") and
 in the startup line. Bump `VERSION` in `server.py` and add an entry here
 with every change. Versions 1.00-1.03 were numbered after the fact from git history.
 
+## 2.14 — 2026-11-06
+- **`## Moved` in a moved project's `NOTES.md` names no absolute path.** That `NOTES.md` is tracked in the project's
+  own repo, which may be public, and its close-out to-dos used to carry the full commands (the memory-folder `mv`, with
+  the home folder and username in both paths and keys; the T3 Code folder paths; `git -C <path> worktree prune`). Now
+  each to-do says what to do without them: move the memory folder in `~/.claude/projects/` to the new folder's key,
+  point the T3 Code project at its new place, run `git worktree prune` in the moved folder. The toast and the
+  close-out answer (`todos`, this machine only) still carry the exact commands, and undo is unchanged.
+
 ## 2.13 — 2026-10-30
 Flow gaps (plan and tickets in `.scratch/flow-gaps/`; Hugh approved all 13 recommended decisions on 2026-10-30).
 - **RawNotes is committed after every change (01).** If the notes folder is a git repo, each decision, batch, merge,

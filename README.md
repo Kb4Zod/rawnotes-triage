@@ -479,7 +479,8 @@ A folder already marked shipped (or `done` by hand) before close out existed, an
 **Close out…** instead, with the same three choices. A taken name gets `-2`, `-3`…. A move runs the dependency check (**What points here**) inside the change: any blocker
 refuses it with the list and each fix (HTTP 400 with `blockers` and `todos`), and nothing changes. To-dos don't stop
 it: they are written under `## Moved` in the moved `NOTES.md` (`- <date>: moved from <old>/ to <new>/. Left to do by
-hand:` and one line per command) and shown in the toast. The status edit and the move are one undo step: **Undo**
+hand:` and one line per to-do, with no absolute path, since that file is in the project's repo) and shown in the
+toast with the exact commands. The status edit and the move are one undo step: **Undo**
 moves the folder back and restores `NOTES.md`, but refuses (changing nothing, and saying the `mv` to do it by hand) if
 anything in the moved folder was added, removed or edited since (git's own `.git` contents don't count), the old name
 is taken again, or the folder became a symlink. A folder too big to check that way (over 200,000 files and folders,

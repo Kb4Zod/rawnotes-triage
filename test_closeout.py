@@ -38,8 +38,10 @@ class CloseBase(Fixture):
         os.makedirs(self.sources.bin_dir, exist_ok=True)
         with open(os.path.join(self.sources.bin_dir, "demo"), "w") as fh: fh.write(f"#!/bin/sh\nexec {self.demo}/app.py\n")
 
-    def memory(self):
-        d = os.path.join(self.sources.claude_projects, depcheck.claude_key(self.demo)); os.makedirs(d); return d
+    def memory(self): return self.memory_of(self.demo)
+
+    def memory_of(self, folder):
+        d = os.path.join(self.sources.claude_projects, depcheck.claude_key(folder)); os.makedirs(d); return d
 
     def remote(self, path, body=None, host="192.168.1.5"):
         """A request from a browser that is not on this machine (needs BIND_HOST 0.0.0.0 for its Host name to pass)."""
@@ -75,9 +77,10 @@ class Outcomes(CloseBase):
         new_mem = os.path.join(self.sources.claude_projects, depcheck.claude_key(os.path.join(self.tmp, "archive", "demo")))
         moved = text.split("## Moved", 1)[1]
         self.assertIn(f"- {t}: moved from `active/demo/` to `archive/demo/`. Left to do by hand:", moved)
-        self.assertIn(f"`mv {mem} {new_mem}`", moved)
-        self.assertIn(f"  - Update any T3 Code project whose folder is {self.demo} to {os.path.join(self.tmp, 'archive', 'demo')}", moved)
+        self.assertIn("keyed by the old path: move it in `~/.claude/projects/` to the new folder's key", moved)
+        self.assertIn("  - Point the T3 Code project for this folder at its new place", moved)
         self.assertEqual([x["kind"] for x in r["todos"]], ["agent-memory", "t3"])
+        self.assertEqual(r["todos"][0]["fix"], f"mv {mem} {new_mem}")  # the toast keeps the exact commands
         self.assertTrue(os.path.isdir(mem))  # the app never moves memory folders itself
         [f] = [x for x in self.get("/api/notes")["inflight"] if x["path"] == "archive/demo/NOTES.md"]
         self.assertEqual((f["done"], f["closed"]), (True, t))  # shown in the Closed column for the window
@@ -85,6 +88,29 @@ class Outcomes(CloseBase):
         self.post("/api/undo", {})
         after = self.snapshot(); self.assertEqual({k: v for k, v in after.items() if not k.startswith("home/")},
                                                   {k: v for k, v in before.items() if not k.startswith("home/")})
+
+    def test_moved_in_notes_names_no_absolute_path_but_the_toast_does(self):
+        """NOTES.md is tracked in the project's own (maybe public) repo: ## Moved says what to do without the home
+        folder, the username or the projects root; the answer (toast and panel, this machine only) has the commands."""
+        g = ["git", "-c", "user.name=T", "-c", "user.email=t@example.com", "-C", self.demo]
+        subprocess.run(["git", "init", "-q", "-b", "main", self.demo], check=True)
+        subprocess.run(g + ["add", "-A"], check=True); subprocess.run(g + ["commit", "-qm", "x"], check=True)
+        wt = os.path.join(self.tmp, "wt"); subprocess.run(g + ["worktree", "add", "-q", wt], check=True)
+        shutil.rmtree(wt)  # a stale worktree record: a to-do, not a blocker
+        mem = self.memory(); os.makedirs(os.path.join(self.demo, "sub")); self.memory_of(os.path.join(self.demo, "sub"))
+        r = self.close(); moved = self.read("archive", "demo", "NOTES.md").split("## Moved", 1)[1]
+        self.assertEqual(sorted(x["kind"] for x in r["todos"]), ["agent-memory", "agent-memory", "t3", "worktree"])
+        self.assertEqual(moved.count("\n  - "), 4)
+        for secret in (self.tmp, self.home, depcheck.claude_key(self.tmp), depcheck.claude_key(self.home),
+                       os.path.realpath(self.tmp), os.path.expanduser("~"), os.path.basename(os.path.expanduser("~"))):
+            self.assertNotIn(secret, moved)
+        self.assertIn("run `git worktree prune` in the moved folder", moved)
+        fixes = [x["fix"] for x in r["todos"]]; dest = os.path.join(self.tmp, "archive", "demo")
+        self.assertIn(f"mv {mem} {os.path.join(self.sources.claude_projects, depcheck.claude_key(dest))}", fixes)
+        self.assertIn(f"git -C {dest} worktree prune", fixes)
+        self.assertIn(f"Update any T3 Code project whose folder is {self.demo} to {dest}", fixes)
+        self.post("/api/undo", {}); self.assertTrue(os.path.isdir(self.demo))
+        self.assertNotIn("## Moved", self.read("active", "demo", "NOTES.md"))
 
     def test_maintained_is_suggested_for_a_github_origin_and_moves_there(self):
         subprocess.run(["git", "init", "-q", "-b", "main", self.demo], check=True)

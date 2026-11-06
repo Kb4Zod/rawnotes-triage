@@ -38,7 +38,7 @@ import depcheck, safefs
 from notemeta import (field, set_field, drop_field, title_of, append_outcome, append_to_section, closed_date, question_of, question_summary, note_body,
                       eol_of, with_eol, to_lf, header_lines, title_index, HEAD_LINE)
 
-VERSION = "2.13"  # bump on every change; history in CHANGELOG.md
+VERSION = "2.14"  # bump on every change; history in CHANGELOG.md
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOG_PATH = os.path.join(HERE, "triage.log")
 FONT_RE = re.compile(r"^/static/fonts/[A-Za-z0-9-]+\.woff2$")
@@ -2039,9 +2039,20 @@ def _next_round(tx, path, kind, name, target, done, due):
     tx.label = f"next round of {name}"; tx.log(f"project next {kind}/{name} due {due or 'open-ended'}")
     return f"Shipped {name} 🎉 Next round" + (f" ships by {due}" if due else " is open-ended")
 
+MOVED_TODO = {  # what ## Moved says for each to-do: no absolute path (NOTES.md is tracked in the project's own repo,
+    # which may be public); the exact commands go only to the toast and the panel, which stay on this machine
+    "agent-memory": "move it in `~/.claude/projects/` to the new folder's key (its full path with every `/` as `-`); "
+                    "the close-out toast showed the exact `mv`",
+    "t3": "Point the T3 Code project for this folder at its new place",
+    "worktree": "run `git worktree prune` in the moved folder",
+}
+
 def _moved_lines(t, old, new, todos):
     out = [f"- {t}: moved from `{old}/` to `{new}/`" + (". Left to do by hand:" if todos else ".")]
-    for x in todos: out.append(f"  - {x['fix']}" if x["kind"] == "t3" else f"  - {x['detail']}: `{x['fix']}`")
+    scrub = home_scrubber(dep_sources().home)  # for a kind added later: at least never the home folder
+    for x in todos:
+        say = MOVED_TODO.get(x["kind"]) or scrub(f"`{x['fix']}`")
+        out.append(f"  - {say}" if x["kind"] == "t3" else f"  - {scrub(x['detail'])}: {say}")
     return "\n".join(out)
 
 def blocked_message(head, blockers):
