@@ -1,0 +1,4 @@
+#!/bin/sh
+# Test-only opener (RAWTRIAGE_TEST_OPENER): opens nothing; appends the path it was given to $RAWTRIAGE_TEST_OPENED.
+[ -n "$RAWTRIAGE_TEST_OPENED" ] && printf '%s\n' "$1" >> "$RAWTRIAGE_TEST_OPENED"
+exit 0

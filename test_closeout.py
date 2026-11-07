@@ -12,7 +12,7 @@ from unittest import mock
 
 import depcheck
 import server
-from testkit import Fixture
+from testkit import Fixture, undo_list
 
 NOTES = ("# Demo\n\n- date: 2026-10-01\n- status: promoted\n- promoted: 2026-10-01\n- due: 2026-12-01\n- extensions: 1\n\n"
          "## Plan\n\n- definition of done: It ships.\n- pushed 2026-11-24 → 2026-12-01 (2026-10-20): parts late\n")
@@ -195,7 +195,7 @@ class Blockers(CloseBase):
         self.assertEqual(code, 400)
         self.assertIn("Can't move demo: 1 thing points at it", r["error"]); self.assertIn("/.local/bin/demo", r["error"])
         self.assertEqual([b["kind"] for b in r["blockers"]], ["bin"]); self.assertIn("fix", r["blockers"][0])
-        self.assertEqual((self.snapshot(), server._undo), (before, []))
+        self.assertEqual((self.snapshot(), undo_list()), (before, []))
         code, r = self.call("/api/project/status", {"name": "demo", "action": "kill", "note": "Not needed."})
         self.assertEqual((code, self.snapshot()), (400, before)); self.assertIn("Can't move demo", r["error"])
         self.close("next", done="Again.", due_days=3)  # a next round moves nothing, so nothing blocks it
@@ -214,7 +214,7 @@ class Blockers(CloseBase):
         os.symlink(outside, os.path.join(self.tmp, "archive"))
         before = self.snapshot()
         self.assertIn("symlink", self.close(ok=False)["error"])
-        self.assertEqual((self.snapshot(), os.listdir(outside), server._undo), (before, [], []))
+        self.assertEqual((self.snapshot(), os.listdir(outside), undo_list()), (before, [], []))
 
     def test_a_worktree_is_not_a_project_to_close(self):
         wt = self.project("demo-wt")
@@ -228,9 +228,9 @@ class UndoMove(CloseBase):
         self.moved = os.path.join(self.tmp, "archive", "demo")
 
     def refused(self, msg):
-        before = self.snapshot(); n = len(server._undo)
+        before = self.snapshot(); n = len(undo_list())
         r = self.post("/api/undo", {}, ok=False); self.assertIn(msg, r["error"])
-        self.assertEqual((self.snapshot(), len(server._undo)), (before, n))
+        self.assertEqual((self.snapshot(), len(undo_list())), (before, n))
         return r
 
     def test_undo_refuses_a_file_added_edited_or_removed_since(self):
@@ -255,7 +255,7 @@ class UndoMove(CloseBase):
         os.rename(self.moved, os.path.join(self.tmp, "archive", "renamed")); self.refused("no longer in archive/")
 
     def test_git_activity_inside_the_moved_repo_does_not_block_undo(self):
-        server._undo.clear(); shutil.rmtree(os.path.join(self.tmp, "archive")); shutil.rmtree(os.path.join(self.notes, "projects"))
+        self.clear_undo(); shutil.rmtree(os.path.join(self.tmp, "archive")); shutil.rmtree(os.path.join(self.notes, "projects"))
         shutil.rmtree(self.demo, ignore_errors=True); self.demo = self.project("demo", notes=NOTES)
         subprocess.run(["git", "init", "-q", "-b", "main", self.demo], check=True)
         subprocess.run(["git", "-C", self.demo, "add", "-A"], check=True); subprocess.run(["git", "-C", self.demo, "commit", "-qm", "x"], check=True)
@@ -305,13 +305,13 @@ class Faults(CloseBase):
             if a == self.demo: raise OSError(errno.EXDEV, "Invalid cross-device link")  # another filesystem: never copied
             return real(a, b)
         with mock.patch("os.rename", side_effect=rename): self.close(ok=False)
-        self.assertEqual((self.snapshot(), server._undo, self.tmp_leftovers()), (self.before, [], []))
+        self.assertEqual((self.snapshot(), undo_list(), self.tmp_leftovers()), (self.before, [], []))
 
     def test_a_failure_after_the_move_moves_it_back(self):
         real = server.Tx.movedir
         def movedir(tx, src, dst): real(tx, src, dst); raise OSError(5, "simulated failure after the move")
         with mock.patch.object(server.Tx, "movedir", movedir): self.close(ok=False)
-        self.assertEqual((self.snapshot(), server._undo), (self.before, []))
+        self.assertEqual((self.snapshot(), undo_list()), (self.before, []))
 
     def test_a_rollback_that_cannot_move_back_leaves_an_unfinished_undo_that_finishes(self):
         real_movedir, real_rename = server.Tx.movedir, os.rename
@@ -323,13 +323,13 @@ class Faults(CloseBase):
         with mock.patch.object(server.Tx, "movedir", movedir), mock.patch("os.rename", side_effect=rename):
             code, r = self.call("/api/project/close", {"name": "demo", "outcome": "archive"})
         self.assertEqual(code, 500); self.assertIn("could not be rolled back", r["error"])
-        [entry] = server._undo; self.assertTrue(entry["label"].startswith("unfinished:"))
+        [entry] = undo_list(); self.assertTrue(entry["label"].startswith("unfinished:"))
         # the folder couldn't go back, so neither could its NOTES.md edit nor archive/ (not empty): all three wait for Undo
         self.assertEqual([op[0] for op in entry["ops"]], ["write", "mkdir", "movedir"])
         self.assertTrue(os.path.isdir(os.path.join(self.tmp, "archive", "demo")))
         state["stuck"] = False
         self.post("/api/undo", {})
-        self.assertEqual((self.snapshot(), server._undo), (self.before, []))
+        self.assertEqual((self.snapshot(), undo_list()), (self.before, []))
 
     def test_an_undo_that_fails_half_way_moves_the_folder_forward_again(self):
         real = server.safefs.atomic_write
@@ -340,14 +340,14 @@ class Faults(CloseBase):
         with mock.patch.object(server.safefs, "atomic_write", atomic_write):
             code, r = self.call("/api/undo", {})
         self.assertEqual(code, 500); self.assertIn("nothing was changed", r["error"])
-        self.assertEqual((self.snapshot(), len(server._undo)), (mid, 1))
+        self.assertEqual((self.snapshot(), len(undo_list())), (mid, 1))
         self.post("/api/undo", {}); self.assertEqual(self.snapshot(), self.before)
 
     def test_a_folder_too_big_to_check_still_moves_but_its_undo_refuses(self):
         with mock.patch.object(server, "TREE_LIMIT", 1): self.close()
         mid = self.snapshot()
         r = self.post("/api/undo", {}, ok=False); self.assertIn("too big", r["error"]); self.assertIn("mv ", r["error"])
-        self.assertEqual((self.snapshot(), len(server._undo)), (mid, 1))
+        self.assertEqual((self.snapshot(), len(undo_list())), (mid, 1))
 
     def test_the_deps_answer_warns_before_a_move_that_undo_cannot_check(self):
         self.assertNotIn("undo_warning", self.get("/api/project/deps?name=demo&kind=active"))
@@ -403,7 +403,7 @@ class OffThisMachine(CloseBase):
     def test_a_move_is_refused_off_this_machine_and_nothing_changes(self):
         self.sources = depcheck.Sources(self.home, proc=os.path.join(self.tmp, "noproc"), crontab=lambda: "")
         with mock.patch.object(server, "DEPS", self.sources):
-            before = self.snapshot(); n = len(server._undo)
+            before = self.snapshot(); n = len(undo_list())
             for path, body in (("/api/project/close", {"name": "demo", "kind": "active", "outcome": "archive"}),
                                ("/api/project/close", {"name": "demo", "kind": "active", "outcome": "maintained"}),
                                ("/api/project/status", {"name": "demo", "kind": "active", "action": "shipped", "outcome": "archive"}),
@@ -411,7 +411,7 @@ class OffThisMachine(CloseBase):
                                ("/api/project/status", {"name": "demo", "kind": "active", "action": "kill", "note": "not needed"})):
                 code, r = self.remote(path, body)
                 self.assertEqual(code, 400, (path, body, r)); self.assertIn("machine running the server", r["error"]); self.assertNotIn("blockers", r)
-            self.assertEqual((self.snapshot(), len(server._undo)), (before, n))
+            self.assertEqual((self.snapshot(), len(undo_list())), (before, n))
             code, r = self.remote("/api/project/close", {"name": "demo", "kind": "active", "outcome": "next", "done": "Round two.", "due_days": 7})
             self.assertEqual(code, 200, r)  # a next round moves nothing: fine from the phone
             self.assertEqual(self.close()["moved_to"], "archive/demo")  # and from this machine a move still works
@@ -425,10 +425,10 @@ class UndoOffThisMachine(CloseBase):
         p = mock.patch.object(server, "BIND_HOST", "0.0.0.0"); p.start(); self.addCleanup(p.stop)
 
     def refused_remotely(self):
-        before = self.snapshot(); n = len(server._undo)
+        before = self.snapshot(); n = len(undo_list())
         code, r = self.remote("/api/undo", {})
         self.assertEqual(code, 400, r); self.assertIn("machine running the server", r["error"])
-        self.assertEqual((self.snapshot(), len(server._undo)), (before, n))
+        self.assertEqual((self.snapshot(), len(undo_list())), (before, n))
 
     def test_off_machine_undo_of_a_close_out_is_refused_and_the_folder_stays(self):
         original = self.snapshot(); self.close()
@@ -456,11 +456,11 @@ class UndoReverseMoveBlockers(CloseBase):
         original = self.snapshot(); self.close(); moved = os.path.join(self.tmp, "archive", "demo")
         os.makedirs(self.sources.bin_dir, exist_ok=True)
         with open(os.path.join(self.sources.bin_dir, "demo"), "w") as fh: fh.write(f"#!/bin/sh\nexec {moved}/app.py\n")
-        before = self.snapshot(); n = len(server._undo)
+        before = self.snapshot(); n = len(undo_list())
         code, r = self.call("/api/undo", {})
         self.assertEqual(code, 400, r); self.assertIn("Can't move demo back", r["error"]); self.assertIn("/.local/bin/demo", r["error"])
         self.assertEqual([b["kind"] for b in r["blockers"]], ["bin"])
-        self.assertEqual((self.snapshot(), len(server._undo)), (before, n))
+        self.assertEqual((self.snapshot(), len(undo_list())), (before, n))
         os.remove(os.path.join(self.sources.bin_dir, "demo"))
         self.post("/api/undo", {})
         self.assertEqual({k: v for k, v in self.snapshot().items() if not k.startswith("home/")},

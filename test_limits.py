@@ -6,7 +6,7 @@ import unittest
 from unittest import mock
 
 import server
-from testkit import Fixture
+from testkit import Fixture, undo_list
 
 TODAY = dt.date(2026, 11, 1)
 
@@ -18,7 +18,7 @@ class InboxLimits(Fixture):
     relax_limits = False  # the real defaults
     def setUp(self):
         super().setUp()
-        p = mock.patch.object(server, "today", lambda: TODAY); p.start(); self.addCleanup(p.stop)
+        p = mock.patch.dict(os.environ, {"RAWTRIAGE_TODAY": TODAY.isoformat()}); p.start(); self.addCleanup(p.stop)  # read when the server starts
 
     def make(self, days, status="open", extra="", slug="n"):
         name = f"{ago(days)}-{slug}.md"
@@ -51,7 +51,7 @@ class InboxLimits(Fixture):
         before = self.snapshot(); self.assertTrue(self.row(name)["expired"])
         r = self.post("/api/action", {"file": name, "action": "keep"}, ok=False)
         self.assertIn("30-day limit: promote, file, merge or kill it", r["error"])
-        self.assertEqual((self.snapshot(), server._undo), (before, []))
+        self.assertEqual((self.snapshot(), undo_list()), (before, []))
 
     def test_three_keeps_is_expired(self):
         name = self.make(5, "cooking", f"- kept: {ago(1)}\n- keeps: 3\n")
@@ -81,7 +81,7 @@ class InboxLimits(Fixture):
         fresh, old = self.make(2, slug="fresh"), self.make(40, slug="oldnote"); before = self.snapshot()
         r = self.post("/api/batch", {"files": [fresh, old], "action": "keep"}, ok=False)
         self.assertIn("oldnote", r["error"]); self.assertNotIn("“fresh”", r["error"])
-        self.assertEqual((self.snapshot(), server._undo), (before, []))
+        self.assertEqual((self.snapshot(), undo_list()), (before, []))
 
     def test_other_decisions_still_work_on_expired_notes(self):
         for i, act in enumerate(("kill", "reference")):

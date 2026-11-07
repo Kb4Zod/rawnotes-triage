@@ -1,10 +1,17 @@
 """Shared fixture for the v2.05 regression suites: a real server on a temp projects root, never the real notes."""
 import atexit
+import datetime as dt
+import importlib.util
 import json
 import os
+import shlex
 import shutil
+import socket
+import subprocess
+import sys
 import tempfile
 import threading
+import time
 import unittest
 import unittest.mock
 import urllib.error
@@ -48,6 +55,183 @@ os.makedirs(FAKE_DEPS_HOME); os.makedirs(FAKE_PROC)
 server.DEPS = depcheck.Sources(FAKE_DEPS_HOME, proc=FAKE_PROC, crontab=lambda: "")
 server.SYNC_APPS = os.path.join(SESSION_DIR, "no-sync-apps")  # an absolute path that doesn't exist: never found on PATH
 
+# ---- the switch (spec 8.1 of the Rust port): the same tests against another server or CLI binary ----------------------
+# TRIAGE_SERVER=/path/to/rawtriage-web: Fixture and test_server's ApiTestCase start that binary for each test, as its own
+# process, instead of serving server.H in this one (free port, --no-browser, --notes, --log; the same temp notes folder,
+# config dir, fake home and isolated git). TRIAGE_CLI=/path/to/rawtriage: the CLI tests run that binary instead of
+# `python bin/rawtriage`. Unset (the normal run), nothing here changes how a test runs. Under either switch, a test the
+# ledger draft (tools/parity_ledger.py) marks "ported" (it needs a Rust replacement) is skipped, and only those.
+# What the binary can't be told by a flag it gets from the environment (the test hooks of spec 8.1, read only by a
+# `test-hooks` build):
+#   RAWTRIAGE_TODAY=YYYY-MM-DD             "today", fixed when the fixture starts (the real date unless the run sets it)
+#   RAWTRIAGE_TEST_UNDO_DUMP=<file>        after every request, the undo list as JSON (see undo_list())
+#   RAWTRIAGE_TEST_DEPS_HOME=<dir>         the dependency check's home (.config/systemd/user, .local/bin, .claude)
+#   RAWTRIAGE_TEST_PROC=<dir>              its /proc
+#   RAWTRIAGE_TEST_CRONTAB=<file>          its crontab text (a missing file: no crontab)
+#   RAWTRIAGE_TEST_SYNC_APPS=<command>     what runs after a folder moves, instead of sync-apps
+#   RAWTRIAGE_TEST_SHIP_NEEDS_GITHUB=<kinds>  comma-separated kinds whose Ship needs GitHub ("" = none)
+#   RAWTRIAGE_TEST_OPENER=<command>        run instead of the platform opener, the path as its one argument
+# and the fixture's PATH starts with a fake `gh` (FakeGh) that answers nothing until a test scripts it, so no test can
+# reach the real GitHub; GH_TOKEN and GITHUB_TOKEN are not passed on. tools/shim/ has stand-ins for the two binaries
+# that run this repo's own server.py and bin/rawtriage as separate processes, to exercise the switch without Rust.
+HERE = os.path.dirname(os.path.abspath(__file__))
+SERVER_BIN = os.environ.get("TRIAGE_SERVER") or None
+CLI_BIN = os.environ.get("TRIAGE_CLI") or None
+SWITCHED = bool(SERVER_BIN or CLI_BIN)
+CLI = os.path.join(HERE, "bin", "rawtriage")
+FAKE_GH = os.path.join(HERE, "tools", "fake_gh.py")
+NO_CRONTAB = os.path.join(SESSION_DIR, "deps-crontab")  # never created: an empty crontab
+_undo_dump = None  # under TRIAGE_SERVER: the dump file of the server the current test started
+
+
+def cli_argv(cli=CLI):
+    """The command that runs the CLI: TRIAGE_CLI if set, else `python bin/rawtriage` (or `cli`, a copy of it)."""
+    return [CLI_BIN] if CLI_BIN and cli == CLI else [sys.executable, cli]
+
+
+def undo_entry(entry):
+    """One server._undo entry as RAWTRIAGE_TEST_UNDO_DUMP writes it: the label, each op's kind and the paths it touched
+    (never file contents), and whether it is what is left of a change that couldn't be rolled back."""
+    paths = {"move": 2, "movedir": 2}
+    return {"label": entry["label"], "ops": [[op[0], *op[1:1 + paths.get(op[0], 1)]] for op in entry["ops"]],
+            "unfinished": entry["label"].startswith("unfinished:")}
+
+
+def undo_list():
+    """The server's undo list, oldest first: [{"label", "ops": [[kind, path, ...]], "unfinished"}]. In-process it is
+    server._undo; under TRIAGE_SERVER it is the file the binary rewrites after every request (RAWTRIAGE_TEST_UNDO_DUMP)."""
+    if _undo_dump is None: return [undo_entry(e) for e in server._undo]
+    with open(_undo_dump, encoding="utf-8") as fh: return json.load(fh)
+
+
+def free_port():
+    with socket.socket() as s: s.bind(("127.0.0.1", 0)); return s.getsockname()[1]
+
+
+class FakeGh:
+    """A fake `gh` on a PATH of its own (tools/fake_gh.py). It answers from a JSON file the test writes through
+    answer(), in order where a test needs a sequence, and logs every call (argv, environment, working folder) to a file
+    calls() reads. A call nothing answers exits 1 with "fake gh: no answer for …" on stderr (and is logged too)."""
+    def __init__(self, case):
+        self.dir = tempfile.mkdtemp(prefix="rt-fakegh-"); case.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+        self.bin = os.path.join(self.dir, "bin"); os.makedirs(self.bin)
+        self.answers_file, self.log = os.path.join(self.dir, "answers.json"), os.path.join(self.dir, "calls.jsonl")
+        self.answers = []; self._save()
+        gh = os.path.join(self.bin, "gh")
+        with open(gh, "w", encoding="utf-8") as fh:
+            fh.write(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(FAKE_GH)} {shlex.quote(self.dir)} "$@"\n')
+        os.chmod(gh, 0o755)
+
+    def answer(self, argv=None, prefix=None, graphql=None, stdout="", stderr="", exit=0, json_out=None, once=False):
+        """Answer a call whose argv is `argv` exactly, starts with `prefix`, or is `gh api graphql` with a query
+        containing `graphql` (a substring of the -f query=... argument). json_out: stdout as JSON. once: used for one
+        call only, so answers for the same call given in order are a sequence (the last one that isn't `once` repeats)."""
+        self.answers.append({"argv": argv, "prefix": prefix, "graphql": graphql, "exit": exit, "once": once, "stderr": stderr,
+                             "stdout": json.dumps(json_out) if json_out is not None else stdout})
+        self._save(); return self
+
+    def _save(self):
+        tmp = self.answers_file + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh: json.dump({"answers": self.answers}, fh)
+        os.replace(tmp, self.answers_file)
+
+    def calls(self):
+        """Every call so far, oldest first: {"argv", "env", "cwd", "answered"}."""
+        try:
+            with open(self.log, encoding="utf-8") as fh: return [json.loads(l) for l in fh if l.strip()]
+        except FileNotFoundError: return []
+
+
+class ChildServer:
+    """TRIAGE_SERVER, run for one test. Started on first use of the test's port (so whatever setUp still changes in the
+    environment, after the fixture's own setUp, reaches it), stopped by the test's cleanup. Its log, undo dump, output
+    and fake gh live in a folder of their own outside the fixture's tree (snapshots compare that tree)."""
+    def __init__(self, case, notes, config_dir, relax_limits=False):
+        self.case, self.notes, self.config_dir = case, notes, config_dir
+        self.side = tempfile.mkdtemp(prefix="rt-child-"); case.addCleanup(shutil.rmtree, self.side, ignore_errors=True)
+        self.log = os.path.join(self.side, "triage.log"); self.dump = os.path.join(self.side, "undo.json")
+        self.output = os.path.join(self.side, "server-output.txt")
+        self.gh = FakeGh(case); self.proc = None
+        if relax_limits:  # what Fixture's patch of server.LIMIT_DEFAULTS does in-process: the fixture's config.json
+            os.makedirs(config_dir, exist_ok=True)
+            with open(os.path.join(config_dir, "config.json"), "w", encoding="utf-8") as fh:
+                json.dump({"inbox_limit_days": 36500, "max_keeps": 1000}, fh)
+        case.addCleanup(self.stop)
+
+    def env(self):
+        env = {k: v for k, v in os.environ.items() if k not in ("GH_TOKEN", "GITHUB_TOKEN", "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")}
+        opener = os.path.join(self.side, "opened"); env.update({
+            "RAWTRIAGE_CONFIG_DIR": self.config_dir, "RAWTRIAGE_TEST_UNDO_DUMP": self.dump,
+            "RAWTRIAGE_TEST_DEPS_HOME": FAKE_DEPS_HOME, "RAWTRIAGE_TEST_PROC": FAKE_PROC, "RAWTRIAGE_TEST_CRONTAB": NO_CRONTAB,
+            "RAWTRIAGE_TEST_SYNC_APPS": server.SYNC_APPS, "RAWTRIAGE_TEST_SHIP_NEEDS_GITHUB": "",
+            "RAWTRIAGE_TEST_OPENER": os.path.join(HERE, "tools", "shim", "record-open"), "RAWTRIAGE_TEST_OPENED": opener,
+            "PATH": self.gh.bin + os.pathsep + env.get("PATH", os.defpath)})
+        return env
+
+    def start(self):
+        global _undo_dump
+        for attempt in range(3):
+            port = free_port()
+            with open(self.output, "ab") as out:
+                self.proc = subprocess.Popen([SERVER_BIN, "--port", str(port), "--host", "127.0.0.1", "--no-browser",
+                                              "--notes", self.notes, "--log", self.log], cwd=self.side, env=self.env(),
+                                             stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT)
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline and self.proc.poll() is None:
+                try:
+                    with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/version", timeout=2) as r: r.read()
+                    _undo_dump = self.dump; return port
+                except (OSError, ValueError): time.sleep(0.05)
+            self.stop()
+        raise RuntimeError(f"{SERVER_BIN} did not start:\n{self.output_text()}")
+
+    def stop(self):
+        global _undo_dump
+        if self.proc is not None and self.proc.poll() is None:
+            self.proc.terminate()
+            try: self.proc.wait(10)
+            except subprocess.TimeoutExpired: self.proc.kill(); self.proc.wait()
+        self.proc = None
+        if _undo_dump == self.dump: _undo_dump = None
+
+    def restart(self):
+        """A new process on the same folders: an empty undo list and cold caches. Used where a test cleared server._undo."""
+        self.stop()
+        try: os.remove(self.dump)
+        except FileNotFoundError: pass
+
+    def output_text(self):
+        try:
+            with open(self.output, encoding="utf-8", errors="replace") as fh: return fh.read()
+        except FileNotFoundError: return ""
+
+
+class Switchable:
+    """`port` that starts the TRIAGE_SERVER child on first use, for Fixture and test_server's ApiTestCase."""
+    _port = child = None
+
+    @property
+    def port(self):
+        if self._port is None and self.child is not None: self._port = self.child.start()
+        return self._port
+
+    @port.setter
+    def port(self, value): self._port = value
+
+    def switch_to_child(self, notes, config_dir, relax_limits=False):
+        """Under TRIAGE_SERVER: serve this test from the binary, logging to a file outside the fixture's tree (which
+        server.LOG_PATH then names, for tests that read the log), with "today" fixed now."""
+        p = mock.patch.dict(os.environ, {"RAWTRIAGE_TODAY": os.environ.get("RAWTRIAGE_TODAY") or dt.date.today().isoformat()})
+        p.start(); self.addCleanup(p.stop)
+        self.child = ChildServer(self, notes, config_dir, relax_limits)
+        p = mock.patch.object(server, "LOG_PATH", self.child.log); p.start(); self.addCleanup(p.stop)
+
+    def clear_undo(self):
+        """Empty the server's undo list: in-process server._undo.clear(); under TRIAGE_SERVER a fresh process."""
+        if self.child is None: server._undo.clear()
+        else: self.child.restart(); self._port = None
+
+
 
 def isolate_git(case, email=TEST_EMAIL):
     """For the rest of `case`, git sees a throwaway HOME and global config (a fixture identity, hooks off), never the
@@ -65,7 +249,7 @@ def isolate_git(case, email=TEST_EMAIL):
     return cfg
 
 
-class Fixture(unittest.TestCase):
+class Fixture(Switchable, unittest.TestCase):
     """HTTP server bound to a temporary RawNotes + projects root. Helpers read/write only inside it."""
     relax_limits = True
 
@@ -87,6 +271,7 @@ class Fixture(unittest.TestCase):
         server._undo.clear(); server._git_cache.clear()
         for c in (server._notes_cache, server._meta_cache, server._proj_cache): c.clear()
         self.addCleanup(self._restore)
+        if SERVER_BIN: return self.switch_to_child(self.notes, server.CONFIG_DIR, self.relax_limits)
         self.httpd = server.Server(("127.0.0.1", 0), server.H)
         self.port = self.httpd.server_address[1]
         threading.Thread(target=lambda: self.httpd.serve_forever(poll_interval=0.02), daemon=True).start()
@@ -148,3 +333,23 @@ class Fixture(unittest.TestCase):
 
     def tmp_leftovers(self):
         return [os.path.join(r, f) for r, _, fs in os.walk(self.tmp) for f in fs if f.endswith(".tmp")]
+
+
+def _skip_what_the_ledger_ports():
+    """Under a switch, skip exactly the tests the ledger draft marks "ported" (a Rust test replaces them, or they call
+    no route and no CLI, so they would still test Python), each with its reason; every other test runs."""
+    spec = importlib.util.spec_from_file_location("parity_ledger", os.path.join(HERE, "tools", "parity_ledger.py"))
+    ledger = importlib.util.module_from_spec(spec); spec.loader.exec_module(ledger)
+    ported = {t.id: t.reason for t in ledger.build().tests if t.outcome == "ported"}
+    run = unittest.TestCase.run
+
+    def run_unless_ported(self, result=None):
+        why = ported.get(self.id())
+        if why is not None:
+            method = getattr(self, self._testMethodName)
+            setattr(self, self._testMethodName, unittest.skip(f"ported (ledger draft): {why}")(method))
+        return run(self, result)
+    unittest.TestCase.run = run_unless_ported
+
+
+if SWITCHED: _skip_what_the_ledger_ports()

@@ -7,7 +7,7 @@ import unittest
 from unittest import mock
 
 import server
-from testkit import Fixture
+from testkit import Fixture, undo_list
 
 
 class Faults(Fixture):
@@ -33,14 +33,14 @@ class Faults(Fixture):
             r = self.post("/api/action", {"file": "2026-10-01-a.md", "action": "kill", "note": "meh"})
         self.assertIn("Killed", r["msg"])
         self.assertTrue(os.path.exists(os.path.join(self.notes, "done", "2026-10-01-a.md")))
-        self.assertEqual(len(server._undo), 1)
+        self.assertEqual(len(undo_list()), 1)
         self.post("/api/undo", {})
         self.assertEqual(self.snapshot(), self.before)
 
     def test_unwritable_log_file_does_not_fail_changes(self):
         server.log = self.saved[2]; server.LOG_PATH = os.path.join(self.tmp, "no", "such", "dir", "triage.log")
         self.post("/api/action", {"file": "2026-10-01-a.md", "action": "kill"})
-        self.assertEqual(len(server._undo), 1)
+        self.assertEqual(len(undo_list()), 1)
 
     def test_a_rolled_back_change_writes_no_log_lines(self):
         server.log = self.saved[2]; server.LOG_PATH = os.path.join(self.tmp, "triage.log")
@@ -55,7 +55,7 @@ class Faults(Fixture):
     def test_merge_with_a_duplicate_source_changes_nothing(self):
         r = self.post("/api/merge", {"files": ["2026-10-01-a.md", "2026-10-01-a.md"], "title": "Dup"}, ok=False)
         self.assertIn("twice", r["error"])
-        self.assertEqual((self.snapshot(), server._undo), (self.before, []))
+        self.assertEqual((self.snapshot(), undo_list()), (self.before, []))
 
     def test_merge_and_batch_with_missing_or_bad_sources_change_nothing(self):
         for bad in (["2026-10-01-a.md", "nope.md"], ["2026-10-01-a.md", "../escape.md"], ["2026-10-01-a.md", 7], "a.md", None):
@@ -64,58 +64,58 @@ class Faults(Fixture):
         self.post("/api/batch", {"files": ["2026-10-01-a.md", "2026-10-01-a.md"], "action": "kill"}, ok=False)
         self.post("/api/batch", {"files": ["2026-10-01-a.md", "2026-10-02-b.md"], "action": "keep", "status": "dead"}, ok=False)
         self.post("/api/batch", {"files": ["2026-10-01-a.md", "2026-10-02-b.md"], "action": "promote"}, ok=False)
-        self.assertEqual((self.snapshot(), server._undo), (self.before, []))
+        self.assertEqual((self.snapshot(), undo_list()), (self.before, []))
 
     def test_batch_with_one_note_already_in_the_archive_changes_nothing(self):
-        self.post("/api/action", {"file": "2026-10-03-c.md", "action": "kill"}); server._undo.clear()
+        self.post("/api/action", {"file": "2026-10-03-c.md", "action": "kill"}); self.clear_undo()
         mid = self.snapshot()
         self.post("/api/batch", {"files": ["2026-10-01-a.md", "done/2026-10-03-c.md"], "action": "kill"}, ok=False)
-        self.assertEqual((self.snapshot(), server._undo), (mid, []))
+        self.assertEqual((self.snapshot(), undo_list()), (mid, []))
 
     def test_symlink_alias_of_the_same_note_counts_as_a_duplicate(self):
         os.symlink(self.a, os.path.join(self.notes, "2026-10-09-alias.md"))
         self.post("/api/batch", {"files": ["2026-10-01-a.md", "2026-10-09-alias.md"], "action": "kill"}, ok=False)
-        self.assertEqual(server._undo, [])
+        self.assertEqual(undo_list(), [])
 
     # ---- 1: rollback
     def test_failed_move_in_a_kill_rolls_the_edit_back(self):
         self.fail_nth("os.rename", 1)
         r = self.post("/api/action", {"file": "2026-10-01-a.md", "action": "kill", "note": "x"}, ok=False)
         self.assertIn("simulated", r["error"])
-        self.assertEqual((self.snapshot(), server._undo, self.tmp_leftovers()), (self.before, [], []))
+        self.assertEqual((self.snapshot(), undo_list(), self.tmp_leftovers()), (self.before, [], []))
 
     def test_failed_final_step_of_a_promote_removes_the_new_project(self):
         self.fail_nth("os.rename", 1)  # the move of the capture to done/ is the last step
         self.post("/api/action", {"file": "2026-10-01-a.md", "action": "promote", "dest": "active", "note": "Ships.", "due_days": 3}, ok=False)
-        self.assertEqual((self.snapshot(), server._undo), (self.before, []))
+        self.assertEqual((self.snapshot(), undo_list()), (self.before, []))
         self.assertFalse(os.path.exists(os.path.join(self.tmp, "active")))
 
     def test_batch_that_fails_on_the_third_note_puts_all_back(self):
         self.fail_nth("os.rename", 3)
         self.post("/api/batch", {"files": ["2026-10-01-a.md", "2026-10-02-b.md", "2026-10-03-c.md"], "action": "kill", "note": "x"}, ok=False)
-        self.assertEqual((self.snapshot(), server._undo, self.tmp_leftovers()), (self.before, [], []))
+        self.assertEqual((self.snapshot(), undo_list(), self.tmp_leftovers()), (self.before, [], []))
 
     def test_merge_that_fails_midway_puts_everything_back(self):
         self.fail_nth("os.rename", 2)
         self.post("/api/merge", {"files": ["2026-10-01-a.md", "2026-10-02-b.md", "2026-10-03-c.md"], "title": "All", "then": "promote",
                                  "dest": "active", "note": "Done.", "slug": "all"}, ok=False)
-        self.assertEqual((self.snapshot(), server._undo), (self.before, []))
+        self.assertEqual((self.snapshot(), undo_list()), (self.before, []))
 
     def test_failed_atomic_write_leaves_the_old_file_and_no_temp_file(self):
         self.fail_nth("os.replace", 1)
         self.post("/api/action", {"file": "2026-10-01-a.md", "action": "keep", "note": "next"}, ok=False)
-        self.assertEqual((self.snapshot(), self.tmp_leftovers(), server._undo), (self.before, [], []))
+        self.assertEqual((self.snapshot(), self.tmp_leftovers(), undo_list()), (self.before, [], []))
 
     def test_restore_and_project_writes_roll_back_too(self):
-        self.post("/api/action", {"file": "2026-10-01-a.md", "action": "kill"}); server._undo.clear(); mid = self.snapshot()
+        self.post("/api/action", {"file": "2026-10-01-a.md", "action": "kill"}); self.clear_undo(); mid = self.snapshot()
         with mock.patch("os.rename", side_effect=OSError(5, "simulated")):
             self.post("/api/restore", {"file": "done/2026-10-01-a.md"}, ok=False)
-        self.assertEqual((self.snapshot(), server._undo), (mid, []))
-        self.post("/api/action", {"file": "2026-10-02-b.md", "action": "promote", "dest": "active", "note": "x", "due_days": 3}); server._undo.clear()
+        self.assertEqual((self.snapshot(), undo_list()), (mid, []))
+        self.post("/api/action", {"file": "2026-10-02-b.md", "action": "promote", "dest": "active", "note": "x", "due_days": 3}); self.clear_undo()
         mid = self.snapshot()
         self.fail_nth("os.replace", 1)
         self.post("/api/project/status", {"path": "active/b/NOTES.md", "action": "extend", "note": "Waiting on the parts."}, ok=False)
-        self.assertEqual((self.snapshot(), server._undo), (mid, []))
+        self.assertEqual((self.snapshot(), undo_list()), (mid, []))
 
     # ---- 1: partial failure stays recoverable
     def test_rollback_that_cannot_finish_leaves_an_undo_entry_that_finishes_the_job(self):
@@ -130,11 +130,11 @@ class Faults(Fixture):
         with mock.patch("os.rename", rename_then_break), mock.patch("os.replace", replace):
             r = self.post("/api/action", {"file": "2026-10-01-a.md", "action": "kill", "note": "x"}, ok=False)
         self.assertIn("could not be rolled back", r["error"])
-        self.assertEqual(len(server._undo), 1); self.assertIn("unfinished", server._undo[0]["label"])
+        self.assertEqual(len(undo_list()), 1); self.assertIn("unfinished", undo_list()[0]["label"])
         self.assertNotEqual(self.snapshot(), self.before)  # the edit is still there...
         state["broken"] = False
         self.post("/api/undo", {})  # ...and Undo finishes the job
-        self.assertEqual((self.snapshot(), server._undo), (self.before, []))
+        self.assertEqual((self.snapshot(), undo_list()), (self.before, []))
 
     def test_undo_that_fails_midway_keeps_the_entry_whole(self):
         self.post("/api/action", {"file": "2026-10-01-a.md", "action": "promote", "dest": "active", "note": "Ships.", "due_days": 3})
@@ -145,7 +145,7 @@ class Faults(Fixture):
             if len(n) == 1: raise OSError(5, "simulated")
             return real(a, b)
         with mock.patch("os.rename", flaky): self.post("/api/undo", {}, ok=False)
-        self.assertEqual((self.snapshot(), len(server._undo)), (after, 1))
+        self.assertEqual((self.snapshot(), len(undo_list())), (after, 1))
         self.post("/api/undo", {}); self.assertEqual(self.snapshot(), self.before)
 
     def test_undo_whose_redo_also_fails_keeps_only_what_still_stands(self):
@@ -160,7 +160,7 @@ class Faults(Fixture):
         self.assertIn("could not be put back", r["error"])
         # the capture is back in the Inbox; the entry no longer claims it moved
         self.assertTrue(os.path.exists(self.a))
-        self.assertNotIn(("move", self.a), [(o[0], o[1]) for o in server._undo[0]["ops"]])
+        self.assertNotIn(("move", self.a), [(o[0], o[1]) for o in undo_list()[0]["ops"]])
 
     # ---- 1: undo is still conflict-aware
     def test_undo_refuses_after_an_outside_edit_even_to_a_created_folder(self):
@@ -197,7 +197,7 @@ class Faults(Fixture):
         mid = self.snapshot()
         self.post("/api/done", {"name": "p", "text": "New goal", "expected": "Old."})
         self.assertIn("New goal", open(os.path.join(self.tmp, "active", "p", "NOTES.md")).read())
-        self.assertEqual(len(server._undo), 1)
+        self.assertEqual(len(undo_list()), 1)
         self.post("/api/undo", {}); self.assertEqual(self.snapshot(), mid)
 
     def test_done_means_and_status_edits_racing_lose_nothing(self):
@@ -217,7 +217,7 @@ class Faults(Fixture):
             text = open(os.path.join(self.tmp, "active", f"r{i}", "NOTES.md")).read()
             self.assertIn(f"definition of done: New {i}", text); self.assertIn("- extensions: 1", self.record("active", f"r{i}"))
             self.assertEqual(server.field(text, "status"), "")  # whichever came first moved the board data to the record
-        self.assertEqual(len(server._undo), server.UNDO_MAX)  # 24 changes, the newest UNDO_MAX kept
+        self.assertEqual(len(undo_list()), server.UNDO_MAX)  # 24 changes, the newest UNDO_MAX kept
 
     def test_done_means_refuses_a_stale_edit_after_a_status_change(self):
         self.project("s", notes="# S\n\n- status: promoted\n- due: 2026-12-01\n\n- definition of done: Old.\n")
@@ -235,7 +235,7 @@ class Faults(Fixture):
                  ("/api/done", {"name": "p", "text": "New", "expected": "Old."}),
                  ("/api/project/close", {"name": "p", "outcome": "archive"})]
         for i, (path, body) in enumerate(steps, 1):
-            self.post(path, body); self.assertEqual(len(server._undo), i, path)
+            self.post(path, body); self.assertEqual(len(undo_list()), i, path)
         for _ in steps: self.post("/api/undo", {})
         self.assertEqual(self.snapshot().keys() - self.before.keys(), {"active/", "active/p/", "active/p/NOTES.md"})  # archive/ made by the close is gone again
 
@@ -254,10 +254,10 @@ class UndoContainment(Fixture):
         os.rename(path, target); os.symlink(target, path)
 
     def assertRefused(self, snapshot, msg="symlink"):
-        n = len(server._undo)
+        n = len(undo_list())
         r = self.post("/api/undo", {}, ok=False)
         self.assertIn(msg, r["error"]); self.assertIn("Nothing was changed", r["error"])
-        self.assertEqual((self.snapshot(self.tmp), len(server._undo)), (snapshot, n))  # files and history untouched
+        self.assertEqual((self.snapshot(self.tmp), len(undo_list())), (snapshot, n))  # files and history untouched
 
     def shipped_demo(self):
         p = self.project("demo", notes="# Demo\n\n- status: promoted\n- due: 2026-12-01\n")
@@ -274,22 +274,22 @@ class UndoContainment(Fixture):
 
     def test_undo_refuses_when_the_project_folder_became_a_symlink_to_a_folder_outside_the_roots(self):
         p = self.shipped_demo(); ext = os.path.join(self.outside, "demo")
-        self.swap_for_link(p, ext); before = self.snapshot(self.outside); n = len(server._undo)
+        self.swap_for_link(p, ext); before = self.snapshot(self.outside); n = len(undo_list())
         r = self.post("/api/undo", {}, ok=False); self.assertIn("symlink", r["error"])
-        self.assertEqual((self.snapshot(self.outside), len(server._undo)), (before, n)); self.assertEqual(open(ext + "/NOTES.md").read(), "# Demo\n")
+        self.assertEqual((self.snapshot(self.outside), len(undo_list())), (before, n)); self.assertEqual(open(ext + "/NOTES.md").read(), "# Demo\n")
 
     def test_undo_refuses_when_the_file_itself_was_swapped_for_a_link_with_identical_content(self):
         p = self.shipped_demo(); copy = os.path.join(self.outside, "NOTES.md")
         os.replace(p + "/NOTES.md", copy); os.symlink(copy, p + "/NOTES.md")
         before = self.snapshot(self.outside)
         r = self.post("/api/undo", {}, ok=False); self.assertIn("symlink", r["error"])
-        self.assertEqual((self.snapshot(self.outside), len(server._undo)), (before, 1)); self.assertTrue(os.path.islink(p + "/NOTES.md"))
+        self.assertEqual((self.snapshot(self.outside), len(undo_list())), (before, 1)); self.assertTrue(os.path.islink(p + "/NOTES.md"))
 
     def test_undo_of_a_move_refuses_a_destination_folder_replaced_by_a_link(self):
         self.note("2026-10-01-a.md", "A"); self.post("/api/action", {"file": "2026-10-01-a.md", "action": "kill", "note": "x"})
         self.swap_for_link(os.path.join(self.notes, "done"), os.path.join(self.outside, "done")); before = self.snapshot(self.outside)
         r = self.post("/api/undo", {}, ok=False); self.assertIn("symlink", r["error"])
-        self.assertEqual((self.snapshot(self.outside), len(server._undo), os.path.exists(os.path.join(self.notes, "2026-10-01-a.md"))), (before, 1, False))
+        self.assertEqual((self.snapshot(self.outside), len(undo_list()), os.path.exists(os.path.join(self.notes, "2026-10-01-a.md"))), (before, 1, False))
 
     def test_undo_of_a_move_refuses_a_dangling_link_where_the_source_was(self):
         a = self.note("2026-10-01-a.md", "A"); self.post("/api/action", {"file": "2026-10-01-a.md", "action": "kill", "note": "x"})
@@ -302,13 +302,13 @@ class UndoContainment(Fixture):
         self.post("/api/action", {"file": "2026-10-01-a.md", "action": "promote", "dest": "active", "note": "Ships.", "due_days": 3})
         self.swap_for_link(os.path.join(self.tmp, "active"), os.path.join(self.outside, "active")); before = self.snapshot(self.outside)
         r = self.post("/api/undo", {}, ok=False); self.assertIn("symlink", r["error"])
-        self.assertEqual((self.snapshot(self.outside), len(server._undo)), (before, 1))
+        self.assertEqual((self.snapshot(self.outside), len(undo_list())), (before, 1))
 
     def test_a_refused_undo_works_again_once_the_folder_is_put_right(self):
         p = self.shipped_demo(); ext = os.path.join(self.outside, "demo"); self.swap_for_link(p, ext)
         self.post("/api/undo", {}, ok=False)
         os.unlink(p); os.rename(ext, p)
-        self.post("/api/undo", {}); self.assertIn("- status: promoted", open(p + "/NOTES.md").read()); self.assertEqual(server._undo, [])
+        self.post("/api/undo", {}); self.assertIn("- status: promoted", open(p + "/NOTES.md").read()); self.assertEqual(undo_list(), [])
 
     def test_undo_of_the_newest_change_checks_every_step_before_changing_any(self):
         """Two steps in two folders; only the OLDER step's folder is a link. Nothing may change, not even the newer step."""
@@ -327,9 +327,9 @@ class UndoContainment(Fixture):
                 self.swap_for_link(d1, ext)  # the folder is swapped for a link, then a later step fails
                 raise OSError(5, "simulated disk error")
         self.assertEqual(open(ext + "/f.txt").read(), "v1")  # not rolled back through the link
-        self.assertEqual([os.listdir(ext), len(server._undo), "unfinished" in server._undo[0]["label"]], [["f.txt"], 1, True])
+        self.assertEqual([os.listdir(ext), len(undo_list()), "unfinished" in undo_list()[0]["label"]], [["f.txt"], 1, True])
         os.unlink(d1); os.rename(ext, d1)
-        self.post("/api/undo", {}); self.assertEqual((open(d1 + "/f.txt").read(), server._undo), ("v0", []))
+        self.post("/api/undo", {}); self.assertEqual((open(d1 + "/f.txt").read(), undo_list()), ("v0", []))
 
     def test_rollback_does_not_move_back_through_a_link(self):
         a = self.note("2026-10-01-a.md", "A"); done = os.path.join(self.notes, "done"); ext = os.path.join(self.outside, "done")

@@ -18,7 +18,7 @@ from unittest import mock
 
 import depcheck
 import server
-from testkit import Fixture
+from testkit import Fixture, cli_argv
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CLI = os.path.join(HERE, "bin", "rawtriage")
@@ -125,7 +125,7 @@ class FailingServer(unittest.TestCase):
 
     def rt(self, *args):
         env = {**os.environ, "RAWTRIAGE_PORT": str(self.port), "PATH": self.bin + os.pathsep + os.environ["PATH"]}
-        return subprocess.run([sys.executable, CLI, *args], capture_output=True, text=True, timeout=60, env=env)
+        return subprocess.run([*cli_argv(CLI), *args], capture_output=True, text=True, timeout=60, env=env)
 
     def test_a_read_the_server_fails_on_exits_1_and_says_nothing_changed(self):
         for args in (["-l"], ["where"], ["check"]):

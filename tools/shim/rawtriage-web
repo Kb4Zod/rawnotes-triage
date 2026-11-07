@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""Test-only stand-in for the Rust rawtriage-web, to exercise TRIAGE_SERVER before there is a Rust binary.
+
+Runs this repo's server.py in its own process (its `__main__` block, with the arguments given), after applying the
+test hooks a `test-hooks` Rust build reads (spec 8.1 of the Rust port; testkit lists them). Nothing here changes
+server.py: the hooks are set on the imported module the way the in-process tests patch it.
+
+    TRIAGE_SERVER=tools/shim/rawtriage-web python3 -m unittest
+"""
+import ast
+import json
+import os
+import shlex
+import subprocess
+import sys
+import threading
+
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, REPO)
+import depcheck  # noqa: E402
+import server  # noqa: E402
+
+
+def hooks():
+    env = os.environ
+    if env.get("RAWTRIAGE_TEST_DEPS_HOME") or env.get("RAWTRIAGE_TEST_PROC") or env.get("RAWTRIAGE_TEST_CRONTAB"):
+        crontab = env.get("RAWTRIAGE_TEST_CRONTAB")
+
+        def read_crontab():
+            if not crontab: return depcheck._crontab_l()
+            try:
+                with open(crontab, encoding="utf-8") as fh: return fh.read()
+            except FileNotFoundError: return ""
+        server.DEPS = depcheck.Sources(env.get("RAWTRIAGE_TEST_DEPS_HOME") or os.path.expanduser("~"),
+                                       proc=env.get("RAWTRIAGE_TEST_PROC") or "/proc", crontab=read_crontab, own_pid=os.getpid())
+    if "RAWTRIAGE_TEST_SYNC_APPS" in env: server.SYNC_APPS = env["RAWTRIAGE_TEST_SYNC_APPS"]
+    if "RAWTRIAGE_TEST_SHIP_NEEDS_GITHUB" in env:
+        server.SHIP_NEEDS_GITHUB = tuple(k for k in env["RAWTRIAGE_TEST_SHIP_NEEDS_GITHUB"].split(",") if k)
+    if env.get("RAWTRIAGE_TEST_TREE_LIMIT"): server.TREE_LIMIT = int(env["RAWTRIAGE_TEST_TREE_LIMIT"])
+    if env.get("RAWTRIAGE_TEST_OPENER"):
+        opener = shlex.split(env["RAWTRIAGE_TEST_OPENER"])
+
+        def open_path(path): subprocess.Popen([*opener, path], stdin=subprocess.DEVNULL)
+        server.open_path = open_path
+    dump = env.get("RAWTRIAGE_TEST_UNDO_DUMP")
+    if dump:
+        send, lock = server.H._send, threading.Lock()
+
+        def write_dump():
+            with lock:  # read and written under one lock, so a slower request never writes an older list over a newer one
+                entries = [{"label": e["label"], "ops": [[op[0], *op[1:3 if op[0] in ("move", "movedir") else 2]] for op in e["ops"]],
+                            "unfinished": e["label"].startswith("unfinished:")} for e in list(server._undo)]
+                with open(dump + ".tmp", "w", encoding="utf-8") as fh: json.dump(entries, fh)
+                os.replace(dump + ".tmp", dump)
+
+        def _send(self, *a, **k):  # before the answer goes out, so a test that has its answer can read the dump
+            write_dump(); return send(self, *a, **k)
+        server.H._send = _send
+
+
+def main_block():
+    tree = ast.parse(open(server.__file__, encoding="utf-8").read(), server.__file__)
+    for node in tree.body:
+        if (isinstance(node, ast.If) and isinstance(node.test, ast.Compare) and isinstance(node.test.left, ast.Name)
+                and node.test.left.id == "__name__"):
+            return compile(ast.Module(body=node.body, type_ignores=[]), server.__file__, "exec")
+    raise SystemExit("rawtriage-web shim: server.py has no __main__ block")
+
+
+if __name__ == "__main__":
+    hooks()
+    sys.argv = [server.__file__, *sys.argv[1:]]
+    exec(main_block(), server.__dict__)

@@ -39,7 +39,7 @@ import depcheck, safefs
 from notemeta import (field, set_field, drop_field, title_of, append_outcome, append_to_section, closed_date, question_of, question_summary, note_body,
                       eol_of, with_eol, to_lf, header_lines, title_index, HEAD_LINE, section_span, section_body, section_names, take_section)
 
-VERSION = "2.16"  # bump on every change; history in CHANGELOG.md
+VERSION = "2.17"  # bump on every change; history in CHANGELOG.md
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOG_PATH = os.path.join(HERE, "triage.log")
 FONT_RE = re.compile(r"^/static/fonts/[A-Za-z0-9-]+\.woff2$")
@@ -69,7 +69,11 @@ DESTS = {  # promote targets: folder -> (layout). "file" (a flat <slug>.md) is n
     "learning": "folder", "templates": "folder",
 }
 
-def today(): return dt.date.today()
+def today():
+    """The date. RAWTRIAGE_TODAY=YYYY-MM-DD fixes it (a test hook: the test fixtures set it when they start, so a run
+    that crosses midnight, and a Rust server under test, see one date); unset, it is the real date."""
+    fixed = os.environ.get("RAWTRIAGE_TODAY")
+    return dt.date.fromisoformat(fixed) if fixed else dt.date.today()
 
 _lock = safefs.RWLock()  # every change holds the write side; page reads share the read side, so a listing never sees half a change
 _notes_cache = safefs.StatCache()  # a note's summary, until the file changes

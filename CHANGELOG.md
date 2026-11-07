@@ -4,6 +4,26 @@ The version shows in the page heading ("RawNotes Triage version X.XX") and
 in the startup line. Bump `VERSION` in `server.py` and add an entry here
 with every change. Versions 1.00-1.03 were numbered after the fact from git history.
 
+## 2.17 — 2026-11-07
+Test-only: the suite can drive another server and CLI (the Rust port's switch; its spec section 8.1). Nothing the app
+does changes, except that `RAWTRIAGE_TODAY` can fix the date.
+- **test-only: `TRIAGE_SERVER=/path/to/rawtriage-web`** makes `testkit.Fixture` and `test_server.py`'s `ApiTestCase`
+  start that binary for each test, as its own process (free port, `--no-browser`, `--notes`, `--log`), with the same
+  temp notes folder, config dir, fake home and isolated git; `call()`/`get()`/`post()` are unchanged. What a flag can't
+  say goes through environment variables (`RAWTRIAGE_TEST_UNDO_DUMP`, `_DEPS_HOME`, `_PROC`, `_CRONTAB`, `_SYNC_APPS`,
+  `_SHIP_NEEDS_GITHUB`, `_OPENER`; listed in `testkit.py`), and the fixture's `PATH` starts with a fake `gh`
+  (`tools/fake_gh.py`: scripted JSON answers, every argv and environment logged). **`TRIAGE_CLI=/path/to/rawtriage`**
+  runs that binary wherever the tests ran `python bin/rawtriage`. Unset, the suite runs in-process as before.
+- **test-only: `testkit.undo_list()`** reads the undo list (in-process `server._undo`; under the switch the dump file),
+  and `clear_undo()` empties it; the tests' 83 direct uses of `server._undo` go through them.
+- **`RAWTRIAGE_TODAY=YYYY-MM-DD` fixes "today"** in `server.py` (unset: the real date). The fixtures set it when the
+  server starts; `test_limits.InboxLimits` uses it instead of patching `server.today`.
+- **test-only: `tools/parity_ledger.py`** lists every test with the routes, CLI and helpers it uses, its patch rows
+  (`tools/patch_sites.tsv`), its owner and due ticket in the Rust port, and whether it runs against Rust or is ported;
+  `--check` fails on a patch site without a row. Under either switch, exactly the tests it marks "ported" are skipped.
+- **test-only: `tools/shim/`** stands in for the two Rust binaries (this repo's `server.py` and `bin/rawtriage`, each run
+  as its own process, the test hooks applied), so the switch can be tried before there is a Rust build.
+
 ## 2.16 — 2026-11-07
 - **A Reload button.** In the rail's bottom row (next to Dark/Light) and as an icon in the phone header: it reloads
   the page like Ctrl-R, and the reloaded page also skips the server's short caches, so Projects' git facts, the
