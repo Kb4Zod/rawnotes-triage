@@ -115,6 +115,36 @@ def append_to_section(text, heading, line):
     return text[:nxt.start()].rstrip("\n") + f"\n{line}\n\n" + text[nxt.start():]
 
 
+def section_span(text, heading):
+    """(start, body start, end) character offsets of the `## heading` section (start of its heading line, start of its
+    body, start of the next `## ` heading or the end), or None. Same boundaries as append_to_section."""
+    m = re.search(r"^## " + re.escape(heading) + r"[ \t]*$", text, re.M)
+    if not m: return None
+    body = m.end() + 1 if text[m.end():m.end() + 1] == "\n" else m.end()
+    nxt = re.compile(r"^## ", re.M).search(text, body)
+    return m.start(), body, nxt.start() if nxt else len(text)
+
+
+def section_body(text, heading):
+    """The body of the `## heading` section without its surrounding blank lines ("" if there is none)."""
+    s = section_span(text, heading)
+    return text[s[1]:s[2]].strip("\n") if s else ""
+
+
+def section_names(text):
+    """Every `## ` heading's name, in order."""
+    return [m.group(1).strip() for m in re.finditer(r"^## (.+?)[ \t]*$", text, re.M)]
+
+
+def take_section(text, heading):
+    """(text without the `## heading` section, that section's body as section_body gives it). Unchanged if absent."""
+    s = section_span(text, heading)
+    if not s: return text, ""
+    body = text[s[1]:s[2]].strip("\n")
+    head, tail = text[:s[0]].rstrip("\n"), text[s[2]:]
+    return (head + "\n\n" + tail if tail else head + "\n") if head else tail, body
+
+
 def append_outcome(text, line):
     """Add `line` to the end of the ## Outcome section (adding the section at the end of the note if it has none)."""
     return append_to_section(text, "Outcome", line)

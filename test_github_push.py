@@ -65,11 +65,11 @@ class GithubCase(Fixture):
         if back_days: self.set_promoted(path, back_days)
         return path
 
-    def set_promoted(self, path, days_ago, commit=False):
-        f = os.path.join(path, "NOTES.md"); text = open(f).read()
+    def set_promoted(self, path, days_ago):
+        """Back-date the promote in the project's board record (in RawNotes: the project's own tree stays clean)."""
+        f = os.path.join(self.notes, "projects", os.path.basename(os.path.dirname(path)), os.path.basename(path) + ".md"); text = open(f).read()
         old = server.field(text, "promoted"); new = (server.today() - server.dt.timedelta(days=days_ago)).isoformat()
         open(f, "w").write(text.replace(f"promoted: {old}", f"promoted: {new}", 1))
-        if commit: run(path, "commit", "-qam", "back-date")
 
     def state(self, name, kind="active"):
         return next(p for p in self.get("/api/projects?refresh=1")["projects"] if p["name"] == name and p["kind"] == kind)["gh"]
@@ -164,7 +164,7 @@ class CloseOutGate(GithubCase):
     def test_with_its_work_pushed_maintained_moves(self):
         path = self.promoted(); self.work(path); self.origin(path)
         self.assertEqual(self.close(outcome="maintained")["moved_to"], "maintained/demo")
-        self.assertIn("- status: shipped", open(os.path.join(self.tmp, "maintained", "demo", "NOTES.md")).read())
+        self.assertIn("- status: shipped", self.record("maintained", "demo"))
 
     def test_archive_with_only_the_skeleton_commit_moves_without_github(self):
         self.promoted()
@@ -269,7 +269,7 @@ class CloseOutGate(GithubCase):
     def test_next_round_is_not_gated(self):
         path = self.promoted(); self.work(path)
         self.close(outcome="next", done="It ships again.", due_days=7)
-        self.assertTrue(os.path.isdir(path)); self.assertIn("## Rounds", open(os.path.join(path, "NOTES.md")).read())
+        self.assertTrue(os.path.isdir(path)); self.assertIn("## Rounds", self.record("active", "demo"))
 
     def test_kill_is_not_gated(self):
         path = self.promoted("k1"); self.work(path)
@@ -278,7 +278,7 @@ class CloseOutGate(GithubCase):
 
     def test_experiments_and_learning_close_out_without_github(self):
         for dest in ("experiments", "learning"):
-            path = self.promoted("e-" + dest, dest); self.set_promoted(path, 5, commit=True); self.work(path)
+            path = self.promoted("e-" + dest, dest); self.set_promoted(path, 5); self.work(path)
             self.assertTrue(self.state("e-" + dest, dest)["not_on_github"])  # the chip stays red
             self.assertEqual(self.close("e-" + dest, dest, "maintained")["moved_to"], f"maintained/e-{dest}")
 

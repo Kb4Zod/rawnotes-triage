@@ -138,9 +138,11 @@ class HeaderThroughTheApp(Fixture):
         path = os.path.join(self.notes, "2026-10-01-sub.md")
         with open(path, "w") as fh: fh.write("# Sub\n\n*tagline*\n\n- date: 2026-10-01\n- status: open\n- type: research\n\n## Notes\n\nx\n")
         self.post("/api/action", {"file": "2026-10-01-sub.md", "action": "promote", "dest": "active", "note": "It ships.", "due_days": 5})
-        text = open(os.path.join(self.tmp, "active", "sub", "NOTES.md")).read()
-        self.assertEqual((field(text, "status"), field(text, "promoted") != "", field(text, "due") != ""), ("promoted", True, True))
-        self.assertEqual(text.count("- status:"), 1)
+        text = open(os.path.join(self.notes, "done", "2026-10-01-sub.md")).read()  # the original, marked where it stands
+        self.assertEqual(field(text, "status"), "promoted"); self.assertEqual(text.count("- status:"), 1)
+        self.assertTrue(text.startswith("# Sub\n\n*tagline*\n\n- date: 2026-10-01\n- status: promoted\n- type: research\n"))
+        rec = self.record("active", "sub")
+        self.assertEqual((field(rec, "status"), field(rec, "promoted") != "", field(rec, "due") != ""), ("promoted", True, True))
 
 
 class Question(Fixture):

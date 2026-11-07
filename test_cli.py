@@ -281,7 +281,7 @@ class Projects(CliBase):
         self.assertIn("--reason", self.refused("project", "kill", "beta"))
         out = self.ok("project", "kill", "beta", "--reason", "no time").stdout
         self.assertIn("Killed beta → archive/beta_abandoned", out); self.assertIn("Update any T3 Code project", out)
-        with open(os.path.join(self.tmp, "archive", "beta_abandoned", "NOTES.md")) as fh: self.assertIn("no time", fh.read())
+        self.assertIn("no time", self.record("archive", "beta_abandoned"))
         self.assertIn("unknown project", self.refused("project", "ship", "ghost"))
 
     def test_close_out_next_round_deps_and_a_blocked_move(self):
@@ -293,7 +293,7 @@ class Projects(CliBase):
         self.assertIn("--done", self.refused("project", "close", "alpha", "--outcome", "next"))
         r = self.ok("project", "close", "alpha", "--outcome", "next", "--done", "Two.", "--due-days", "5").stdout
         self.assertIn("Next round ships by", r)
-        with open(os.path.join(self.tmp, "active", "alpha", "NOTES.md")) as fh: self.assertIn("## Rounds", fh.read())
+        self.assertIn("## Rounds", self.record("active", "alpha"))
         r = self.ok("project", "deps", "spike").stdout  # the kind is found from the board
         self.assertIn("experiments/spike → archive/spike (suggested: archive)", r); self.assertIn("Nothing blocks the move.", r)
         home = os.path.join(self.tmp, "home"); os.makedirs(os.path.join(home, ".local", "bin"))
