@@ -329,7 +329,7 @@ def set_done(name, text, expected, kind=None):
         tx.write(target, eol.join(lines))
         tx.select = None
     _log(f"done {kind}/{name} -> {os.path.basename(target)}: {text[:80]}")
-    return {"ok": True, "file": os.path.basename(target), "msg": f"Saved to {os.path.basename(target)}"}
+    return {"ok": True, "file": os.path.basename(target), "msg": with_migration(f"Saved to {os.path.basename(target)}", tx)}
 
 def _with_done(path, name, text, hit):
     """(file, lines, eol): `text` put in as the definition of done where find_done found one (`hit`), else as a
@@ -474,27 +474,57 @@ def board_text(path, n=4000):
     try: return _head_of(record_file(path) or notes_file(path), n)
     except OSError: return ""
 
+def _spans(text, heading):
+    """(heading start, body start, end) of every `## heading` section, in order (a note may have two: a capture's own
+    ## Plan, then the one Promote added after it)."""
+    out = []
+    for m in re.finditer(r"^## " + re.escape(heading) + r"[ \t]*$", text, re.M):
+        body = m.end() + 1 if text[m.end():m.end() + 1] == "\n" else m.end()
+        nxt = re.compile(r"^## ", re.M).search(text, body)
+        out.append((m.start(), body, nxt.start() if nxt else len(text)))
+    return out
+
+def _bodies(text, heading): return [text[s[1]:s[2]] for s in _spans(text, heading)]
+
 def has_legacy(text):
     """Does a NOTES.md still hold board data the app wrote there before 2.15: a board field in its header, ## Rounds or
-    ## Moved, a `**Killed <date>:**` line under ## Outcome, or Promote's dated line or a "pushed" line under ## Plan?"""
+    ## Moved, a `**Killed <date>:**` line under ## Outcome, or Promote's dated line or a "pushed" line under a ## Plan?"""
     lines = text.split("\n")
     if any(HEAD_LINE.match(lines[i]).group(1) in BOARD_FIELDS for i in header_lines(lines)): return True
     if any(n in BOARD_SECTIONS for n in section_names(text)): return True
-    if any(KILLED_LINE.match(l) for l in section_body(text, "Outcome").split("\n")): return True
-    return any(PROMOTED_LINE.match(l) or PUSHED_LINE.match(l) for l in section_body(text, "Plan").split("\n"))
+    if any(KILLED_LINE.match(l) for b in _bodies(text, "Outcome") for l in b.split("\n")): return True
+    return any(PROMOTED_LINE.match(l) or PUSHED_LINE.match(l) for b in _bodies(text, "Plan") for l in b.split("\n"))
+
+def _cut_lines(body, app):
+    """(body without the lines `app(line, inside)` claims, the claimed lines): a claimed line's paragraph goes with it,
+    and no double blank line is left where it was."""
+    took, rest, inside, cut = [], [], False, False
+    for l in body.split("\n"):
+        inside = app(l, inside)
+        if inside: took.append(l); cut = True; continue
+        if cut and not l.strip() and rest and not rest[-1].strip(): cut = False; continue
+        cut = False; rest.append(l)
+    return "\n".join(rest), took
+
+def _same(a, b): return re.sub(r"\n\s*\n+", "\n\n", a.strip()) == re.sub(r"\n\s*\n+", "\n\n", b.strip())
+
+APP_OUTCOME = re.compile(r"^\*\*(?:Killed|Promoted|Merged|Restored) \d{4}-\d{2}-\d{2}")  # lines the app adds to a note's ## Outcome
 
 def split_legacy(text, capture=None):
     """A legacy NOTES.md split by audience: (what stays in NOTES.md, the record's header [(key, value)], the record's
-    sections {name: body}, what moved [labels]). The board fields always move, and the capture's own header (date, type,
-    kept, keeps, restored) too when it is a promoted copy (it has `promoted:`); ## Rounds and ## Moved move whole, and
-    from ## Outcome the kill reasons (a `**Killed <date>:**` line and the lines up to the next blank one); under ## Plan, Promote's dated "promoted from RawNotes" line goes (the record has the dates) and the "pushed"
-    lines move to ## Extensions. With `capture` (the original note in done/), every other section that is exactly the
-    capture's is the copy Promote made: it goes too, since the original stays in RawNotes. Everything else stays as is."""
+    sections {name: body}, what moved [labels]). The board fields always move (every copy of one in the header), and
+    the capture's own header (date, type, kept, keeps, restored) too when it is a promoted copy (it has `promoted:`);
+    ## Rounds and ## Moved move whole; from ## Outcome, the kill reasons (a `**Killed <date>:**` line and the rest of its
+    paragraph); from every ## Plan, Promote's dated "promoted from RawNotes" line (the record has the dates) and the
+    "pushed" lines (to ## Extensions). With `capture` (the original note in done/), every section still the same as the
+    capture's (ignoring the lines the app adds to an ## Outcome) is the copy Promote made, and goes too, since the
+    original stays in RawNotes; so does a first ## Plan that is the capture's own when Promote added a second.
+    Everything else stays as it is."""
     lines = text.split("\n"); head = header_lines(lines); first = {}
     for i in head: first.setdefault(HEAD_LINE.match(lines[i]).group(1), i)
     keys = BOARD_FIELDS + (CAPTURE_FIELDS if "promoted" in first else ())
-    drop = sorted(first[k] for k in keys if k in first)
-    fields = [(HEAD_LINE.match(lines[i]).group(1), HEAD_LINE.match(lines[i]).group(3).strip()) for i in drop]
+    fields = [(HEAD_LINE.match(lines[i]).group(1), HEAD_LINE.match(lines[i]).group(3).strip()) for i in sorted(first[k] for k in keys if k in first)]
+    drop = {i for i in head if HEAD_LINE.match(lines[i]).group(1) in keys}
     kept = []
     for i, l in enumerate(lines):
         if i in drop: continue
@@ -502,31 +532,45 @@ def split_legacy(text, capture=None):
         kept.append(l)
     out = "\n".join(kept); sections = {}; moved = [k for k, _ in fields]
     for name in BOARD_SECTIONS:
-        out, body = take_section(out, name)
-        if body: sections[name] = body; moved.append(f"## {name}")
-    s = section_span(out, "Outcome")
-    if s:
-        app, rest, inside, cut = [], [], False, False
-        for l in out[s[1]:s[2]].split("\n"):
-            inside = bool(KILLED_LINE.match(l)) or (inside and bool(l.strip()))
-            if inside: app.append(l); cut = True; continue
-            if cut and not l.strip() and rest and not rest[-1].strip(): cut = False; continue  # no double blank where it was
-            cut = False; rest.append(l)
-        if app:
-            sections["Outcome"] = "\n".join(app); moved.append("the kill reason (## Outcome)")
-            out = out[:s[1]] + "\n".join(rest) + out[s[2]:] if any(l.strip() for l in rest) else take_section(out, "Outcome")[0]
-    s = section_span(out, "Plan")
-    if s:
-        plan = out[s[1]:s[2]].split("\n")
-        ext = [l for l in plan if PUSHED_LINE.match(l)]
-        if ext: sections[EXT_SECTION] = "\n".join(ext); moved.append("ship-by pushes (## Plan)")
-        if any(PROMOTED_LINE.match(l) for l in plan): moved.append("the promoted line (## Plan)")
-        out = out[:s[1]] + "\n".join(l for l in plan if not (PUSHED_LINE.match(l) or PROMOTED_LINE.match(l))) + out[s[2]:]
+        while section_span(out, name):
+            out, body = take_section(out, name)
+            if body: sections[name] = (sections[name] + "\n" + body) if name in sections else body
+        if name in sections: moved.append(f"## {name}")
+    kills, ext, promoted_line = [], [], False
+    for name in ("Outcome", "Plan"):
+        for s in reversed(_spans(out, name)):  # from the end, so the earlier spans' offsets still hold
+            if name == "Outcome": rest, took = _cut_lines(out[s[1]:s[2]], lambda l, inside: bool(KILLED_LINE.match(l)) or (inside and bool(l.strip())))
+            else:
+                rest, took = _cut_lines(out[s[1]:s[2]], lambda l, inside: bool(PUSHED_LINE.match(l) or PROMOTED_LINE.match(l)))
+                promoted_line |= any(PROMOTED_LINE.match(l) for l in took); took = [l for l in took if PUSHED_LINE.match(l)]
+            if not took and not promoted_line: continue
+            (kills if name == "Outcome" else ext)[:0] = took
+            out = (out[:s[1]] + rest + out[s[2]:]) if rest.strip() or name == "Plan" else out[:s[0]] + out[s[2]:]
+    if kills: sections["Outcome"] = "\n".join(kills); moved.append("the kill reason (## Outcome)")
+    if ext: sections[EXT_SECTION] = "\n".join(ext); moved.append("ship-by pushes (## Plan)")
+    if promoted_line: moved.append("the promoted line (## Plan)")
     if capture:
-        for name in section_names(out):
-            if name != "Plan" and name in section_names(capture) and section_body(out, name).strip() == section_body(capture, name).strip():
-                out = take_section(out, name)[0]; moved.append(f"## {name} (copy of the original note)")
+        cap = {n: b for n in section_names(capture) for b in [section_body(capture, n)]}
+        cap["Outcome"] = "\n".join(l for l in cap.get("Outcome", "").split("\n") if not APP_OUTCOME.match(l))
+        for name in dict.fromkeys(section_names(out)):
+            if name == "Plan" or name not in cap: continue
+            if _same(section_body(out, name), cap[name]): out = take_section(out, name)[0]; moved.append(f"## {name} (copy of the original note)")
+        plans = _spans(out, "Plan")
+        if len(plans) > 1 and "Plan" in cap and _same(out[plans[0][1]:plans[0][2]], cap["Plan"]):
+            out = out[:plans[0][0]] + out[plans[0][2]:]; moved.append("the original note's own ## Plan (copy)")
+    out = re.sub(r"\n{3,}(?=## )", "\n\n", out)  # where a whole section went
     return out.rstrip("\n") + "\n", fields, sections, moved
+
+def left_in_notes(text):
+    """What a trimmed NOTES.md still holds besides its title, header and one ## Plan, for the migration to name
+    (your own text, or a copy of the original note it couldn't match): section names, a second ## Plan, and text
+    above the first heading."""
+    out = [n for n in section_names(text) if n != "Plan"]
+    if len(_spans(text, "Plan")) > 1: out.append("a second Plan")
+    lines = text.split("\n"); skip = set(header_lines(lines)) | {title_index(lines)}
+    top = next((i for i, l in enumerate(lines) if l.startswith("## ")), len(lines))
+    if any(l.strip() for i, l in enumerate(lines[:top]) if i not in skip): out.insert(0, "text above the first heading")
+    return out
 
 def record_text(title, fields, sections=None):
     """A record: `# title`, the header, then the sections in RECORD_ORDER (any others after them)."""
@@ -572,25 +616,37 @@ def migrate_folder(tx, path, index=None):
     """Move the legacy board data out of project folder `path`'s NOTES.md (split_legacy), through `tx`: the trimmed
     NOTES.md is written now (the app never commits in a project's repo: that commit is yours). Returns (the new
     record's text, what moved, the sections left in NOTES.md besides ## Plan) for the caller to write, or None when
-    NOTES.md holds no board data (nothing written). The original note is looked up under the folder's own path, and
-    under the earlier paths its ## Moved names, but only ones with the same folder name (a move may add a suffix)."""
+    NOTES.md holds no board data (nothing written). The original note is looked up under
+    the folder's own path and its earlier ones (legacy_capture). The migration is noted on tx.migrated."""
     try: nf = notes_file(path)
     except OSError: return None
     if not os.path.isfile(nf) or os.path.islink(nf): return None
     text, eol = read_note(nf)
     if not has_legacy(text): return None
     kind, name = os.path.basename(os.path.dirname(path)), os.path.basename(path)
-    index = capture_index() if index is None else index
-    earlier = [k for k in MOVED_FROM.findall(section_body(text, "Moved")) if name.startswith(k.rsplit("/", 1)[-1])]
-    cap = pick_capture(index, [f"{kind}/{name}"] + earlier, field(text, "promoted"))
-    cap_text = None
+    cap = legacy_capture(text, kind, name, index); cap_text = None
     if cap:
         try: cap_text = read_note(safe_note(cap))[0]
         except (OSError, ValueError): cap = None
     new, fields, sections, moved = split_legacy(text, cap_text)
     if cap: sections["Capture"] = capture_line(title_of(text, name), cap)
-    tx.write(nf, new, eol)
-    return record_text(title_of(text, name), fields, sections), moved, [n for n in section_names(new) if n != "Plan"]
+    tx.write(nf, new, eol); left = left_in_notes(new)
+    tx.migrated.append((f"{kind}/{name}", moved, left))
+    return record_text(title_of(text, name), fields, sections), moved, left
+
+def legacy_capture(text, kind, name, index=None):
+    """`done/<file>` of the original note of a legacy project folder whose NOTES.md is `text`: looked up under the
+    folder's own path and under the earlier paths its ## Moved names, but only ones with the same folder name (a move
+    may add a suffix), by its promote date (pick_capture). None if it can't be told."""
+    earlier = [k for k in MOVED_FROM.findall(section_body(text, "Moved")) if name.startswith(k.rsplit("/", 1)[-1])]
+    return pick_capture(capture_index() if index is None else index, [f"{kind}/{name}"] + earlier, field(text, "promoted"))
+
+def with_migration(msg, tx):
+    """A board action's message, plus a sentence when it was the project's first write since 2.15 (migrate_folder ran)."""
+    if not tx.migrated: return msg
+    rel, _, left = tx.migrated[0]
+    return (msg.rstrip(".") + ". Its board data moved out of NOTES.md into RawNotes/projects/: commit the trimmed "
+            f"{rel}/NOTES.md yourself" + (f", after reading what it still has ({', '.join(left)})" if left else "") + ".")
 
 def board_open(tx, path):
     """(record path, text) of project folder `path`'s record, to change and then write back with board_save. With no
@@ -1427,7 +1483,7 @@ class Tx:
     """One change to the files, applied step by step. Each step that succeeds is recorded, so the whole change can be
     rolled back if a later step fails, or undone later. Every path must be a real (non-symlink) path inside the notes
     folder or the projects root; a write replaces the file atomically and keeps its permissions."""
-    def __init__(self, label=""): self.label, self.ops, self.select, self.logs = label, [], None, []
+    def __init__(self, label=""): self.label, self.ops, self.select, self.logs, self.migrated = label, [], None, [], []
     def log(self, msg): self.logs.append(msg)  # written to triage.log only once the whole change has gone through
     def write(self, path, text, eol="\n"):
         path = _stored(path)
@@ -2194,6 +2250,7 @@ def project_status(req, local=True):
             text, eol = read_note(path)
             text, tx.label, msg = _status_edit(text, req, name)
             tx.write(path, text, eol)
+        msg = with_migration(msg, tx)
     _log(f"project {req.get('action')} {rel}")
     return {"ok": True, "msg": msg}
 
@@ -2264,6 +2321,7 @@ def close_project(req, folder=None, local=True):
         require_github_to_close(path, kind, outcome)  # here, under the lock: every ship/close of a folder passes this way
         if outcome == "next": res["msg"] = _next_round(tx, path, kind, name, target, done, due)
         else: res.update(_close_and_move(tx, req, path, kind, name, target, action, outcome))
+        res["msg"] = with_migration(res["msg"], tx)
     if res.get("moved_to"): res["sync_apps"] = run_sync_apps()
     return res
 
@@ -2319,6 +2377,7 @@ def _close_and_move(tx, req, path, kind, name, target, action, outcome):
     folder in the same change; or to `target`, a legacy promoted file other than NOTES.md, which moves inside it."""
     if target is None: rp, text = board_open(tx, path); eol = "\n"
     else: rp = None; text, eol = read_note(target) if os.path.exists(target) else (f"# {name}\n", "\n")
+    carry = rp or record_file(path)  # a record the folder already has moves with it, whichever file was closed out
     text, label, msg = _status_edit(text, {**req, "action": action}, name)
     dest = close_target(path, outcome)
     found = depcheck.check(path, dep_sources(), dest)
@@ -2330,8 +2389,8 @@ def _close_and_move(tx, req, path, kind, name, target, action, outcome):
     else: tx.write(target, text, eol)
     tx.ensure_dir(os.path.dirname(dest))
     tx.movedir(path, dest)
-    if rp:  # the record follows the folder; undo moves both back
-        new_rp = _stored(record_of(dest)); tx.ensure_dir(os.path.dirname(new_rp)); tx.move(rp, new_rp)
+    if carry:  # the record follows the folder; undo moves both back
+        new_rp = _stored(record_of(dest)); tx.ensure_dir(os.path.dirname(new_rp)); tx.move(carry, new_rp)
     tx.label = f"{'kill' if action == 'kill' else outcome} {name}"
     tx.log(f"project close {old} -> {new}")
     return {"msg": f"{msg} → {new}", "moved_to": new, "todos": todos}
@@ -2395,8 +2454,8 @@ def migrate_board_data():
     public = [m["repo"] for m in moved if m["public"]]; kept = [f"{m['path']} ({', '.join(m['kept'])})" for m in moved if m["kept"]]
     msg = (f"Moved the board data of {n} project{'' if n == 1 else 's'} out of NOTES.md into RawNotes/projects/. {MIGRATE_NOTE}"
            + (f" Public on GitHub, so their history already shows it: {', '.join(public)}." if public else "")
-           + (f" Read these NOTES.md before you commit: they still have sections besides the plan (your own text, or a copy "
-              f"of the original note the app couldn't match to one in done/): {'; '.join(kept)}." if kept else ""))
+           + (f" Read these NOTES.md before you commit: they still hold more than the plan (your own text, or a copy of "
+              f"the original note the app couldn't match to one in done/): {'; '.join(kept)}." if kept else ""))
     return {"ok": True, "msg": msg, "migrated": moved, "skipped": skipped, "public": public, "note": MIGRATE_NOTE}
 
 def project_brief(name, kind=None):
@@ -2417,11 +2476,11 @@ def project_brief(name, kind=None):
         except OSError: nf = ""
         real = os.path.isfile(nf) and not os.path.islink(nf)  # a NOTES.md that is a symlink is never read here
         board = read_note(rec)[0] if rec else board_text(path, CLOSED_READ) if real else ""
-        cap = capture_of(board) if rec else pick_capture(capture_index(), [f"{k}/{name}"], field(board, "promoted"))
+        cap = capture_of(board) if rec else legacy_capture(board, k, name)
         capture = None
-        if cap:
-            try: capture = read_note(safe_note(cap))[0]
-            except (OSError, ValueError): capture = None
+        for rel in ((cap, os.path.basename(cap)) if cap else ()):  # in done/, or restored to the Inbox since
+            try: capture = read_note(safe_note(rel))[0]; break
+            except (OSError, ValueError): continue
         notes = read_note(nf)[0] if real else ""
         done = definition_of_done(path)
     return {"name": name, "kind": k, "title": title_of(board or notes, name), "status": field(board, "status"),

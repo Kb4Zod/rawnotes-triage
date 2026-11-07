@@ -146,7 +146,7 @@ Project-folder changes and reference copies/index edits are not included in the 
 
 Select a card again or press `Esc` to close its panel. Git facts cache for 20 seconds; **Refresh** rereads them.
 
-**Done means:** Edit/Fill in → Review change (before/after) → Confirm and save. Maximum 600 characters. Empty placeholders count as missing and show **Define done means**. Saving is refused if the definition changed on disk. To give an undated project a ship-by date, add `- due: YYYY-MM-DD` to the header of its project note, before the first `##` heading.
+**Done means:** Edit/Fill in → Review change (before/after) → Confirm and save. Maximum 600 characters. Empty placeholders count as missing and show **Define done means**. Saving is refused if the definition changed on disk. To give an undated project a ship-by date, add `- due: YYYY-MM-DD` to the header of its board record, `RawNotes/projects/<kind>/<folder>.md` (make the file if there is none: `# <folder>`, a blank line, then that line), never to its `NOTES.md`.
 
 **+7 days:** asks for a reason of at least 10 characters, records it under `## Extensions` in the board record, and increments `extensions:` there. The new due date is seven days after today or the existing deadline, whichever is later. Not offered for open-ended experiments or undated folders. After two extensions by default, the button reads **No more extensions**; an overdue project with no extensions left shows **Decide**.
 

@@ -650,7 +650,7 @@ function formHtml(mode,n){const s=slugOf(n.file);
 function updatePreview(){const pv=$('#pv');if(!pv||!S.mode)return;const slug=($('#slug')?.value||'').toLowerCase().replace(/[^a-z0-9-]/g,'').replace(/-+/g,'-').replace(/^-|-$/g,'')||'…';
   if(S.mode==='promote'){const d=segVal('dest'),folder=true,exp=d==='experiments',due=shipDate();syncShipBy(d);  // every destination is a project folder
     const days=Math.round((new Date(due+'T00:00')-new Date(addDays(0)+'T00:00'))/864e5);
-    pv.innerHTML=`<div class="label">What will happen</div><ol><li>Creates <span class="mono">~/Projects/${d}/${slug}${folder?'/':'.md'}</span>${folder?' with README, NOTES.md (this note), AGENTS.md and CLAUDE.md, as a git repo on <b>main</b> with a first commit (private; push it in the first build round)':''}</li>
+    pv.innerHTML=`<div class="label">What will happen</div><ol><li>Creates <span class="mono">~/Projects/${d}/${slug}${folder?'/':'.md'}</span>${folder?' with README, NOTES.md (the plan; this note stays in RawNotes), AGENTS.md and CLAUDE.md, as a git repo on <b>main</b> with a first commit (private; push it in the first build round)':''}</li>
       <li>Stamps <b>promoted</b> today · ${exp?'<b>no ship-by date</b> (open-ended)':`<b>ship by ${fmtDate(due)}</b>`}</li><li>Writes your <b>done means</b> into its ## Plan</li><li>Moves the capture to <span class="mono">RawNotes/done/</span></li><li>Shows up in <b>Projects</b> ${exp?'under Experiments, no clock':`with a ${days}-day clock`}</li></ol>`}
   if(S.mode==='reference')pv.innerHTML=`<div class="label">What will happen</div><ol><li>Copies to <span class="mono">~/Projects/reference/${slug}.md</span> with Obsidian properties</li><li>Moves the capture to <span class="mono">RawNotes/done/</span></li>${secVal('rsec')?`<li>Adds a line to <span class="mono">reference/README.md</span> under <b>${esc(secVal('rsec'))}</b></li>`:'<li>Not added to <span class="mono">reference/README.md</span> (pick an Index section to add it)</li>'}</ol>`}
 
@@ -863,7 +863,7 @@ async function renderDrawer(){const d=$('#drawer');if(!d)return;const c=projectC
     :f?`<h3 class="sec label">Clock</h3><div style="font-size:13px">${f.promoted?`Promoted <b>${esc(f.promoted)}</b> · `:''}${f.due?`ship by <b>${esc(f.due)}</b>`:'no ship-by date'}${f.done?` · <b>${esc(stLabel[f.status]||f.status)}</b>${f.closed?` ${esc(f.closed)}`:''}`:''}
      ${!f.done&&f.days_left!==null?`<div class="clockbar"><i style="width:${f.days_left<0?100:Math.max(4,100-f.days_left/Math.max(7,f.days_left)*100)}%;background:${f.days_left<0?'var(--rust)':f.days_left<=2?'var(--gold)':'var(--green)'}"></i></div>`:''}</div>`
     :c.exp?`<h3 class="sec label">Clock</h3><div class="muted" style="font-size:13px">Open-ended experiment in <span class="mono">experiments/</span>, no ship-by date.</div>`
-    :`<h3 class="sec label">Clock</h3><div class="muted" style="font-size:13px">Not on the clock. Add a <span class="mono">- due: YYYY-MM-DD</span> line to the header at the top of its NOTES.md to give it a ship-by date.</div>`;
+    :`<h3 class="sec label">Clock</h3><div class="muted" style="font-size:13px">Not on the clock. To give it a ship-by date, add a <span class="mono">- due: YYYY-MM-DD</span> line to the header of its board record, <span class="mono">RawNotes/projects/${esc(p?p.kind:'<kind>')}/${esc(p?p.name:'<folder>')}.md</span> (make the file if there is none: <span class="mono"># ${esc(p?p.name:'<folder>')}</span>, a blank line, then that line), never to its NOTES.md, which its repo tracks.</div>`;
   const mk=p&&!linked&&p.gh&&p.gh.git&&!p.gh.origin&&isLocalPage()&&!narrow()?`<button class="btn" id="ghmake">${I.gh}Create private GitHub repo</button>`:'';  // this machine only, and no origin at all (GitHub or not): the server refuses otherwise
   const open=`<button class="btn" id="openf">${I.folder}Open folder</button>`+mk;
   // shipped (or done by hand) but still in its project folder, as before close out existed: it can still be closed out
@@ -920,10 +920,10 @@ function closeOut(c){const box=$('#pform');if(!box)return;const pe=$('#perr');pe
   $('[data-seg=outcome]').setAttribute('aria-labelledby','olab');
   const sync=()=>{const o=segVal('outcome'),next=o==='next',d=S.deps&&S.deps.id===c.id&&S.deps.to===o?S.deps:null;
     $('#cnext').style.display=next?'':'none';
-    $('#cmove').innerHTML=next?`<span class="muted">Stays in <span class="mono">${esc(p.kind)}/</span>; this round goes under <b>## Rounds</b> in its NOTES.md.</span>`
+    $('#cmove').innerHTML=next?`<span class="muted">Stays in <span class="mono">${esc(p.kind)}/</span>; this round goes under <b>## Rounds</b> in its board record.</span>`
       :!d?(failed?`<span class="err">Couldn't check what points here (${esc(failed)}). It is checked again when you send this.</span>`:'<span class="muted">Checking what points here…</span>')
       :d.blockers.length?`<span class="err">Blocked: ${d.blockers.length} ${d.blockers.length>1?'things point':'thing points'} at this folder (see What points here). Fix ${d.blockers.length>1?'them':'it'} first.</span>`
-      :`Moves to <span class="mono">${esc(d.dest)}/</span>${d.todos.length?` · ${d.todos.length} to-do${d.todos.length>1?'s':''} for after, written to its NOTES.md`:''}`;
+      :`Moves to <span class="mono">${esc(d.dest)}/</span>${d.todos.length?` · ${d.todos.length} to-do${d.todos.length>1?'s':''} for after, written to its board record`:''}`;
     if(!next&&d&&d.undo_warning)$('#cmove').insertAdjacentHTML('beforeend',`<div class="err" id="cundo" style="margin-top:4px">${esc(d.undo_warning)}</div>`);  // too big to check: Undo will refuse
     $('#cgo').disabled=!next&&(d?!!d.blockers.length:!failed)};
   const lookup=to=>{S.depsErr=null;return loadDeps(c,to).then(d=>{failed=d?null:(S.depsErr&&S.depsErr.id===c.id&&S.depsErr.msg)||'no answer';return d})};

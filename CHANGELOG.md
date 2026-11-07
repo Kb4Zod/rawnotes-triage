@@ -24,13 +24,15 @@ answers to D1–D8 on 2026-11-06).
   the promote date any more, and the skeleton `README.md`'s status line no longer carries the ship-by.
 - **Old projects keep working, and migrate (05).** A folder with no record is read from the fields in its `NOTES.md`,
   as before. The first board action that writes to it (a done-means edit too) moves them into a record in the same
-  undo step. `rawtriage migrate-board-data` (`POST /api/migrate-board-data`, this machine only) and **Move it to
+  undo step, and its message says so (commit the trimmed `NOTES.md`; what it still holds besides the plan). `rawtriage migrate-board-data` (`POST /api/migrate-board-data`, this machine only) and **Move it to
   RawNotes** on Pulse (shown while `/api/stats`' `legacy_board` lists any) do it for every project folder at once,
   `maintained/` and `archive/` included, as one undo step, and report what moved from each, that each trimmed
   `NOTES.md` is yours to commit (the app never commits in a project's repo), that the old data stays in git history,
   which repos are public on GitHub, and which `NOTES.md` still have sections besides the plan, to read before you
-  commit. Sections still exactly as in the original note (Promote's copy) are dropped too, and the record links the
-  original; of `## Outcome` only the app's `**Killed …:**` reasons move; anything you wrote stays. A symlinked folder,
+  commit. Sections still the same as in the original note (Promote's copy, ignoring the lines the app added to the
+  original's `## Outcome`; the note's own `## Plan` when Promote added a second) are dropped too, and the record links
+  the original; the app's lines go from every `## Plan`; of `## Outcome` only the `**Killed …:**` reasons move;
+  anything you wrote stays. A symlinked folder,
   `NOTES.md` or record is skipped and listed.
 - **`rawtriage brief <name> [--kind K]` (06).** `GET /api/brief?name=&kind=` returns a project's original note and its
   plan, with no paths, so an agent in a worktree can read what `NOTES.md` no longer copies.

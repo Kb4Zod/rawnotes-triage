@@ -27,6 +27,16 @@ def git(path, *args):
     return subprocess.run(["git", "-C", path, *args], capture_output=True, text=True, check=True).stdout
 
 
+TPL_CAPTURE = ("# Tpl\n\n- date: 2026-10-01\n- status: promoted\n- type: research\n\n## What's the question / problem?\n\nWhy?\n\n"
+               "## Notes\n\nPrivate notes.\n\n## Plan\n\n- my own plan\n\n## Outcome\n\nMy private conclusion.\n"
+               "**Promoted 2026-10-01** -> `../active/tpl/NOTES.md`\n")
+TPL_LEGACY = ("# Tpl\n\n- date: 2026-10-01\n- status: promoted\n- status: promoted\n- type: research\n- promoted: 2026-10-01\n"
+              "- due: 2026-12-01\n\nA private aside above the first heading.\n\n## What's the question / problem?\n\nWhy?\n\n"
+              "## Notes\n\nPrivate notes.\n\n## Plan\n\n- my own plan\n\n## Outcome\n\nMy private conclusion.\n\n"
+              "## Plan\n\n- promoted from RawNotes on 2026-10-01, due 2026-11-24\n- definition of done: It ships.\n- first step:\n"
+              "- pushed 2026-11-24 → 2026-12-01 (2026-10-20): a private reason\n")
+
+
 class SplitLegacy(unittest.TestCase):
     """The split by audience, as a pure function."""
     def test_board_fields_sections_and_plan_lines_move_and_the_rest_stays(self):
@@ -54,6 +64,17 @@ class SplitLegacy(unittest.TestCase):
                            ("# P\n\n## Moved\n\n- x\n", True), ("# P\n\n## Plan\n\n- pushed a → b (2026-10-01): why\n", True),
                            ("# P\n\n## Outcome\n\nMy own conclusions.\n", False), ("# P\n\n## Outcome\n\n**Killed 2026-10-01:** no.\n", True)):
             self.assertEqual(server.has_legacy(text), want, text)
+
+    def test_a_template_shaped_copy_goes_with_its_outcome_and_both_plans_are_cleaned(self):
+        """The copy's ## Outcome differs from the original only by the Promoted line the app added later: still the copy.
+        A capture with its own ## Plan gave Promote's NOTES.md two; the app's lines go from both, the copy of the first too."""
+        notes, fields, sections, moved = server.split_legacy(TPL_LEGACY, TPL_CAPTURE)
+        self.assertEqual(notes, "# Tpl\n\nA private aside above the first heading.\n\n## Plan\n\n- definition of done: It ships.\n- first step:\n")
+        self.assertEqual(sections["Extensions"], "- pushed 2026-11-24 → 2026-12-01 (2026-10-20): a private reason")
+        self.assertEqual([k for k, _ in fields].count("status"), 1)  # a doubled header line moves once, and goes from NOTES.md
+        self.assertEqual(server.left_in_notes(notes), ["text above the first heading"])
+        self.assertEqual(server.left_in_notes(server.split_legacy(TPL_LEGACY)[0])[-1], "a second Plan")  # no original to match
+        self.assertFalse(server.has_legacy(notes))
 
     def test_only_the_kill_reason_leaves_outcome(self):
         text = "# P\n\n- status: dead\n\n## Outcome\n\nMy own conclusions.\n\n**Killed 2026-10-01:** no time\nand no money.\n\nMore of mine.\n"
@@ -155,6 +176,20 @@ class Records(Base):
 
 class Legacy(Base):
     """D5: no record means the legacy fields in NOTES.md are read exactly as before; the first write migrates."""
+    def test_the_first_write_says_so_once(self):
+        r = self.post("/api/project/status", {"path": "active/demo/NOTES.md", "action": "extend", "note": "Waiting on the parts."})
+        self.assertIn("Its board data moved out of NOTES.md into RawNotes/projects/: commit the trimmed active/demo/NOTES.md "
+                      "yourself, after reading what it still has (Notes).", r["msg"])
+        r = self.post("/api/done", {"name": "demo", "text": "It ships twice.", "expected": "It ships."})
+        self.assertEqual(r["msg"], "Saved to NOTES.md")  # a record exists now: nothing more to move
+
+    def test_closing_out_another_promoted_file_still_moves_the_record(self):
+        self.post("/api/project/status", {"path": "active/demo/NOTES.md", "action": "extend", "note": "Waiting on the parts."})
+        with open(os.path.join(self.proj, "PLAN.md"), "w") as fh: fh.write("# Side\n\n- status: promoted\n- due: 2099-01-01\n")
+        self.post("/api/project/close", {"path": "active/demo/PLAN.md", "outcome": "archive"})
+        self.assertIsNone(self.record("active", "demo")); self.assertIn("- extensions: 2", self.record("archive", "demo"))
+        self.post("/api/undo", {}); self.assertIn("- extensions: 2", self.record("active", "demo"))
+
     def setUp(self):
         super().setUp()
         self.proj = self.project("demo", notes=LEGACY)
@@ -288,6 +323,16 @@ class Brief(Base):
         self.assertIn("say which", self.call("/api/brief?name=a")[1]["error"])
         self.assertEqual(self.get("/api/brief?name=a&kind=experiments")["kind"], "experiments")
         for bad in ("nope", "../a", ".hidden", ""): self.assertEqual(self.call(f"/api/brief?name={bad}")[0], 400, bad)
+
+    def test_an_archived_legacy_project_and_a_restored_original_are_found(self):
+        os.makedirs(os.path.join(self.notes, "done"))
+        with open(os.path.join(self.notes, "done", "2026-10-01-demo.md"), "w") as fh: fh.write(CAPTURE)
+        self.project("demo_abandoned", "archive", "# Demo\n\n- status: dead\n- promoted: 2026-10-01\n\n## Moved\n\n"
+                                                    "- 2026-10-10: moved from `active/demo/` to `archive/demo_abandoned/`.\n")
+        self.assertIn("My own notes.", self.get("/api/brief?name=demo_abandoned")["capture"])
+        self.promote()  # a record links done/2026-10-01-a.md; then that note goes back to the Inbox
+        self.post("/api/restore", {"file": "done/2026-10-01-a.md"})
+        self.assertIn("Private first thoughts.", self.get("/api/brief?name=a")["capture"])
 
     def test_a_legacy_project_finds_its_original_through_done(self):
         self.project("demo", notes=LEGACY); os.makedirs(os.path.join(self.notes, "done"))

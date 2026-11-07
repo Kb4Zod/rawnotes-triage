@@ -70,7 +70,8 @@ class Outcomes(CloseBase):
     def test_archive_moves_the_folder_and_writes_shipped_closed_and_moved(self):
         before = self.snapshot(); mem = self.memory(); t = server.today().isoformat()
         r = self.close()
-        self.assertEqual((r["moved_to"], r["msg"]), ("archive/demo", "Shipped demo 🎉 → archive/demo"))
+        self.assertEqual((r["moved_to"], r["msg"]), ("archive/demo", "Shipped demo 🎉 → archive/demo. Its board data moved out of "
+                                                     "NOTES.md into RawNotes/projects/: commit the trimmed active/demo/NOTES.md yourself."))
         self.assertFalse(os.path.exists(self.demo))
         text = self.record("archive", "demo")  # the board record moved with the folder
         self.assertIsNone(self.record("active", "demo"))
@@ -147,7 +148,7 @@ class Outcomes(CloseBase):
         t = server.today().isoformat()
         r = self.close("next", done="Round two: it runs on the phone.", due_days=10)
         due = (server.today() + server.dt.timedelta(days=10)).isoformat()
-        self.assertNotIn("moved_to", r); self.assertEqual(r["msg"], f"Shipped demo 🎉 Next round ships by {due}")
+        self.assertNotIn("moved_to", r); self.assertTrue(r["msg"].startswith(f"Shipped demo 🎉 Next round ships by {due}. Its board data moved"))
         text = self.record("active", "demo")
         self.assertEqual([server.field(text, k) for k in ("status", "promoted", "due", "extensions", "closed", "shipped")],
                          ["promoted", t, due, "0", "", ""])
