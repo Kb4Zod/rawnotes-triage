@@ -4,6 +4,39 @@ The version shows in the page heading ("RawNotes Triage version X.XX") and
 in the startup line. Bump `VERSION` in `server.py` and add an entry here
 with every change. Versions 1.00-1.03 were numbered after the fact from git history.
 
+## 2.14 — 2026-11-06
+- **`## Moved` in a moved project's `NOTES.md` names no absolute path.** That `NOTES.md` is tracked in the project's
+  own repo, which may be public, and its close-out to-dos used to carry the full commands (the memory-folder `mv`, with
+  the home folder and username in both paths and keys; the T3 Code folder paths; `git -C <path> worktree prune`). Now
+  each to-do says what to do without them: move (or merge) the memory folder in `~/.claude/projects/` to its new key,
+  point the T3 Code project at its new place, run `git worktree prune` in the moved folder. The toast and the
+  close-out answer (`todos`, this machine only) still carry the exact commands, and undo is unchanged. The toast's
+  heading now says to copy them, since `NOTES.md` no longer has them.
+- **What points here no longer holds up other actions.** Its check of whether the folder is too big to undo a move
+  (a walk of the whole tree: seconds with a big `node_modules`) now runs after the lock is released, so the page's
+  other actions don't wait on it.
+- **`rawtriage` (no arguments) starts the session whatever the server says.** It went on only when there was no
+  server or a refusal; a server error (HTTP 500) or a lost connection stopped it with exit 4 before `claude` ran.
+- **`rawtriage new` prints the note's real path.** The server spells the home folder as `~` in `/api/new`'s `path`,
+  but the rewrite also replaced the memory-folder spelling of the home (`-home-<you>`) anywhere in it, so a folder
+  named like that came back mangled. Now only a leading home folder becomes `~`.
+- **A first push that fails after the GitHub repo was made is a failed change, not a refusal.** `POST
+  /api/project/github` answers 500 and `rawtriage project github` exits 4 ("stopped part-way"), not 1 ("refused,
+  nothing changed"): the repo and the `origin` remote exist by then. The message still says what to run, and the
+  page refreshes the project so it shows the new origin instead of the button.
+- **The commands the close-out gate suggests work for any branch name.** `git push origin refs/heads/<branch>` and
+  `git branch -D -- <branch>` (and `git push -u origin refs/heads/main`), so a branch whose name starts with `-`, or a
+  tag with the same name as the branch (`main`), no longer breaks them.
+- **A read-only `rawtriage` command the server fails on exits 1, not 4.** Exit 4 says a change may have stopped
+  part-way; `-l`, `where`, `check`, `project deps` and the like change nothing, so they now say that and exit 1.
+  Stale docstrings and help text brought up to date (among them `create_github_repo`'s push, `api()`'s exceptions,
+  `inflight`, `project_status`, `_folder_of`, `github_state`, `restore`, depcheck's to-do list, and `rawtriage`'s
+  timeouts and `project` help).
+- **A browser off this machine gets the home folder as `~` in path fields.** With `--host 0.0.0.0`, a phone (or a
+  rebound DNS name) got the full paths in the listings' `abs_path` (notes and projects), `notes_dir` and
+  `projects_dir`, and with them the username. Those fields now spell the home folder `~`. A browser on this machine
+  still gets full paths (copy path uses them), and nothing else in the answers changes.
+
 ## 2.13 — 2026-10-30
 Flow gaps (plan and tickets in `.scratch/flow-gaps/`; Hugh approved all 13 recommended decisions on 2026-10-30).
 - **RawNotes is committed after every change (01).** If the notes folder is a git repo, each decision, batch, merge,

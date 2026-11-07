@@ -206,7 +206,7 @@ rawtriage undo
 
 These are examples of separate choices, not a script to run in sequence. File arguments accept a filename, absolute path or unique partial name. Promote needs `--done` and an explicit `--due-days`/`--due` except for experiments. Use `--kind` when project names collide. `--json` prints the server response; `RAWTRIAGE_PORT` selects a nondefault port. See the [full command reference](../README.md#commands) and `bin/rawtriage --help`.
 
-Exit codes: **0** success; **1** refused/bad usage; **2** no usable server, no change; **3** lost connection after sending a change, which may have completed; **4** server failure (HTTP 500), potentially part-way through. For 3 or 4, inspect the page/list and message before retrying. Promote, merge, project status/close/GitHub and undo wait up to 300 seconds; other requests wait 60 (`RAWTRIAGE_TIMEOUT` overrides both).
+Exit codes: **0** success; **1** refused/bad usage (or a read-only command the server failed on: nothing changed); **2** no usable server, no change; **3** lost connection after sending a change, which may have completed; **4** server failure (HTTP 500), potentially part-way through. For 3 or 4, inspect the page/list and message before retrying. Promote, merge, project status/close/GitHub and undo wait up to 300 seconds; other requests wait 60 (`RAWTRIAGE_TIMEOUT` overrides both).
 
 With no arguments, `rawtriage` launches a Claude triage session. The bundled `rawnotes` skill also supports capture and triage from other agents; the installer links it into Claude, Codex and shared agent skill directories.
 

@@ -4,8 +4,8 @@ check(folder, sources, dest) -> {"blockers": [...], "todos": [...]}, each hit {k
 
 Blockers (the move would break them): systemd user units, running processes, git worktrees, ~/.local/bin links and
 scripts, crontab lines. To-dos (the app can't do them itself; it never writes outside the notes and projects
-folders): the agent memory folder under ~/.claude/projects keyed by the old path, and T3 Code projects (which the app
-can't read, so that one is always listed).
+folders): the agent memory folder under ~/.claude/projects keyed by the old path, a stale (prunable) git worktree
+record, and T3 Code projects (which the app can't read, so that one is always listed).
 
 Every scanner takes the place it looks as an argument (a home folder, a /proc folder, the crontab text), so tests run
 against fake trees and never read this machine. Sources.default() is the only thing that points at the real ones.

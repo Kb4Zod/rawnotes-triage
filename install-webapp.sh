@@ -15,7 +15,7 @@
 # ~/.local/bin/rawtriage-web becomes a link to bin/rawtriage-web in that checkout, and ~/.local/bin/rawtriage a link to
 # bin/rawtriage (the command that triages through the server), and the rawnotes skill (skills/rawnotes) is linked into
 # ~/.claude/skills, ~/.agents/skills and ~/.codex/skills (--remove takes out only those links). A hand-made rawtriage is backed up first; any other file
-# with either name stops the install before anything changes.
+# at one of those paths (the two commands or the three skill links) stops the install before anything changes.
 set -euo pipefail
 
 NAME="RawNotes Triage"

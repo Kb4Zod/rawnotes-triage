@@ -207,8 +207,8 @@ class CloseOutGate(GithubCase):
         err = self.assert_refused(outcome="maintained")
         self.assertIn("2 commits on demo's local branches are not on GitHub", err)
         self.assertIn("feat/merged-on-github (2)", err)
-        self.assertIn("`git push origin feat/merged-on-github`", err)
-        self.assertIn("`git branch -D feat/merged-on-github`", err)
+        self.assertIn("`git push origin refs/heads/feat/merged-on-github`", err)
+        self.assertIn("`git branch -D -- feat/merged-on-github`", err)
         self.assertNotIn("git branch -D main", err)
 
     def test_a_tag_named_like_a_branch_does_not_break_the_gate(self):
@@ -218,8 +218,9 @@ class CloseOutGate(GithubCase):
         run(path, "tag", "main"); run(path, "switch", "-q", "-c", "side"); self.work(path); run(path, "tag", "side")
         run(path, "switch", "-q", "main")
         err = self.assert_refused(outcome="maintained")
-        self.assertIn("side (1)", err); self.assertNotIn("heads/", err); self.assertNotIn("couldn't check", err)
-        self.assertIn("`git branch -D side`", err); self.assertNotIn("git branch -D main", err)
+        self.assertIn("side (1)", err); self.assertNotRegex(err, r"(?<!refs/)heads/"); self.assertNotIn("couldn't check", err)
+        self.assertIn("`git branch -D -- side`", err); self.assertNotIn("git branch -D -- main", err)
+        self.assertIn("`git push origin refs/heads/side`", err)  # plain `side` would fail: it matches the tag too
         run(path, "push", "-q", "origin", "refs/heads/side")
         self.assertEqual(self.close(outcome="maintained")["moved_to"], "maintained/demo")
 
@@ -227,8 +228,18 @@ class CloseOutGate(GithubCase):
         path = self.promoted(); self.work(path); self.origin(path)
         run(path, "switch", "-q", "-c", "x$(id)"); self.work(path); run(path, "switch", "-q", "main")
         err = self.assert_refused(outcome="maintained")
-        self.assertIn("`git push origin 'x$(id)'`", err)
-        self.assertIn("`git branch -D 'x$(id)'`", err)
+        self.assertIn("`git push origin 'refs/heads/x$(id)'`", err)
+        self.assertIn("`git branch -D -- 'x$(id)'`", err)
+
+    def test_the_suggested_commands_work_for_a_branch_starting_with_a_dash(self):
+        """git won't make such a branch, but update-ref (or another tool) can: `git push origin -x` would be an option."""
+        path = self.promoted(); self.work(path); self.origin(path)
+        run(path, "switch", "-q", "-c", "side"); self.work(path); run(path, "update-ref", "refs/heads/-x", "HEAD")
+        run(path, "switch", "-q", "main"); run(path, "branch", "-q", "-D", "side")
+        err = self.assert_refused(outcome="maintained")
+        self.assertIn("`git push origin refs/heads/-x`", err); self.assertIn("`git branch -D -- -x`", err)
+        run(path, "branch", "-D", "--", "-x")  # the suggested delete works as written
+        self.assertEqual(self.close(outcome="maintained")["moved_to"], "maintained/demo")
 
     def test_a_git_check_that_fails_refuses_rather_than_lets_it_through(self):
         """The unpushed count comes from git rev-list: if that fails (or times out) the gate fails closed."""
@@ -457,8 +468,9 @@ class CreateRepo(GithubCase):
     def test_a_failing_push_says_the_repo_exists_and_how_to_finish(self):
         path = self.promoted()
         with open(self.gitconfig, "a") as fh: fh.write(f'[url "{self.tmp}/nowhere.git"]\n\tpushInsteadOf = https://github.com/me/demo.git\n')
-        err = self.create("demo", ok=False)["error"]
-        self.assertIn("Created private repo me/demo, but the push failed", err); self.assertIn("git push -u origin main", err)
+        code, body = self.call("/api/project/github", {"name": "demo", "kind": "active"}); err = body["error"]
+        self.assertEqual(code, 500)  # the repo exists now: a change that stopped part-way, not "refused, nothing changed"
+        self.assertIn("Created private repo me/demo, but the push failed", err); self.assertIn("git push -u origin refs/heads/main", err)
         self.assertEqual(run(path, "remote"), "origin")
         self.assertIn("already has an origin", self.create("demo", ok=False)["error"])  # no second create
         before = self.snapshot()  # the repo exists on GitHub but holds nothing: maintained still says push it first
@@ -486,3 +498,14 @@ class Cli(GithubCase):
         r = subprocess.run([sys.executable, cli, "project", "github", "demo"], capture_output=True, text=True, timeout=60, cwd=self.tmp,
                            env={**os.environ, "RAWTRIAGE_PORT": str(self.port)})
         self.assertEqual(r.returncode, 1); self.assertIn("already has an origin", r.stderr + r.stdout)
+
+    def test_a_failed_push_after_the_repo_was_made_exits_4_not_1(self):
+        """Exit 1 means "refused, nothing changed"; by then the GitHub repo and the origin exist."""
+        import sys
+        path = self.promoted()
+        with open(self.gitconfig, "a") as fh: fh.write(f'[url "{self.tmp}/nowhere.git"]\n\tpushInsteadOf = https://github.com/me/demo.git\n')
+        cli = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin", "rawtriage")
+        r = subprocess.run([sys.executable, cli, "project", "github", "demo"], capture_output=True, text=True, timeout=60, cwd=self.tmp,
+                           env={**os.environ, "RAWTRIAGE_PORT": str(self.port)})
+        self.assertEqual(r.returncode, 4, r.stderr); self.assertIn("Created private repo me/demo, but the push failed", r.stderr)
+        self.assertNotIn("Nothing was changed", r.stderr); self.assertEqual(run(path, "remote"), "origin")

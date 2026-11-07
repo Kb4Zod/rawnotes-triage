@@ -32,9 +32,9 @@ Every command goes through the running server, so a decision made here is logged
 in Pulse exactly like one made in the page. If the server is down it is started (the systemd unit if installed, else
 server.py --no-browser). If that fails, or something else answers on the port, rawtriage exits 2 and has changed
 nothing; do not edit notes by hand instead. Exit codes: 0 done, 1 refused (the server's reason is printed; nothing
-changed), 2 no server (nothing changed), 3 the connection was lost after a change was sent: the server may have
+changed; also a read the server failed on), 2 no server (nothing changed), 3 the connection was lost after a change was sent: the server may have
 finished it, so check `rawtriage -l` or the page before retrying, 4 the change failed in the server and may have
-stopped part-way (HTTP 500; the message says what is left, e.g. "press Undo to finish"): check before retrying. Slow changes (promote, merge, close out, ship/kill, project github, undo) wait up
+stopped part-way (HTTP 500; the message says what is left, e.g. "press Undo to finish"): check before retrying. Slow changes (promote, merge, close out, ship/extend/kill, project github, undo) wait up
 to 300 s, everything else 60 s (RAWTRIAGE_TIMEOUT overrides both, in seconds).
 --json prints the server's answer. RAWTRIAGE_PORT picks another port (default 8765).
 """
@@ -150,8 +150,8 @@ def ensure_server():
 
 
 def api(path, body=None):
-    """GET (body None) or POST JSON to the server; returns the parsed answer. Raises Refused (4xx), Failed (5xx), NoServer
-    or Lost."""
+    """GET (body None) or POST JSON to the server; returns the parsed answer. Raises Refused (4xx, or 5xx on a GET, which
+    changed nothing), Failed (5xx on a POST), NoServer (nothing sent, or a GET) or Lost (a POST's answer never came)."""
     data = None if body is None else json.dumps(body).encode()
     req = urllib.request.Request(BASE + path, data=data, method="GET" if body is None else "POST",
                                  headers={} if body is None else {"Content-Type": "application/json"})
@@ -160,7 +160,8 @@ def api(path, body=None):
     except urllib.error.HTTPError as e:
         try: msg = json.loads(e.read()).get("error") or f"HTTP {e.code}"
         except (ValueError, AttributeError): msg = f"HTTP {e.code}"
-        if e.code >= 500: raise Failed(msg)
+        if e.code >= 500 and body is not None: raise Failed(msg)
+        if e.code >= 500: raise Refused(f"the server failed to answer: {msg} (only a read: nothing was changed)")
         raise Refused(msg)
     except urllib.error.URLError as e:
         if isinstance(e.reason, (ConnectionRefusedError, FileNotFoundError)) or body is None:
@@ -204,7 +205,7 @@ def make_parser():
     add("merge", "merge notes into one", (("files",), {"nargs": "+"}), (("--title",), {"required": True}),
         (("--then",), {"choices": ["inbox", "promote", "reference"], "default": "inbox"}), (("--question",), {"default": ""}), *promo)
     add("undo", "undo the newest change")
-    pr = add("project", "ship, push, kill, close out or put a project on GitHub", (("action",), {"choices": ["ship", "extend", "kill", "close", "deps", "github"]}), (("name",), {}),
+    pr = add("project", "ship, extend, kill or close out a project, check what points at it, or put it on GitHub", (("action",), {"choices": ["ship", "extend", "kill", "close", "deps", "github"]}), (("name",), {}),
              (("--kind",), {"choices": ["active", "experiments", "learning", "templates"]}),
              (("--reason", "--note"), {"dest": "reason", "default": "", "help": "why: required to extend or kill"}), (("--days",), {"type": int}),
              (("--outcome",), {"choices": ["next", "maintained", "archive"], "help": "what happens after shipping a folder"}),
@@ -254,7 +255,7 @@ def check_project(args):
 
 def max_extensions():
     """config.json's max_extensions (the server's limit on pushing a ship-by date), else 2. Read from the same file the
-    server reads (RAWTRIAGE_CONFIG_DIR, else ~/.config/rawnotes-triage), so the hint can be given before any server runs."""
+    server reads (RAWTRIAGE_CONFIG_DIR, else $XDG_CONFIG_HOME/rawnotes-triage, else ~/.config/rawnotes-triage), so the hint can be given before any server runs."""
     d = os.environ.get("RAWTRIAGE_CONFIG_DIR") or os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "rawnotes-triage")
     try:
         with open(os.path.join(d, "config.json"), encoding="utf-8") as fh: v = json.load(fh).get("max_extensions")
@@ -299,7 +300,7 @@ def close_body(args):
 def closed_text(r):
     """The server's message, plus what is left to do by hand after a move."""
     lines = [r["msg"]]
-    if r.get("todos"): lines += ["Left to do by hand (also written under ## Moved in its NOTES.md):"] + [f"- {t['fix']}" for t in r["todos"]]
+    if r.get("todos"): lines += ["Left to do by hand (## Moved in its NOTES.md lists them without paths):"] + [f"- {t['fix']}" for t in r["todos"]]
     if r.get("sync_apps") == "failed": lines.append("sync-apps failed (see the server's log); run it yourself so Obsidian's Apps/ links follow.")
     return "\n".join(lines)
 
@@ -393,7 +394,7 @@ def session():
     try:
         ensure_server(); notes = api("/api/setup")["notes_dir"]
         if os.path.isdir(notes): os.chdir(notes)
-    except (NoServer, Refused) as e: print(f"rawtriage: {e}; starting the session anyway, but it cannot decide anything until the server is up", file=sys.stderr)
+    except (NoServer, Refused, Failed, Lost) as e: print(f"rawtriage: {e}; starting the session anyway, but it cannot decide anything until the server is up", file=sys.stderr)
     try: os.execvp("claude", ["claude", "--model", "haiku", "--effort", "low", PROMPT])
     except OSError as e: die(f"can't start claude ({e})", 1)
 
