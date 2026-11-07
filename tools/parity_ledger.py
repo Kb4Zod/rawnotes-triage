@@ -19,6 +19,9 @@ CLI, or one that runs a copy of the Python code) or "runs" (against Rust under t
     python3 tools/parity_ledger.py --write-sites rewrite tools/patch_sites.tsv from the walk, keeping each row's
                                                  disposition (matched by file, scope, target, kind and order);
                                                  new sites get "?" and fail --check until someone fills them in
+    --against TSV                                compare each test's owner and due with a table (module, class, test,
+                                                 owner, due, pure columns: the Rust repo's Day 0 test-owners.tsv);
+                                                 exit 1 on any difference ("pure" differences are listed, not counted)
     --rev REV                                    walk the files as they are at git revision REV instead
 """
 import ast
@@ -38,9 +41,9 @@ ALLOW_TSV = os.path.join(ROOT, "tools", "ledger_allow.tsv")
 # Blockers (orchestration.md's dependency graph). 20 lands through 01's PR (D20), so 01 covers it.
 BLOCKERS = {"01": ["20"], "20": [], "02": [], "03": ["01"], "04": ["03", "06"], "05": ["04", "06"], "06": ["01"],
             "07": ["03", "06"], "08": ["04", "07", "09", "21"], "09": ["03", "06"], "10": ["05", "08"], "11": ["01"],
-            "12": ["05", "08", "15"], "15": ["01", "02"], "21": ["03", "06"]}
-DUE_AFTER_OWNER = ["08", "10", "12"]
-BUILD_ORDER = ["01", "20", "02", "03", "06", "04", "07", "09", "21", "05", "08", "10", "11", "15", "12"]
+            "12": ["05", "08", "15"], "15": ["01", "02"], "21": ["03", "06"], "16": ["10", "11", "12"]}
+DUE_AFTER_OWNER = ["08", "10", "12", "16"]  # 16 only when nothing earlier covers (a test using both 10 and 11)
+BUILD_ORDER = ["01", "20", "02", "03", "06", "04", "07", "09", "21", "05", "08", "10", "11", "15", "12", "16"]
 # ownership.md "Load, approximate (loop 3)": owned, due, of which pure. Sizing only; differences over five are reported.
 APPROX = {"01": (23, 33, 0), "20": (15, 15, 15), "02": (4, 4, 4), "03": (65, 43, 6), "06": (57, 38, 0), "04": (55, 70, 16),
           "07": (51, 45, 8), "09": (50, 35, 3), "21": (16, 16, 2), "05": (26, 39, 0), "08": (70, 92, 8), "11": (35, 34, 15),
@@ -55,6 +58,7 @@ POST_ROUTES = {"/api/reference/index": "04", "/api/batch": "05", "/api/merge": "
                "/api/setup": "05", "/api/open": "06", "/api/done": "07", "/api/migrate-board-data": "07",
                "/api/project/close": "08", "/api/github/token": "09", "/api/github/token/remove": "09",
                "/api/project/github": "09", "/api/action": None, "/api/project/status": None, "/api/undo": None}
+PROJECT_KINDS = ("active", "experiments", "learning", "templates")  # server.PROJECT_KINDS
 ACTIONS = {"keep": "03", "kill": "03", "reference": "04", "promote": "04", "archive": "03", "durable": "04"}  # + the old names
 FONT = re.compile(r"^/static/fonts/")
 ROUTE_STR = re.compile(r"^(/api/[a-z/-]*|/|/triage|/static/[\w./-]+|/apple-touch-icon\.png)$")
@@ -274,6 +278,7 @@ class Walk:
     def __init__(self, ledger, cls):
         self.L, self.cls = ledger, cls
         self.events, self.sites, self.helpers, self.direct, self.flags = [], [], [], [], set()
+        self.config = False
         self.stack = []
 
     # resolving names
@@ -372,8 +377,17 @@ class Walk:
                 it, tgt = it.args[0], tgt.elts[1]
             if isinstance(tgt, ast.Name) and isinstance(it, (ast.Tuple, ast.List)):
                 multi = ast.List(elts=list(it.elts), ctx=ast.Load()); multi._multi = True; env[tgt.id] = (multi, env)
-        if isinstance(node, ast.Name) and node.id == "CODE": self.flags.add("pysrc")
-        if isinstance(node, ast.Attribute) and dotted(node) == "server.__file__": self.flags.add("pysrc")
+        if mod.name != "testkit" and (dotted(node) == "server.config_path" or const_str(node) == "config.json" or (
+                isinstance(node, ast.Call) and (dotted(node.func) or "").endswith("makedirs") and node.args
+                and dotted(node.args[0]) == "server.CONFIG_DIR" and not any(k.arg == "exist_ok" for k in node.keywords))):
+            self.config = True  # writes or expects config.json, or creates the config folder itself
+        if isinstance(node, ast.Name) and node.id == "CODE": self.flags.add("pysrc")  # copies the Python code to run it
+        if isinstance(node, ast.Attribute) and dotted(node) == "server.__file__": self.flags.add("pyserver")
+        if const_str(node) and const_str(node).endswith("install-webapp.sh") :
+            self.flags.add("install")
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Attribute)
+                and node.targets[0].attr == "path" and isinstance(node.targets[0].value, ast.Name) and const_str(node.value)):
+            env["@handler:" + node.targets[0].value.id] = const_str(node.value)  # h.path = "/api/setup"; h.do_POST()
         if isinstance(node, ast.Call):
             node.func._called = True
             for child in ast.iter_child_nodes(node): self.visit(child, mod, cls, env, setup)
@@ -386,6 +400,10 @@ class Walk:
 
     def call(self, node, mod, cls, env, setup):
         f = node.func; name = dotted(f) or ""
+        if isinstance(f, ast.Attribute) and f.attr in ("do_GET", "do_POST") and isinstance(f.value, ast.Name):
+            path = env.get("@handler:" + f.value.id)
+            if path:  # a request handed to server.H in this process (a spoofed peer): a request all the same
+                self.flags.add("handler"); self.events.append(("route", f.attr[3:], path.split("?")[0], None, setup, "handler"))
         # the fixture's HTTP helpers
         if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "self" and f.attr in ("get", "post", "call"):
             method = "GET" if f.attr == "get" or (f.attr == "call" and len(node.args) < 2) else "POST"
@@ -465,7 +483,8 @@ class Walk:
             x = e.value if isinstance(e, ast.Starred) else e
             if isinstance(x, ast.Call) and dotted(x.func) == "cli_argv": return True
             if dotted(x) in ("CLI", "cli"): return True
-            if dotted(x) == "self.cli": self.flags.add("pysrc"); return False  # a copy of bin/rawtriage, or the installer's link to it
+            if dotted(x) == "self.cli":  # a copy of bin/rawtriage, or the installer's link to it: still a CLI run (10)
+                self.flags.add("pycli"); return True
         return False
 
     def cli_call(self, argv, env, setup):
@@ -595,10 +614,10 @@ class Ledger:
             if mutating and path != "/api/undo": last_change = t
             placed.append((t, mutating, setup_ev, f"{method} {path}" + (f":{body.get('action')}" if body and body.get("action") else "")))
         if browser: placed.append(("12", False, False, "page"))
-        uses = {t for t, *_ in placed} | ({"10"} if cli else set())
+        uses = ({t for t, *_ in placed} | ({"10"} if cli else set()) | ({"11"} if w.flags & {"install", "pyserver"} else set()))
         if any("inflight" in (const_str(n) or "") for n in ast.walk(func)):  # inflight inside GET /api/notes is 06's
             uses.add("06"); placed.append(("06", False, False, "GET /api/notes:inflight"))
-        calls_route = bool(placed) or cli
+        calls_route = bool(placed) or cli  # the Day 0 table's "pure" is its opposite
         rows = [self.row_for(s) for s in dict.fromkeys(w.sites)]
         rows = [r for r in rows if r is not None]
         # owner
@@ -617,18 +636,25 @@ class Ledger:
         # outcome
         r_rows = [r for r in rows if r["disposition"].startswith("R")]
         if r_rows: outcome, reason = "ported", f"R row {r_rows[0]['file']}:{r_rows[0]['line']} {r_rows[0]['target']}"
-        elif "pysrc" in w.flags: outcome, reason = "ported", "runs a copy of the Python code (server.py / bin/rawtriage)"
+        elif "install" in w.flags:
+            outcome, reason = "ported", ("runs the Python installer (install-webapp.sh)" + (" and the CLI it links" if cli else "")
+                                         + ": ticket 11's Rust installer tests replace it")
+        elif "pyserver" in w.flags: outcome, reason = "ported", "runs python server.py as a process: ticket 11's Rust startup tests replace it"
+        elif w.flags & {"pysrc", "pycli"}: outcome, reason = "ported", "runs a copy of the Python code (server.py / bin/rawtriage): a Rust test replaces it"
+        elif "handler" in w.flags and not any(e[5] != "handler" for e in routes):
+            outcome, reason = "ported", "sends its requests to server.H in this process (a spoofed peer), not to the port: a Rust test replaces it"
         elif not calls_route: outcome, reason = "ported", "calls no route and no CLI"
         else: outcome, reason = "runs", ""
         # due
         due = None
         if owner:
-            if outcome == "ported" and not calls_route: due = owner
-            else:
+            if True:
                 need = uses | {owner}
                 due = next((c for c in [owner] + DUE_AFTER_OWNER if need <= closure(c)), None)
                 if due is None: unplaced.append(f"no due ticket covers {sorted(need)}")
         pending = [r for r in rows if r["pr"] != "1" and not r["disposition"].startswith(("R", "none", "N/A"))]
+        if outcome == "runs" and self.relaxed(w, cls) and self.touches_config(w):
+            pending.append(self.limits_row)  # the switch's relaxed limits are the fixture's config.json (testkit's row)
         def fmt(ps): return ",".join(dict.fromkeys(p[3] for p in ps))
         return Test(tid, mod.name, cls.name, name, outcome, reason, owner or "", due or "",
                     ",".join(sorted(uses, key=BUILD_ORDER.index)), "y" if calls_route else "n", "y" if cli else "n",
@@ -637,6 +663,22 @@ class Ledger:
                     ",".join(f"{r['file']}:{r['line']}" for r in pending),
                     ",".join(dict.fromkeys(f for f in w.direct if f in STATE_FUNCS)) if outcome == "runs" else "",
                     "; ".join(dict.fromkeys(unplaced)))
+
+    def relaxed(self, w, cls):
+        for c in w.mro(cls):
+            for n in c.node.body:
+                if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "relax_limits" for t in n.targets):
+                    return bool(getattr(n.value, "value", True))
+        return True
+
+    def touches_config(self, w):
+        """The test (not testkit) reads or writes config.json, or creates the config folder itself."""
+        return bool(w.config)
+
+    @property
+    def limits_row(self):
+        r = next(r for r in self.rows if r["file"] == "testkit.py" and "LIMIT_DEFAULTS" in r["target"])
+        return {**r, "pr": ""}
 
     def loose_routes(self, func, cls, w):
         """Every route the test's own body (and its class's constants) spells out, paired with the body next to it in a
@@ -683,7 +725,8 @@ class Ledger:
             p = body.get("path")
             if p is None or p == "<expr>":
                 return ("08", None) if "name" in body else ("08", "/api/project/status: file or folder unknown")
-            return ("08", None) if p.count("/") >= 2 else ("07", None)
+            parts = p.split("/")  # server._folder_of: <kind>/<folder>/<file> with kind a board kind is a folder (08)
+            return ("08", None) if len(parts) == 3 and parts[0] in PROJECT_KINDS else ("07", None)
         return POST_ROUTES[path], None
 
     def only_actions(self, func, allowed):
@@ -821,9 +864,29 @@ FIELDS = ["id", "module", "cls", "name", "outcome", "reason", "owner", "due", "u
           "setup_routes", "helpers", "rows", "pending", "state_calls", "unplaced"]
 
 
+def against(L, path):
+    with open(path, encoding="utf-8", newline="") as fh: table = {(r["module"], r["class"], r["test"]): r for r in csv.DictReader(fh, delimiter="\t")}
+    mine = {(t.module, t.cls, t.name): t for t in L.tests}
+    out, bad = [], 0
+    for k in sorted(set(table) | set(mine)):
+        a, b = table.get(k), mine.get(k)
+        if a is None or b is None:
+            bad += 1; out.append(f"only in {'the ledger' if a is None else 'the table'}: {'.'.join(k)}"); continue
+        if (a["owner"], a["due"]) != (b.owner, b.due):
+            bad += 1; out.append(f"owner/due differ: {'.'.join(k)}: table {a['owner']}/{a['due']}, ledger {b.owner}/{b.due}")
+    notes = [f"  pure differs (not counted): {'.'.join(k)}: table {table[k].get('pure')}, ledger calls a route or the CLI: "
+             f"{mine[k].calls_route} ({mine[k].reason or mine[k].outcome})"
+             for k in sorted(set(table) & set(mine)) if "pure" in table[k] and (table[k]["pure"] == "yes") != (mine[k].calls_route == "n")]
+    out.append(f"{len(mine)} tests against {len(table)} rows: {bad} owner/due difference(s)")
+    return bad, out + notes
+
+
 def main(argv):
     rev = argv[argv.index("--rev") + 1] if "--rev" in argv else None
     L = build(rev)
+    if "--against" in argv:
+        bad, lines = against(L, argv[argv.index("--against") + 1])
+        print("\n".join(lines)); return 1 if bad else 0
     if "--write-sites" in argv: print(f"{write_sites(L)} sites written to {os.path.relpath(SITES_TSV, ROOT)}"); return 0
     if "--sites" in argv:
         rows = L.match_rows()

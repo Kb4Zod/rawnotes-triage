@@ -3,6 +3,7 @@ import atexit
 import datetime as dt
 import importlib.util
 import json
+import re
 import os
 import shlex
 import shutil
@@ -191,6 +192,7 @@ class ChildServer:
             while time.monotonic() < deadline and self.proc.poll() is None:
                 try:
                     with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/version", timeout=2) as r: r.read()
+                    if self.proc.poll() is not None: break  # something else answered on the port and ours exited: retry
                     _undo_dump = self.dump; return port
                 except (OSError, ValueError): time.sleep(0.05)
             self.stop()
@@ -236,6 +238,7 @@ class Switchable:
         """Under TRIAGE_SERVER: serve this test from the binary, logging to a file outside the fixture's tree (which
         server.LOG_PATH then names, for tests that read the log), with "today" fixed now."""
         today = os.environ.get("RAWTRIAGE_TODAY") or dt.date.today().isoformat()
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", today): raise ValueError(f"RAWTRIAGE_TODAY must be YYYY-MM-DD, not {today!r}")
         dt.date.fromisoformat(today)  # a typo fails here; the server would quietly use the real date
         p = mock.patch.dict(os.environ, {"RAWTRIAGE_TODAY": today})
         p.start(); self.addCleanup(p.stop)
