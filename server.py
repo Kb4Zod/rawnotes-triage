@@ -18,7 +18,8 @@ restarts the unit (systemctl) instead of stopping it.
 Decisions (all move real files, nothing is deleted; the words match the CLI and CLAUDE.md):
   promote             -> copy note into ../experiments|active|learning|templates,
                          stamp promoted/due dates and "done means", move capture to done/;
-                         a project folder gets the starter/skeletons files, git init and a first commit
+                         a project folder gets the starter/skeletons files, git init and, when git's identity is
+                         a GitHub noreply address, a first commit (else a warning says to commit by hand)
   reference (durable) -> copy note into ../reference/<slug>.md (YAML frontmatter), move capture to done/
   kill (archive)      -> status: dead, reason in ## Outcome, move to done/
   keep                -> status open|cooking, optional next-step line
@@ -209,7 +210,8 @@ def in_closed_window(day, window=None):
     except ValueError: return False
 
 def inflight(conf=None):
-    """Promoted notes with a due date (plus open-ended experiments), found in the sibling project folders."""
+    """Promoted notes with a due date (plus open-ended experiments), and projects closed within closed_window_days
+    (from maintained/ and archive/ too, for the Closed column), found in the sibling project folders."""
     conf = read_config() if conf is None else conf; out = []
     window = config_int("closed_window_days", CLOSED_WINDOW_DAYS, conf=conf); max_ext = config_int("max_extensions", MAX_EXTENSIONS, conf=conf)
     for dest in ("active", "experiments", "learning", "templates", "maintained", "archive"):
@@ -454,7 +456,7 @@ def project_deps(name, kind=None, to=None, local=True):
     with _lock.read():
         dest = close_target(path, to)
         sources = dep_sources(); found = depcheck.check(path, sources, dest)
-        too_big = tree_too_big(path)
+    too_big = tree_too_big(path)  # a walk of the whole tree (a big node_modules: seconds), so never under the lock; advisory
     if not local: found = redact_deps(found, sources.home)
     old, new = f"{kind}/{name}", os.path.relpath(dest, PROJECTS)
     warn = ({"undo_warning": f"{name} is too big (over {TREE_LIMIT} files and folders) or partly unreadable for the app to check "
@@ -478,6 +480,26 @@ def home_scrubber(home):
 def tilde(text):
     """`text` with this user's home folder spelled ~ (for messages that reach a browser, a phone included, or the log)."""
     return home_scrubber(os.path.expanduser("~"))(text)
+
+def tilde_path(path, home=None):
+    """A single path with a leading home folder (`home`, default this user's; its real path too) spelled ~ (/home/me/x ->
+    ~/x), for a caller that expands it back. Unlike tilde() it never touches the rest of the path, so a folder named
+    like a memory key (`RawNotes-home-me-x`) survives."""
+    home = home or os.path.expanduser("~")
+    for h in sorted({h.rstrip(os.sep) for h in (home, os.path.realpath(home))}, key=len, reverse=True):
+        if h and (path == h or path.startswith(h + os.sep)): return "~" + path[len(h):]
+    return path
+
+PATH_KEYS = ("abs_path", "notes_dir", "projects_dir")  # the answer fields that hold an absolute path (copy path, setup)
+
+def redact_paths(body, home):
+    """An answer as a browser off this machine gets it: every PATH_KEYS field with the home folder spelled ~ (a phone
+    can't use the path anyway, and a rebound or shared network shouldn't learn the username). Nothing else changes:
+    note text comes back unaltered, since the page sends some of it back (the done-means `expected`)."""
+    if isinstance(body, dict):
+        return {k: tilde_path(v, home) if k in PATH_KEYS and isinstance(v, str) else redact_paths(v, home) for k, v in body.items()}
+    if isinstance(body, list): return [redact_paths(v, home) for v in body]
+    return body
 
 def redact_deps(found, home):
     """The dependency check as a browser off this machine sees it: every hit keeps its kind and fix, but a running
@@ -569,8 +591,9 @@ def _promoted_days(path):
 
 def github_state(path, fresh=False):
     """Is this project on GitHub? git: has a repo; origin: it has an `origin` remote (GitHub or not); repo: 'owner/name' of a GitHub origin; pushed: that remote has
-    received something (a remote-tracking ref exists); unpushed: commits on any local branch that no origin ref contains;
-    after_skeleton: commits (on any local branch) made after Promote's own first commit (0 when the repo has none, i.e. it predates it);
+    received something (a remote-tracking ref exists); unpushed: commits on any local branch that no origin ref contains
+    (0 until something has been pushed); after_skeleton: commits (on any local branch) made after Promote's own first
+    commit (counted only with no GitHub origin; 0 when no root commit is Promote's skeleton, i.e. it predates it);
     not_on_github: no GitHub origin and (after_skeleton > 0 or promoted 2+ days ago): the red chip and the Ship gate.
     The git facts are cached for GIT_TTL seconds (and until the repo's own files change): a few git processes per project add up."""
     state = _git_facts(path, fresh)
@@ -1360,8 +1383,8 @@ def _check_movedir(op, vfs=None):
 
 def _check_gitinit(path, sha):
     """Raise ValueError unless `path`/.git is still exactly what promote made: no remote (a GitHub repo made since would
-    be orphaned), HEAD at its one commit, every ref on that commit, nothing modified or untracked (or, if no commit was
-    made, still no commit at all)."""
+    be orphaned), HEAD at its one commit, every ref on that commit, nothing modified or untracked (a committed skeleton
+    file already deleted from disk is fine), or, if no commit was made, still no commit at all."""
     gitdir = os.path.join(path, ".git")
     bad = ValueError(f"Can't undo: {os.path.basename(path)}/.git changed since (a new commit, or files added or edited). Fix it by hand.")
     if os.path.islink(gitdir) or not os.path.isdir(gitdir): raise bad
@@ -1523,7 +1546,8 @@ def _notes_git(args, timeout=COMMIT_TIMEOUT, stdin=None):
                           input=stdin, stdin=None if stdin is not None else subprocess.DEVNULL)
 
 def _commit_paths(ops):
-    """Paths inside the notes folder that `ops` wrote or moved (both sides of a move), relative to it, in order.
+    """(paths, first): the paths inside the notes folder that `ops` wrote or moved (both sides of a move), relative to it,
+    in order, and for each the write op that first touched it (None for a move; autocommit's hand-edit check).
     Folders it made are left out: git tracks files, and adding done/ would sweep in everything else there. So is a
     project's own repo ("gitinit": promote makes its first commit itself) and anything outside the notes folder:
     project folders and ../reference (its note and README.md index line) are never committed here."""
@@ -1700,7 +1724,8 @@ SKELETONS = os.path.join(HERE, "starter", "skeletons")  # starter/skeletons/<des
 SKELETON_VAR = re.compile(r"\{\{(title|slug|done|due|today|note)\}\}")
 
 def skeleton_files(dest):
-    """[(relative path, template text)] of a destination's skeleton, folders before what they hold."""
+    """[(relative path, template text)] of a destination's skeleton: files only, a folder's own files before those of
+    its subfolders."""
     base = os.path.join(SKELETONS, dest); out = []
     for root, dirs, files in os.walk(base):
         dirs.sort()
@@ -1829,7 +1854,8 @@ def note_body_for_merge(text):
 
 def restore(req):
     """Bring a note back from done/ into the Inbox (status cooking) with a fresh start: `restored: <today>` restarts the
-    Inbox limit, and its Keep count (`keeps:`, `kept:`) is cleared, so it gets the full 30 days and 3 Keeps again."""
+    Inbox limit, and its Keep count (`keeps:`, `kept:`) is cleared, so it gets the full Inbox limit and all its Keeps again
+    (30 days and 3 Keeps unless config.json says otherwise)."""
     with mutation() as tx:
         src = safe_note(req.get("file", ""), write=True)
         if os.path.dirname(src) != os.path.join(os.path.normpath(NOTES), "done"): raise ValueError("only Archive notes can be restored")
@@ -1877,7 +1903,7 @@ def require_github_to_close(path, kind, outcome):
                          f"and archive must not strand them. Create a private repo {how}, then archive it, or kill it instead.")
     if not st["pushed"]:
         raise ValueError(f"Push it first: {name} has a GitHub origin ({st['repo']}) but nothing was ever pushed to it. "
-                         f"Run `git push -u origin main` in the folder, then close it out again.")
+                         f"Run `git push -u origin refs/heads/main` in the folder, then close it out again.")
     u, branches = unpushed_work(path)
     if u is None:
         raise ValueError(f"Push it first: couldn't check with git whether every local branch of {name} is on GitHub ({st['repo']}), so "
@@ -1887,10 +1913,10 @@ def require_github_to_close(path, kind, outcome):
         others = [b for b, _ in branches if b != current and b != "HEAD"]
         raise ValueError(f"Push it first: {u} commit{'s' if u > 1 else ''} on {name}'s local branches {'are' if u > 1 else 'is'} not on "
                          f"GitHub ({st['repo']}): " + ", ".join(f"{b} ({n})" for b, n in branches) + ". Push each branch ("
-                         + ", ".join(f"`git push origin {shlex.quote(b)}`" for b, _ in branches if b != "HEAD")
+                         + ", ".join(f"`git push origin {shlex.quote('refs/heads/' + b)}`" for b, _ in branches if b != "HEAD")
                          + ("; a detached HEAD needs a branch first: `git switch -c <name>`" if any(b == "HEAD" for b, _ in branches) else "")
                          + ")" + (", or, for a branch already merged on GitHub (a squash or rebase merge leaves its own commits "
-                                  "behind), delete it instead (" + ", ".join(f"`git branch -D {shlex.quote(b)}`" for b in others) + ")" if others else "")
+                                  "behind), delete it instead (" + ", ".join(f"`git branch -D -- {shlex.quote(b)}`" for b in others) + ")" if others else "")
                          + ", then close it out again.")
 
 def unpushed_work(path):
@@ -1945,7 +1971,8 @@ def project_status(req, local=True):
     """On a promoted project file (a due: line, or an open-ended experiment): mark it shipped, push the ship-by
     date (not on open-ended experiments), or kill it.
     Shipping or killing a project folder on the board ({name, kind}, or a path inside it) is a close out (close_project):
-    it needs an outcome, and may move the folder. A folder has no ship-by to push unless it has a promoted file."""
+    shipping needs an outcome (next stays in place; maintained and archive move the folder), and killing always moves
+    it to archive/<name>_abandoned. A folder has no ship-by to push unless it has a promoted file."""
     folder = _folder_of(req) if req.get("action") in ("shipped", "kill") else None
     if folder: return close_project(req, folder, local)
     if req.get("outcome"): raise ValueError("Only a project folder can be closed out; this project is a single file.")
@@ -1973,8 +2000,9 @@ class Blocked(ValueError):
     def __init__(self, msg, payload): super().__init__(msg); self.payload = payload
 
 def _folder_of(req):
-    """(folder, kind, project file or None) when a status request is about a project folder on the board: {name, kind},
-    or a path `<kind>/<folder>/<file>.md`. None for a single-file project, or one outside the board's folders."""
+    """(absolute folder, kind, project file or None) when a status request is about a project folder on the board:
+    {name, kind} (ValueError if there is no such folder), or a path `<kind>/<folder>/<file>.md`. None when a path names
+    a single-file project, or something outside the board's folders."""
     rel = req.get("path")
     if not rel: return (*project_dir(req.get("name", ""), req.get("kind")), None)
     parts = rel.split("/") if isinstance(rel, str) else []
@@ -2094,12 +2122,13 @@ _gh_create_lock = threading.Lock()
 
 def create_github_repo(req):
     """First push, for a project folder with a local repo and no origin: `gh repo create <login>/<folder> --private
-    --source <path> --remote origin`, then `git push -u origin main`. Always private (going public is gopublic's job);
+    --source <path> --remote origin`, then `git push -u origin refs/heads/main`. Always private (going public is gopublic's job);
     the push has ALLOW_PUSH_MAIN=1 in its own environment only (the global hook allows a first push to main with it);
     never --no-verify. Refuses an existing origin, a dirty tree, a branch other than main or no gh sign-in.
     The sign-in check runs first, without the lock (it can wait on the network). The repo checks, run again, and
     `gh repo create` (which adds the remote) hold the read side of the lock: an undo of the promote or a close out sent
-    meanwhile waits, then finds the remote (undo refuses; close out wants the push). The push runs after."""
+    meanwhile waits, then finds the remote (undo refuses; close out wants the push). The push runs after; if it fails,
+    that is a MutationFailed (500, rawtriage exit 4), not a refusal: the repo and the origin exist by then."""
     path, kind = project_dir(req.get("name", ""), req.get("kind"), write=True); name = os.path.basename(path)
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", name) or not name.strip("."): raise ValueError(f"“{name}” is not a name GitHub accepts for a repo.")
     if not shutil.which("git"): raise ValueError("git is not installed.")
@@ -2127,7 +2156,9 @@ def create_github_repo(req):
             code, err = proc.returncode, proc.stderr or proc.stdout
         except (OSError, subprocess.TimeoutExpired) as e: code, err = 1, str(e)
         if code:
-            raise ValueError(f"Created private repo {slug}, but the push failed: {_last_line(err)}. Fix that, then run `git push -u origin main` in the folder.")
+            _git_cache.pop(path, None)  # it has an origin now
+            raise MutationFailed(f"Created private repo {slug}, but the push failed: {_last_line(err)}. Fix that, then run "
+                                 f"`git push -u origin refs/heads/main` in the folder.")  # 500: the repo exists, so not "nothing changed"
     finally: _gh_create_lock.release()
     _git_cache.pop(path, None)
     _log(f"github {kind}/{name} -> {slug} (private)")
@@ -2245,8 +2276,9 @@ def check_headers():
     return {"checked": checked, "problems": problems}
 
 def new_note(req):
-    """Create today's note from the folder's _template.md (POST /api/new), as one undoable step. `thought` goes under
-    "What's the question / problem?". Refuses a name that already exists."""
+    """Create today's note from the folder's _template.md (else the bundled starter one; POST /api/new), as one undoable
+    step. `thought` replaces the template's "<one or two sentences…>" line, else goes under "What's the question /
+    problem?", else at the end. Refuses a name that already exists."""
     slug = _text(req, "slug").lower(); thought = _text(req, "thought")
     if not slug or len(slug) > 60 or not SLUG_RE.fullmatch(slug): raise ValueError("slug must be short kebab-case: lowercase letters, digits and dashes")
     if not os.path.isdir(NOTES): raise ValueError("the notes folder doesn't exist yet; open the page to set it up")
@@ -2263,7 +2295,7 @@ def new_note(req):
                 text = re.sub(r"(^## What's the question / problem\?[ \t]*\n)", lambda m: m.group(1) + "\n" + thought + "\n", text, count=1, flags=re.M)
             else: text = text.rstrip("\n") + "\n\n" + thought + "\n"
         tx.write(path, text, eol); tx.select = fname; tx.log(f"new {fname}")
-    return {"ok": True, "msg": f"Created {fname}", "file": fname, "path": tilde(path)}  # home as ~: rawtriage expands it
+    return {"ok": True, "msg": f"Created {fname}", "file": fname, "path": tilde_path(path)}  # home as ~: rawtriage expands it
 
 MAX_BODY = 1 << 20
 
@@ -2275,6 +2307,7 @@ class H(BaseHTTPRequestHandler):
     def _send(self, code, body, ctype="application/json"):
         made = _commit_result.__dict__.pop("value", None)  # the auto-commit of the change this request just made
         if made is not None and code == 200 and isinstance(body, dict): body = {**body, "commit": made}
+        if not isinstance(body, bytes) and not self._this_machine(): body = redact_paths(body, dep_sources().home)
         data = body if isinstance(body, bytes) else json.dumps(body).encode()
         self.send_response(code); self.send_header("Content-Type", ctype if ctype.startswith(("font/", "image/")) else ctype + "; charset=utf-8")
         if ctype.startswith(("font/", "image/")): self.send_header("Cache-Control", "max-age=604800")

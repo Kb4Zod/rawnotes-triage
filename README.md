@@ -183,10 +183,11 @@ rawtriage project github <name> [--kind ...]       # first push: private GitHub 
 - `reference --section` adds the index line in the same undoable step as the page's Reference form (see Reference
   under **Decisions per note**); without it the note is filed but not indexed, and `reference --unindexed` lists it.
 - `--json` prints the server's answer instead of a sentence. `RAWTRIAGE_PORT` picks another port (default 8765).
-- **Exit codes:** 0 done; 1 refused (the reason is printed; bad usage too); 2 no usable server (nothing was changed);
+- **Exit codes:** 0 done; 1 refused (the reason is printed; bad usage too; also a read-only command the server failed
+  on, which changed nothing); 2 no usable server (nothing was changed);
   3 the connection was lost after a change was sent: the server may have finished it, so check `rawtriage -l` or the
   page before retrying; 4 the change failed in the server (HTTP 500) and may have stopped part-way: the message says
-  what is left (for example "press Undo to finish putting them back"), so check before retrying. Promote, merge, close out, ship/kill, `project github` and undo wait up to 300 s for an answer,
+  what is left (for example "press Undo to finish putting them back"), so check before retrying. Promote, merge, close out, ship/extend/kill, `project github` and undo wait up to 300 s for an answer,
   everything else 60 s (`RAWTRIAGE_TIMEOUT` sets both, in seconds).
 - **Server down:** `systemctl --user start rawtriage-web` if the unit is installed, otherwise `server.py --no-browser`
   is started detached; it waits up to 5 seconds. If that fails, or something that isn't rawnotes-triage answers on the
@@ -415,10 +416,10 @@ only works from the machine running the server (the button is hidden on a
 phone or any non-`localhost` page) and refuses if an `origin` exists, the tree
 isn't clean, the branch isn't `main`, or `gh` isn't signed in. It runs exactly
 `gh repo create <your login>/<folder> --private --source <folder> --remote
-origin`, then `git push -u origin main` with `ALLOW_PUSH_MAIN=1` in that one
+origin`, then `git push -u origin refs/heads/main` with `ALLOW_PUSH_MAIN=1` in that one
 process's environment (never `--no-verify`). The repo is always private; going
 public is `gopublic`'s job. If the push fails after the repo was created, the
-error says so and what to run by hand. Header tiles count overdue, due this week, active folders
+error says so and what to run by hand, as a failed change (HTTP 500; `rawtriage` exits 4), since the repo now exists. Header tiles count overdue, due this week, active folders
 without "done means", and active folders on GitHub.
 
 Select a card to open its panel in a column beside it (select it again, or
@@ -580,7 +581,9 @@ and works from anywhere. **What points here** (`/api/project/deps`) still
 answers off this machine, redacted: every hit keeps its kind and fix, but the
 command line of a running process and the text of a crontab line are left out,
 and your home folder is shown as `~` (also inside the Claude Code memory
-folder names, where it is spelled `-home-<you>`).
+folder names, where it is spelled `-home-<you>`). Every other answer off this machine spells the home folder `~` in
+its path fields (`abs_path` of notes and projects, `notes_dir`, `projects_dir`), so **Copy path** on a phone gives
+`~/…`; a browser on the server's own machine gets full paths.
 
 `triage.log` records every action after it has gone through, best-effort: if
 the log cannot be written, the change still happens and the Pulse decided
