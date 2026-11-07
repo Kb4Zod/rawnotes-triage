@@ -248,7 +248,7 @@ class Flows(BrowserCase):
         self.page.click("#list .item[data-f='2026-10-15-recent.md']"); self.page.key("p"); self.page.wait("document.querySelector('#form.promote')")
         self.focus("#note"); self.page.type("Works on my phone"); self.page.click("#go"); self.done_toast()
         notes = open(os.path.join(self.tmp, "active", "recent", "NOTES.md")).read()
-        self.assertIn("- definition of done: Works on my phone", notes); self.assertIn("- due:", notes)
+        self.assertIn("- definition of done: Works on my phone", notes); self.assertIn("- due:", self.record("active", "recent"))
         self.assertTrue(os.path.isdir(os.path.join(self.tmp, "active", "recent", ".git")))
 
     def test_promote_with_a_personal_git_email_shows_the_warning(self):
@@ -289,7 +289,7 @@ class Flows(BrowserCase):
         self.assertEqual(self.posts(), [])  # choosing is not doing
         self.page.click("#cgo"); self.done_toast()
         self.assertFalse(os.path.exists(demo))
-        moved = open(os.path.join(self.tmp, "archive", "demo", "NOTES.md")).read()
+        moved = self.record("archive", "demo")
         self.assertIn("- status: shipped", moved); self.assertIn("## Moved", moved)
         toast = self.text("#toast"); self.assertIn("archive/demo", toast); self.assertIn("Update any T3 Code project whose folder is", toast)
         self.page.wait("[...document.querySelectorAll('#pscroll .col')].some(c=>c.querySelector('h2').textContent.startsWith('Closed')&&c.querySelector('[data-pid=\"archive/demo/NOTES.md\"]'))")
@@ -326,9 +326,9 @@ class Flows(BrowserCase):
         self.page.click("#cgo"); self.page.wait("document.querySelector('#perr').textContent.includes('done means')")
         self.assertNotIn("Rounds", open(nodod).read())
         self.focus("#cdone"); self.page.type("Round two ships"); self.page.click("[data-seg=due] [data-v='14']"); self.page.click("#cgo"); self.done_toast()
-        text = open(nodod).read(); due = (server.today() + server.dt.timedelta(days=14)).isoformat()
+        text = self.record("active", "nodod"); due = (server.today() + server.dt.timedelta(days=14)).isoformat()
         self.assertEqual((server.field(text, "status"), server.field(text, "due"), server.field(text, "extensions"), server.field(text, "closed")), ("promoted", due, "0", ""))
-        self.assertIn("## Rounds", text); self.assertIn("- definition of done: Round two ships", text)
+        self.assertIn("## Rounds", text); self.assertIn("- definition of done: Round two ships", open(nodod).read())
         self.assertIn("Next round ships by " + due, self.text("#toast"))
 
     def test_a_project_shipped_before_close_out_existed_can_still_be_closed_out(self):
@@ -337,7 +337,7 @@ class Flows(BrowserCase):
         self.assertIn("Close out", self.text("#drawer .acts")); self.assertFalse(self.exists("#drawer [data-pa=kill]"))
         self.page.click("[data-pa=shipped]"); self.page.wait("document.querySelector('#cmove').textContent.includes('Moves to archive/legacy/')")
         self.page.click("#cgo"); self.done_toast()
-        self.assertIn("- status: shipped", open(os.path.join(self.tmp, "archive", "legacy", "NOTES.md")).read())
+        self.assertIn("- status: shipped", self.record("archive", "legacy"))
 
     def test_a_blocked_close_out_cannot_be_sent_and_kill_shows_why(self):
         import depcheck
@@ -388,7 +388,7 @@ class Flows(BrowserCase):
             if n == 2: self.page.click("[data-pa=extend]"); self.page.wait("document.querySelector('#pwhy')")
             self.focus("#pwhy"); self.page.type("Waiting on the parts"); self.page.click("#pf button[type=submit]"); self.done_toast(); self.settle(0.4)
             self.page.eval("document.querySelector('#toast').classList.remove('show')")
-        self.assertIn("- extensions: 2", self.read_file(demo))
+        self.assertIn("- extensions: 2", self.record("active", "demo"))
         self.page.wait("document.querySelector('#drawer .acts .btn[disabled]')")
         self.assertIn("No more extensions", self.text("#drawer .acts"))
 

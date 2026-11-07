@@ -130,6 +130,12 @@ class Fixture(unittest.TestCase):
             with open(os.path.join(path, "NOTES.md"), "w", encoding="utf-8") as fh: fh.write(notes)
         return path
 
+    def record(self, kind, name):
+        """A project folder's board record (RawNotes/projects/<kind>/<name>.md) as text, None if it has none."""
+        p = os.path.join(self.notes, "projects", kind, name + ".md")
+        if not os.path.exists(p): return None
+        with open(p, encoding="utf-8") as fh: return fh.read()
+
     def snapshot(self, root=None):
         out = {}
         for r, dirs, files in os.walk(root or self.tmp):

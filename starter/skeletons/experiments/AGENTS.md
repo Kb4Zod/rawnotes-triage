@@ -1,8 +1,8 @@
 # {{title}}: notes for agents
 
 `{{slug}}` was promoted from RawNotes on {{today}} as an open-ended experiment (no ship-by date). Read `NOTES.md`
-first: it is the original note plus the plan and what "done" means for this experiment. Keep it up to date; it is
-tracked in git.
+first: it is the plan and what "done" means for this experiment. Keep it up to date; it is tracked in git, so it
+holds nothing private. The original note it came from stays in RawNotes, with the board's own data (status, dates, pushes); `rawtriage brief {{slug}}` prints the note and the plan.
 
 ## Issue tracker
 

@@ -88,7 +88,7 @@ class AutoCommit(GitFixture):
     def test_promote_commits_only_the_notes_side(self):
         r = self.post("/api/action", {"file": "2026-10-02-beta.md", "action": "promote", "dest": "active", "note": "It ships.", "due_days": 7})
         self.assertTrue(r["commit"]["ok"], r)
-        self.assertEqual(self.changed(), ["A\tdone/2026-10-02-beta.md", "D\t2026-10-02-beta.md"])
+        self.assertEqual(self.changed(), ["A\tdone/2026-10-02-beta.md", "A\tprojects/active/beta.md", "D\t2026-10-02-beta.md"])  # + its board record
         proj = os.path.join(self.tmp, "active", "beta")
         self.assertTrue(os.path.isfile(os.path.join(proj, "NOTES.md")))
         self.assertTrue(os.path.isdir(os.path.join(proj, ".git")))  # the project's own repo (ticket 07), not the notes repo
@@ -148,21 +148,27 @@ class AutoCommit(GitFixture):
         with open(os.path.join(self.notes, "2026-10-01-alpha.md"), "a") as fh: fh.write("typed after the keep\n")
         with self.assertRaises(AssertionError): self.post("/api/undo", {})  # a real hand edit since: undo refuses, as before
 
-    def test_project_only_change_has_no_commit(self):
+    def test_a_project_change_commits_only_its_board_record(self):
+        """The record is in RawNotes, so it is committed; the trimmed NOTES.md is the project's, and never is."""
         self.project("demo", notes="# Demo\n\n- status: promoted\n- promoted: 2026-10-01\n- due: 2026-12-01\n")
         r = self.post("/api/project/status", {"path": "active/demo/NOTES.md", "action": "extend", "note": "Waiting on the parts."})
-        self.assertNotIn("commit", r)
+        self.assertTrue(r["commit"]["ok"], r); self.assertEqual(self.changed(), ["A\tprojects/active/demo.md"])
+        self.post("/api/project/status", {"path": "active/demo/NOTES.md", "action": "extend", "note": "Waiting on more parts."})
+        self.assertEqual(self.changed(), ["M\tprojects/active/demo.md"])
+        self.assertEqual(open(os.path.join(self.tmp, "active", "demo", "NOTES.md")).read(), "# Demo\n")
 
     def test_a_project_folder_move_is_never_swept_into_a_rawnotes_commit(self):
-        """Close out writes NOTES.md and moves the whole folder (a "movedir" step): none of it is a notes-folder path."""
+        """Close out moves the whole folder (a "movedir" step) and its board record: only the record is a notes-folder
+        path, so it is all the commit holds (both sides of its move); nothing of the project, no stray note."""
         self.project("demo", notes="# Demo\n\n- status: promoted\n- promoted: 2026-10-01\n- due: 2026-12-01\n")
         with open(os.path.join(self.notes, "stray.md"), "w") as fh: fh.write("an untracked note\n")
-        n = self.count(); head = git(self.notes, "rev-parse", "HEAD").strip()
+        n = self.count()
         r = self.post("/api/project/close", {"name": "demo", "outcome": "archive"})
-        self.assertNotIn("commit", r); self.assertEqual(r["moved_to"], "archive/demo")
-        self.assertEqual((self.count(), git(self.notes, "rev-parse", "HEAD").strip()), (n, head))
-        self.assertEqual(server._commit_paths(server._undo[-1]["ops"]), ([], {}))
-        r = self.post("/api/undo", {}); self.assertNotIn("commit", r); self.assertEqual(self.count(), n)
+        self.assertTrue(r["commit"]["ok"], r); self.assertEqual(r["moved_to"], "archive/demo")
+        self.assertEqual(server._commit_paths(server._undo[-1]["ops"])[0], ["projects/active/demo.md", "projects/archive/demo.md"])
+        self.assertEqual((self.count(), self.changed()), (n + 1, ["A\tprojects/archive/demo.md"]))
+        r = self.post("/api/undo", {}); self.assertTrue(r["commit"]["ok"], r)
+        self.assertEqual((self.count(), self.changed()), (n + 2, ["D\tprojects/archive/demo.md"]))  # never tracked at active/: gone
         self.assertIn("?? stray.md", git(self.notes, "status", "--porcelain"))
 
     def test_skip_reasons_keep_the_change(self):

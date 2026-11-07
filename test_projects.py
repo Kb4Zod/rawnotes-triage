@@ -138,10 +138,18 @@ class PromoteSkeleton(PromoteBase):
         self.assertIn("ALLOW_PUSH_MAIN=1 git push -u origin main", agents)
         self.assertIn(".scratch/<feature-slug>/issues/<NN>-<slug>.md", agents); self.assertIn("## First build round", agents)
         self.assertEqual(self.read(proj, "CLAUDE.md"), "@AGENTS.md\n")
-        notes = self.read(proj, "NOTES.md")
-        self.assertIn("- github: private", notes); self.assertEqual(server.field(notes, "github"), "private")
-        self.assertEqual((server.field(notes, "status"), server.field(notes, "promoted"), server.field(notes, "due")), ("promoted", self.t, due))
-        self.assertIn("- definition of done: It runs on the phone.", notes); self.assertIn("Can it ship?", notes)
+        notes = self.read(proj, "NOTES.md")  # the plan only: no board data, no copy of the original note
+        self.assertEqual(notes, "# Note A\n\n## Plan\n\n- definition of done: It runs on the phone.\n- first step:\n"
+                                "- ship / stop check-in: on the ship-by date, either ship it or kill it\n")
+        rec = self.record("active", "a")  # the board data lives in RawNotes
+        self.assertEqual(rec, f"# Note A\n\n- status: promoted\n- promoted: {self.t}\n- due: {due}\n- github: private\n\n"
+                              "## Capture\n\n- [Note A](<../../done/2026-10-01-a.md>)\n")
+        self.assertIn("Can it ship?", self.read(self.notes, "done/2026-10-01-a.md"))
+        self.assertIn("rawtriage brief a", agents)
+        # the first commit, which may go public with the repo, carries no board field and no capture text
+        committed = self.git(proj, "show", "HEAD", "--format=")
+        for private in ("- status:", "- promoted:", "- github:", "- due:", "Can it ship?", "## Rounds", "## Moved"):
+            self.assertNotIn(private, committed, private)
         # git: main, one commit with every skeleton file, clean, fixture identity
         self.assertEqual(self.git(proj, "branch", "--show-current"), "main")
         self.assertEqual(self.git(proj, "log", "--format=%s|%ae"), f"Start a (promoted from RawNotes)|{TEST_EMAIL}")
@@ -152,18 +160,22 @@ class PromoteSkeleton(PromoteBase):
         self.assertEqual(ps["active/a"]["gh"]["git"], True); self.assertTrue(ps["active/a"]["done_defined"])
         self.assertEqual([f["path"] for f in self.get("/api/notes")["inflight"]], ["active/a/NOTES.md"])  # README/AGENTS add no cards
 
-    def test_notes_md_is_the_promoted_note_plus_github_private(self):
+    def test_notes_md_is_the_plan_while_the_old_flat_layout_still_copies_the_note(self):
         self.promote(); proj = os.path.join(self.tmp, "active", "a")
         with mock.patch.object(server, "DESTS", {**server.DESTS, "active": "file"}):  # the flat layout writes the plain promoted note
             server._undo.clear(); self.promote("2026-10-02-b.md")
-        flat = self.read(self.tmp, "active/b.md").replace("# Note B", "# Note A").replace("Why Note B?", "Can it ship?").replace("2026-10-02", "2026-10-01")
-        self.assertEqual(self.read(proj, "NOTES.md"), server.set_field(flat, "github", "private"))
+        flat = self.read(self.tmp, "active/b.md")
+        self.assertIn("Why Note B?", flat); self.assertEqual(server.field(flat, "status"), "promoted")
+        self.assertIsNone(self.record("active", "b"))  # a flat file is its own board file
+        self.assertNotIn("Can it ship?", self.read(proj, "NOTES.md"))
+        self.assertTrue(self.read(proj, "NOTES.md").startswith("# Note A\n\n## Plan\n"))
 
     def test_experiments_get_their_skeleton_with_no_ship_by(self):
         self.promote(dest="experiments"); proj = os.path.join(self.tmp, "experiments", "a")
         self.assertEqual(self.files(proj), EXPERIMENT_FILES)
         self.assertIn("open-ended", self.read(proj, "README.md").splitlines()[2])
-        self.assertEqual(server.field(self.read(proj, "NOTES.md"), "due"), "")
+        self.assertEqual(server.field(self.record("experiments", "a"), "due"), "")
+        self.assertEqual(server.field(self.record("experiments", "a"), "promoted"), self.t)
         self.assertEqual(set(self.git(proj, "ls-tree", "-r", "--name-only", "HEAD").splitlines()), EXPERIMENT_FILES)
         self.assertIn("gh repo create a --private", self.read(proj, "AGENTS.md"))
 
@@ -289,6 +301,7 @@ class PromoteSkeleton(PromoteBase):
                 if os.path.exists(proj): shutil.rmtree(proj)
                 for f in os.listdir(self.notes): os.path.isdir(os.path.join(self.notes, f)) or os.remove(os.path.join(self.notes, f))
                 shutil.rmtree(os.path.join(self.notes, "done"), ignore_errors=True); shutil.rmtree(os.path.join(self.tmp, "active"), ignore_errors=True)
+                shutil.rmtree(os.path.join(self.notes, "projects"), ignore_errors=True)
                 server._undo.clear(); self.note("2026-10-01-a.md", "Note A", question="Can it ship?")
                 self.promote(); change(); mid = self.snapshot()
                 r = self.post("/api/undo", {}, ok=False)
@@ -427,7 +440,8 @@ class LearningAndTemplates(PromoteBase):
         self.assertEqual(self.git(proj, "log", "--format=%s"), "Start a (promoted from RawNotes)")
         for rel in LEARNING_FILES - {"NOTES.md"}: self.assertNotIn("{{", self.read(proj, rel), rel)
         self.assertIn("gh repo create a --private", self.read(proj, "AGENTS.md"))
-        self.assertEqual(server.field(self.read(proj, "NOTES.md"), "github"), "private")
+        self.assertEqual(server.field(self.record("learning", "a"), "github"), "private")
+        self.assertEqual(server.field(self.read(proj, "NOTES.md"), "github"), "")
         self.post("/api/undo", {}); self.assertEqual(self.snapshot(), self.before)
 
     def test_templates_promote_to_a_folder_that_says_how_to_copy_it(self):
@@ -443,8 +457,11 @@ class LearningAndTemplates(PromoteBase):
         self.project("cert-study", kind="learning")  # hand-made, no NOTES.md
         self.project("review-kit", kind="templates", notes="# Review kit\n\n- status: maintained\n")  # NOTES.md, never promoted
         self.project("half", kind="learning", notes="# Half\n\nNotes, but promoted: only in prose.\n")
+        self.project("legacy", kind="templates", notes="# Legacy\n\n- promoted: 2026-09-01\n")  # promoted before 2.15: no record
         ps = {p["path"]: p for p in self.get("/api/projects")["projects"]}
-        self.assertEqual(set(ps), {"learning/a", "templates/b"})
+        self.assertEqual(set(ps), {"learning/a", "templates/b", "templates/legacy"})
+        self.assertIsNotNone(self.record("learning", "a"))  # on the board through its record: its NOTES.md has no promoted: line
+        self.assertEqual(server.field(self.read(os.path.join(self.tmp, "learning", "a"), "NOTES.md"), "promoted"), "")
         self.assertEqual((ps["learning/a"]["kind"], ps["templates/b"]["kind"]), ("learning", "templates"))
         self.assertTrue(ps["learning/a"]["gh"]["git"]); self.assertTrue(ps["learning/a"]["done_defined"])
         inflight = {f["path"]: f for f in self.get("/api/notes")["inflight"]}
@@ -472,19 +489,19 @@ class LearningAndTemplates(PromoteBase):
         self.promote(dest="learning"); self.promote("2026-10-02-b.md", dest="templates"); self.promote("2026-10-03-c.md", dest="learning")
         server._undo.clear()
         lp, tp = os.path.join(self.tmp, "learning", "a"), os.path.join(self.tmp, "templates", "b")
-        old_due = server.field(self.read(lp, "NOTES.md"), "due")
+        old_due = server.field(self.record("learning", "a"), "due")
         self.post("/api/project/status", {"path": "learning/a/NOTES.md", "action": "extend", "days": 7, "note": "Waiting on the exam date"})
-        self.assertNotEqual(server.field(self.read(lp, "NOTES.md"), "due"), old_due)
+        self.assertNotEqual(server.field(self.record("learning", "a"), "due"), old_due)
         self.post("/api/project/status", {"path": "templates/b/NOTES.md", "action": "shipped", "outcome": "next", "done": "Copies cleanly.", "due_days": 5})
-        self.assertIn("## Rounds", self.read(tp, "NOTES.md"))
+        self.assertIn("## Rounds", self.record("templates", "b")); self.assertNotIn("## Rounds", self.read(tp, "NOTES.md"))
         self.post("/api/project/status", {"name": "c", "kind": "learning", "action": "kill", "note": "lost interest"})
-        self.assertIn("**Killed", self.read(self.tmp, "archive/c_abandoned/NOTES.md"))
+        self.assertIn("**Killed", self.record("archive", "c_abandoned"))
         self.post("/api/done", {"name": "a", "kind": "learning", "text": "I can pass the exam.", "expected": "It runs on the phone."})
         self.assertIn("- definition of done: I can pass the exam.", self.read(lp, "NOTES.md"))
         ps = {p["path"]: p["status"] for p in self.get("/api/projects")["projects"]}
         self.assertEqual((ps["templates/b"], "learning/c" in ps), ("promoted", False))
         for _ in range(4): self.post("/api/undo", {})
-        self.assertEqual(server.field(self.read(lp, "NOTES.md"), "due"), old_due)
+        self.assertEqual(server.field(self.record("learning", "a"), "due"), old_due)
 
 
 if __name__ == "__main__":
