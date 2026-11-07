@@ -1,6 +1,6 @@
 # {{title}}
 
-- **Status:** building, ship by {{due}} (promoted {{today}})
+- **Status:** building
 - **Stack:** to be decided
 - **Run it:** not runnable yet
 - **Repo:** private, local only so far

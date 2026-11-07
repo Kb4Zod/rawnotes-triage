@@ -237,6 +237,17 @@ class BulkMigration(Base):
         self.assertEqual(([m["path"] for m in r["migrated"]], [x["path"] for x in r["skipped"]]), (["active/demo"], ["maintained/old"]))
         self.assertEqual(open(outside).read(), "x\n")
 
+    def test_a_reused_name_links_the_original_promoted_on_the_projects_date(self):
+        """active/demo promoted twice (the first one killed into archive/): each migrates to its own original."""
+        with open(os.path.join(self.notes, "done", "2026-10-20-demo.md"), "w") as fh:
+            fh.write(CAPTURE.replace("Can it ship?", "The second demo.").replace("**Promoted 2026-10-01**", "**Promoted 2026-10-20**"))
+        self.project("demo_abandoned", "archive", "# Demo\n\n- status: dead\n- promoted: 2026-10-01\n\n## Moved\n\n"
+                                                    "- 2026-10-10: moved from `active/demo/` to `archive/demo_abandoned/`.\n")
+        self.post("/api/migrate-board-data", {})
+        self.assertEqual(server.capture_of(self.record("archive", "demo_abandoned")), "done/2026-10-01-demo.md")
+        self.assertEqual(server.capture_of(self.record("active", "demo")), "done/2026-10-01-demo.md")  # LEGACY says promoted 2026-10-01
+        self.assertEqual(server.pick_capture({"a/x": [("2026-01-01", "done/1.md"), ("2026-02-01", "done/2.md")]}, ["a/x"], ""), None)
+
     def test_another_projects_move_line_never_links_its_original(self):
         with open(os.path.join(self.notes, "done", "2026-10-01-other.md"), "w") as fh:
             fh.write(CAPTURE.replace("active/demo/", "active/other/"))

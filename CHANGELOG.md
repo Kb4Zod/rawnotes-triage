@@ -20,7 +20,8 @@ answers to D1–D8 on 2026-11-06).
 - **Promote writes only the plan to `NOTES.md` (04).** The title and `## Plan` (done means, first step, the check-in;
   no dates). The original note stays only in RawNotes `done/`, linked from the record; no copy goes into the project,
   so the first commit of the new repo holds no board field and none of the capture. The skeleton `AGENTS.md` still gets
-  the ship-by date, and now says `NOTES.md` holds the plan and how to read the original.
+  the ship-by date (D2), and now says `NOTES.md` holds the plan and how to read the original; no skeleton file shows
+  the promote date any more, and the skeleton `README.md`'s status line no longer carries the ship-by.
 - **Old projects keep working, and migrate (05).** A folder with no record is read from the fields in its `NOTES.md`,
   as before. The first board action that writes to it (a done-means edit too) moves them into a record in the same
   undo step. `rawtriage migrate-board-data` (`POST /api/migrate-board-data`, this machine only) and **Move it to

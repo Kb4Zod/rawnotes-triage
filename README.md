@@ -507,8 +507,10 @@ record is `RawNotes/projects/<kind>/<folder>.md` (`kind` is `active`, `experimen
 `shipped`, `closed`, `github`) and the sections the app writes: `## Capture` (a link to the original note in
 `done/`), `## Extensions`, `## Rounds`, `## Moved` and `## Outcome` (the kill reason). It is written only through the
 same undoable changes as everything else, so the lock, **Undo** and the RawNotes auto-commit cover it; a close-out move
-renames it with the folder. `NOTES.md` keeps the plan and anything you write there; the skeleton's `AGENTS.md` still
-gets the ship-by date (it is no more private than the plan).
+renames it with the folder, so move project folders with close out: one moved or renamed by hand leaves its record
+behind (move `RawNotes/projects/<kind>/<folder>.md` to match, or the board shows it with no status or dates).
+`NOTES.md` keeps the plan and anything you write there; the skeleton's `AGENTS.md` still gets the ship-by date (it is
+no more private than the plan), and no skeleton file gets the promote date.
 
 `rawtriage brief <name> [--kind K]` (`GET /api/brief?name=&kind=`) prints a project's original note and its plan
 through the server, with no paths, so an agent in a worktree can read what `NOTES.md` no longer copies.

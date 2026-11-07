@@ -1041,7 +1041,7 @@ function renderPulse(){
   $$('[data-repo]').forEach(b=>b.onclick=()=>openRepo(b.dataset.repo,'','pulse'));
   $('#migBoard')&&($('#migBoard').onclick=async()=>{$('#migBoard').disabled=true;
     try{const r=await api('/api/migrate-board-data',{});if(r.migrated.length)S.undoCount++;await changed();render();
-      toast(r.msg,{undo:!!r.migrated.length,list:r.migrated.map(m=>m.path+(m.repo?` (${m.public?'public':m.public===false?'private':'visibility unknown'} on GitHub)`:'')),listHead:'Moved:'})}
+      toast(r.msg,{undo:!!r.migrated.length,list:r.migrated.map(m=>m.path+(m.repo?` (${m.public?'public':m.public===false?'private':'visibility unknown'} on GitHub)`:'')).concat((r.skipped||[]).map(x=>`skipped ${x.path}: ${x.why}`)),listHead:'Moved:'})}
     catch(e){$('#migBoard').disabled=false;toast(e.message,{bad:true})}})}
 
 /* ---------- palette & keys: modal dialogs ---------- */

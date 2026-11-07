@@ -450,7 +450,7 @@ RECORD_ORDER = ("Capture", "Extensions", "Rounds", "Moved", "Outcome")
 EXT_SECTION = "Extensions"  # a record's pushed-ship-by lines (a legacy NOTES.md had them under ## Plan)
 PROMOTED_LINE = re.compile(r"^- promoted from RawNotes on \d{4}-\d{2}-\d{2}\b")
 PUSHED_LINE = re.compile(r"^- pushed \S+ → \S+ \(\d{4}-\d{2}-\d{2}\): ")
-PROMOTED_OUTCOME = re.compile(r"\*\*Promoted \d{4}-\d{2}-\d{2}\*\* -> `\.\./([^`]+?)/NOTES\.md`")
+PROMOTED_OUTCOME = re.compile(r"\*\*Promoted (\d{4}-\d{2}-\d{2})\*\* -> `\.\./([^`]+?)/NOTES\.md`")
 MOVED_FROM = re.compile(r"moved from `([^`]+?)/` to")
 CAPTURE_LINK = re.compile(r"\]\(<?\.\./\.\./(done/[^<>()\n]+?\.md)>?\)")
 
@@ -546,8 +546,9 @@ def capture_of(text):
     return m.group(1) if m else None
 
 def capture_index():
-    """{"<kind>/<folder>": "done/<file>"}: the original note each project folder was promoted from, read from the
-    `**Promoted …** -> ../<kind>/<folder>/NOTES.md` line Promote writes under the note's ## Outcome."""
+    """{"<kind>/<folder>": [(promote date, "done/<file>"), …]}: the original notes promoted into each project folder
+    path (more than one when a name was reused), read from the `**Promoted <date>** -> ../<kind>/<folder>/NOTES.md`
+    line Promote writes under the note's ## Outcome."""
     d = os.path.join(NOTES, "done"); out = {}
     try: names = sorted(f for f in os.listdir(d) if NOTE_RE.match(f))
     except OSError: return out
@@ -556,8 +557,16 @@ def capture_index():
         if os.path.islink(p): continue
         try: text = _head_of(p, CLOSED_READ)
         except OSError: continue
-        for m in PROMOTED_OUTCOME.finditer(section_body(text, "Outcome")): out[m.group(1)] = "done/" + f
+        for m in PROMOTED_OUTCOME.finditer(section_body(text, "Outcome")): out.setdefault(m.group(2), []).append((m.group(1), "done/" + f))
     return out
+
+def pick_capture(index, keys, promoted):
+    """The original note of a project known under these past paths: the one promoted on its `promoted:` date (the
+    first round's: a next round changes that date, so with one candidate in all, that one), else None. Never a guess
+    between two."""
+    found = [c for k in keys for c in index.get(k, [])]
+    hit = [f for d, f in found if d == promoted]
+    return hit[0] if len(hit) == 1 else found[0][1] if len(found) == 1 else None
 
 def migrate_folder(tx, path, index=None):
     """Move the legacy board data out of project folder `path`'s NOTES.md (split_legacy), through `tx`: the trimmed
@@ -573,7 +582,7 @@ def migrate_folder(tx, path, index=None):
     kind, name = os.path.basename(os.path.dirname(path)), os.path.basename(path)
     index = capture_index() if index is None else index
     earlier = [k for k in MOVED_FROM.findall(section_body(text, "Moved")) if name.startswith(k.rsplit("/", 1)[-1])]
-    cap = next((index[k] for k in [f"{kind}/{name}"] + earlier if k in index), None)
+    cap = pick_capture(index, [f"{kind}/{name}"] + earlier, field(text, "promoted"))
     cap_text = None
     if cap:
         try: cap_text = read_note(safe_note(cap))[0]
@@ -2339,9 +2348,12 @@ def legacy_projects():
             full = os.path.join(base, name)
             if name.startswith(".") or not os.path.isdir(full) or is_worktree(full) or record_file(full): continue
             if kind in PROJECT_KINDS and not on_board(full, kind): continue
-            try: text = _head_of(notes_file(full), CLOSED_READ)
+            def build(_, full=full):
+                try: return has_legacy(_head_of(notes_file(full), CLOSED_READ))
+                except OSError: return False
+            try:
+                if _proj_cache.get(("legacy", full), [notes_file(full), record_of(full)], build): out.append((kind, name, full))
             except OSError: continue
-            if has_legacy(text): out.append((kind, name, full))
     return out
 
 def legacy_board():
@@ -2377,7 +2389,9 @@ def migrate_board_data():
         repo = github_state(m.pop("folder"))["repo"]
         m.update(repo=repo, public=repo_public(repo) if repo else False)
     if not moved:
-        return {"ok": True, "msg": "No project's NOTES.md holds board data: nothing to move.", "migrated": [], "skipped": skipped}
+        msg = (f"Nothing was moved: {len(skipped)} skipped (symlinks; move their board data by hand): {', '.join(x['path'] for x in skipped)}."
+               if skipped else "No project's NOTES.md holds board data: nothing to move.")
+        return {"ok": True, "msg": msg, "migrated": [], "skipped": skipped}
     public = [m["repo"] for m in moved if m["public"]]; kept = [f"{m['path']} ({', '.join(m['kept'])})" for m in moved if m["kept"]]
     msg = (f"Moved the board data of {n} project{'' if n == 1 else 's'} out of NOTES.md into RawNotes/projects/. {MIGRATE_NOTE}"
            + (f" Public on GitHub, so their history already shows it: {', '.join(public)}." if public else "")
@@ -2399,14 +2413,16 @@ def project_brief(name, kind=None):
         if not hits: raise ValueError(f"no project called “{name}”")
         if len(hits) > 1: raise ValueError(f"“{name}” is in {', '.join(k for k, _ in hits)}: say which (--kind)")
         k, path = hits[0]; rec = record_file(path)
-        board = read_note(rec)[0] if rec else board_text(path, CLOSED_READ)
-        cap = capture_of(board) if rec else capture_index().get(f"{k}/{name}")
+        try: nf = notes_file(path)
+        except OSError: nf = ""
+        real = os.path.isfile(nf) and not os.path.islink(nf)  # a NOTES.md that is a symlink is never read here
+        board = read_note(rec)[0] if rec else board_text(path, CLOSED_READ) if real else ""
+        cap = capture_of(board) if rec else pick_capture(capture_index(), [f"{k}/{name}"], field(board, "promoted"))
         capture = None
         if cap:
             try: capture = read_note(safe_note(cap))[0]
             except (OSError, ValueError): capture = None
-        try: nf = notes_file(path); notes = read_note(nf)[0] if os.path.isfile(nf) and not os.path.islink(nf) else ""
-        except OSError: notes = ""
+        notes = read_note(nf)[0] if real else ""
         done = definition_of_done(path)
     return {"name": name, "kind": k, "title": title_of(board or notes, name), "status": field(board, "status"),
             "due": iso_day(field(board, "due")), "done": done["text"], "plan": section_body(notes, "Plan"), "capture": capture}

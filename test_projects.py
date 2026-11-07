@@ -132,7 +132,9 @@ class PromoteSkeleton(PromoteBase):
         readme = self.read(proj, "README.md").splitlines()
         self.assertEqual(readme[0], "# Note A")
         self.assertEqual([l.split(":**")[0] for l in readme[2:6]], ["- **Status", "- **Stack", "- **Run it", "- **Repo"])
-        self.assertIn(due, readme[2]); self.assertIn("Done means: It runs on the phone.", self.read(proj, "README.md"))
+        self.assertEqual(readme[2], "- **Status:** building"); self.assertIn("Done means: It runs on the phone.", self.read(proj, "README.md"))
+        self.assertIn(f"with a ship-by date of {due}.", self.read(proj, "AGENTS.md"))  # D2: agents need the ship-by
+        for rel in ACTIVE_FILES - {"NOTES.md"}: self.assertNotIn(self.t, self.read(proj, rel), rel)  # but never the promote date
         agents = self.read(proj, "AGENTS.md")
         self.assertIn("gh repo create a --private --source . --remote origin", agents)
         self.assertIn("ALLOW_PUSH_MAIN=1 git push -u origin main", agents)
