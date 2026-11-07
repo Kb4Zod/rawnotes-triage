@@ -71,9 +71,9 @@ DESTS = {  # promote targets: folder -> (layout). "file" (a flat <slug>.md) is n
 
 def today():
     """The date. RAWTRIAGE_TODAY=YYYY-MM-DD fixes it (a test hook: the test fixtures set it when they start, so a run
-    that crosses midnight, and a Rust server under test, see one date); unset, it is the real date."""
-    fixed = os.environ.get("RAWTRIAGE_TODAY")
-    return dt.date.fromisoformat(fixed) if fixed else dt.date.today()
+    that crosses midnight, and a Rust server under test, see one date); unset or malformed, it is the real date."""
+    try: return dt.date.fromisoformat(os.environ["RAWTRIAGE_TODAY"])
+    except (KeyError, ValueError): return dt.date.today()  # unset, or not a YYYY-MM-DD date: the real one
 
 _lock = safefs.RWLock()  # every change holds the write side; page reads share the read side, so a listing never sees half a change
 _notes_cache = safefs.StatCache()  # a note's summary, until the file changes

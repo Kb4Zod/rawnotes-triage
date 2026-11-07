@@ -68,9 +68,10 @@ server.SYNC_APPS = os.path.join(SESSION_DIR, "no-sync-apps")  # an absolute path
 #   RAWTRIAGE_TEST_DEPS_HOME=<dir>         the dependency check's home (.config/systemd/user, .local/bin, .claude)
 #   RAWTRIAGE_TEST_PROC=<dir>              its /proc
 #   RAWTRIAGE_TEST_CRONTAB=<file>          its crontab text (a missing file: no crontab)
-#   RAWTRIAGE_TEST_SYNC_APPS=<command>     what runs after a folder moves, instead of sync-apps
+#   RAWTRIAGE_TEST_SYNC_APPS=<path>        the program run after a folder moves, instead of sync-apps (one path, no arguments)
 #   RAWTRIAGE_TEST_SHIP_NEEDS_GITHUB=<kinds>  comma-separated kinds whose Ship needs GitHub ("" = none)
-#   RAWTRIAGE_TEST_OPENER=<command>        run instead of the platform opener, the path as its one argument
+#   RAWTRIAGE_TEST_OPENER=<command>        run instead of the platform opener (shell words, so quote a path with spaces),
+#                                          the path to open as its last argument
 # and the fixture's PATH starts with a fake `gh` (FakeGh) that answers nothing until a test scripts it, so no test can
 # reach the real GitHub; GH_TOKEN and GITHUB_TOKEN are not passed on. tools/shim/ has stand-ins for the two binaries
 # that run this repo's own server.py and bin/rawtriage as separate processes, to exercise the switch without Rust.
@@ -95,12 +96,12 @@ def cli_argv(cli=CLI):
     return [CLI_BIN] if CLI_BIN and cli == CLI else [sys.executable, cli]
 
 
-def undo_entry(entry):
-    """One server._undo entry as RAWTRIAGE_TEST_UNDO_DUMP writes it: the label, each op's kind and the paths it touched
-    (never file contents), and whether it is what is left of a change that couldn't be rolled back."""
-    paths = {"move": 2, "movedir": 2}
-    return {"label": entry["label"], "ops": [[op[0], *op[1:1 + paths.get(op[0], 1)]] for op in entry["ops"]],
-            "unfinished": entry["label"].startswith("unfinished:")}
+def _tool(name):
+    spec = importlib.util.spec_from_file_location(name, os.path.join(HERE, "tools", name + ".py"))
+    mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod); return mod
+
+
+undo_entry = _tool("undo_dump").entry  # the dump's format, shared with tools/shim/rawtriage-web
 
 
 def undo_list():
@@ -108,7 +109,9 @@ def undo_list():
     server._undo; under TRIAGE_SERVER it is the file the binary rewrites after every request (RAWTRIAGE_TEST_UNDO_DUMP)."""
     if not SERVER_BIN: return [undo_entry(e) for e in server._undo]
     if _undo_dump is None: return []  # the test's server hasn't started yet (or was just restarted): nothing to undo
-    with open(_undo_dump, encoding="utf-8") as fh: return json.load(fh)
+    try:
+        with open(_undo_dump, encoding="utf-8") as fh: return json.load(fh)
+    except FileNotFoundError: return []  # not written yet: no request has changed anything
 
 
 def free_port():
@@ -172,7 +175,7 @@ class ChildServer:
             "RAWTRIAGE_CONFIG_DIR": self.config_dir, "RAWTRIAGE_TEST_UNDO_DUMP": self.dump,
             "RAWTRIAGE_TEST_DEPS_HOME": FAKE_DEPS_HOME, "RAWTRIAGE_TEST_PROC": FAKE_PROC, "RAWTRIAGE_TEST_CRONTAB": NO_CRONTAB,
             "RAWTRIAGE_TEST_SYNC_APPS": server.SYNC_APPS, "RAWTRIAGE_TEST_SHIP_NEEDS_GITHUB": "",
-            "RAWTRIAGE_TEST_OPENER": os.path.join(HERE, "tools", "shim", "record-open"), "RAWTRIAGE_TEST_OPENED": opener,
+            "RAWTRIAGE_TEST_OPENER": shlex.quote(os.path.join(HERE, "tools", "shim", "record-open")), "RAWTRIAGE_TEST_OPENED": opener,
             "PATH": self.gh.bin + os.pathsep + env.get("PATH", os.defpath)})
         return env
 
@@ -217,10 +220,13 @@ class ChildServer:
 class Switchable:
     """`port` that starts the TRIAGE_SERVER child on first use, for Fixture and test_server's ApiTestCase."""
     _port = child = None
+    _starting = threading.Lock()  # a test's threads may all reach for the port at once: start one server, not several
 
     @property
     def port(self):
-        if self._port is None and self.child is not None: self._port = self.child.start()
+        if self._port is None and self.child is not None:
+            with self._starting:
+                if self._port is None: self._port = self.child.start()
         return self._port
 
     @port.setter
@@ -229,7 +235,9 @@ class Switchable:
     def switch_to_child(self, notes, config_dir, relax_limits=False):
         """Under TRIAGE_SERVER: serve this test from the binary, logging to a file outside the fixture's tree (which
         server.LOG_PATH then names, for tests that read the log), with "today" fixed now."""
-        p = mock.patch.dict(os.environ, {"RAWTRIAGE_TODAY": os.environ.get("RAWTRIAGE_TODAY") or dt.date.today().isoformat()})
+        today = os.environ.get("RAWTRIAGE_TODAY") or dt.date.today().isoformat()
+        dt.date.fromisoformat(today)  # a typo fails here; the server would quietly use the real date
+        p = mock.patch.dict(os.environ, {"RAWTRIAGE_TODAY": today})
         p.start(); self.addCleanup(p.stop)
         self.child = ChildServer(self, notes, config_dir, relax_limits)
         p = mock.patch.object(server, "LOG_PATH", self.child.log); p.start(); self.addCleanup(p.stop)
@@ -350,13 +358,15 @@ class Fixture(Switchable, unittest.TestCase):
 def _skip_what_the_ledger_ports():
     """Under a switch, skip exactly the tests the ledger draft marks "ported" (a Rust test replaces them, or they call
     no route and no CLI, so they would still test Python), each with its reason; every other test runs."""
-    spec = importlib.util.spec_from_file_location("parity_ledger", os.path.join(HERE, "tools", "parity_ledger.py"))
-    ledger = importlib.util.module_from_spec(spec); spec.loader.exec_module(ledger)
+    ledger = _tool("parity_ledger")
     ported = {t.id: t.reason for t in ledger.build().tests if t.outcome == "ported"}
     run = unittest.TestCase.run
 
     def run_unless_ported(self, result=None):
-        why = ported.get(self.id())
+        tid = self.id()
+        if tid.startswith("__main__."):  # `python3 test_x.py`: the module's own name, as the ledger has it
+            tid = os.path.splitext(os.path.basename(sys.modules["__main__"].__file__))[0] + tid[len("__main__"):]
+        why = ported.get(tid)
         if why is not None:
             method = getattr(self, self._testMethodName)
             setattr(self, self._testMethodName, unittest.skip(f"ported (ledger draft): {why}")(method))
