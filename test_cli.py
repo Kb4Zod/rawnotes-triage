@@ -19,7 +19,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest import mock
 
 import server
-from testkit import Fixture, isolate_git
+from testkit import Fixture, isolate_git, cli_argv
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CLI = os.path.join(HERE, "bin", "rawtriage")
@@ -34,7 +34,7 @@ def free_port():
 class CliBase(Fixture):
     def rt(self, *args, env=None, cli=CLI):
         e = {**os.environ, "RAWTRIAGE_PORT": str(self.port), **(env or {})}
-        return subprocess.run([sys.executable, cli, *args], capture_output=True, text=True, env=e, timeout=60, cwd=self.tmp)
+        return subprocess.run([*cli_argv(cli), *args], capture_output=True, text=True, env=e, timeout=60, cwd=self.tmp)
 
     def ok(self, *args, **kw):
         r = self.rt(*args, **kw); self.assertEqual(r.returncode, 0, r.stderr); return r
@@ -440,7 +440,7 @@ class LostAfterSending(unittest.TestCase):
         threading.Thread(target=httpd.serve_forever, daemon=True).start(); self.addCleanup(httpd.shutdown)
 
     def test_a_timeout_after_sending_exits_3_and_says_check(self):
-        r = subprocess.run([sys.executable, CLI, "new", "slow-one"], capture_output=True, text=True, timeout=60,
+        r = subprocess.run([*cli_argv(), "new", "slow-one"], capture_output=True, text=True, timeout=60,
                            env={**os.environ, "RAWTRIAGE_PORT": str(self.port), "RAWTRIAGE_TIMEOUT": "1"})
         self.assertEqual(r.returncode, 3, r.stderr); self.assertEqual(self.hits, ["/api/new"])
         self.assertIn("may have finished", r.stderr); self.assertIn("rawtriage -l", r.stderr); self.assertNotIn("Nothing was changed", r.stderr)

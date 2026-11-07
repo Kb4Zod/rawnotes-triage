@@ -13,7 +13,7 @@ from unittest import mock
 import server
 from notemeta import field
 from test_cli import CliBase
-from testkit import Fixture
+from testkit import Fixture, undo_list
 
 LEGACY = ("# Demo\n\n- date: 2026-10-01\n- status: promoted\n- type: research\n- promoted: 2026-10-01\n- due: 2026-12-01\n"
           "- extensions: 1\n- github: private\n\n## What's the question / problem?\n\nCan it ship?\n\n## Notes\n\nMy own notes, edited since.\n\n"
@@ -109,7 +109,7 @@ class Base(Fixture):
         self.note(f"2026-10-01-{name}.md", title, question="Can it ship?", body="Private first thoughts.")
         body = {"file": f"2026-10-01-{name}.md", "action": "promote", "dest": dest, "note": "It runs on the phone.", **extra}
         if dest != "experiments": body.setdefault("due_days", 5)
-        self.post("/api/action", body); server._undo.clear()
+        self.post("/api/action", body); self.clear_undo()
         return os.path.join(self.tmp, dest, name)
 
     def tree(self, proj):
@@ -146,7 +146,7 @@ class BoardActionsLeaveTheProjectAlone(Base):
                 self.assertEqual((self.record("active", "a"), self.record(kind, name)), (rec, None))
                 self.assertEqual(self.tree(proj), before)
                 # the next outcome starts from a fresh promote
-                server._undo.clear(); shutil.rmtree(proj); os.remove(os.path.join(self.notes, "projects", "active", "a.md"))
+                self.clear_undo(); shutil.rmtree(proj); os.remove(os.path.join(self.notes, "projects", "active", "a.md"))
                 os.remove(os.path.join(self.notes, "done", "2026-10-01-a.md"))
 
     def test_next_round_writes_only_done_means_into_the_project(self):
@@ -249,7 +249,7 @@ class Legacy(Base):
         self.assertEqual(server.capture_of(rec), "done/2026-10-01-demo.md")  # found from the original's Outcome line
         self.assertNotIn("Can it ship?", notes)  # the unedited copy of the original is dropped
         self.assertEqual(rec.split("## Extensions\n\n", 1)[1].count("- pushed "), 2)
-        self.assertEqual(len(server._undo), 1)
+        self.assertEqual(len(undo_list()), 1)
         self.post("/api/undo", {}); self.assertEqual(self.snapshot(), before)
 
     def test_done_means_edit_migrates_too(self):
@@ -278,7 +278,7 @@ class Legacy(Base):
     def test_a_stale_done_means_edit_migrates_nothing(self):
         before = self.snapshot()
         self.post("/api/done", {"name": "demo", "text": "Mine", "expected": "Something else"}, ok=False)
-        self.assertEqual((self.snapshot(), server._undo), (before, []))
+        self.assertEqual((self.snapshot(), undo_list()), (before, []))
 
 
 class BulkMigration(Base):
@@ -307,7 +307,7 @@ class BulkMigration(Base):
         self.assertEqual([m["kept"] for m in r["migrated"]], [["Notes"], []])  # demo's edited ## Notes stays, and is named
         self.assertIn("Read these NOTES.md before you commit", r["msg"]); self.assertIn("active/demo (Notes)", r["msg"])
         self.assertEqual(self.post("/api/migrate-board-data", {})["migrated"], [])  # again: nothing left, no undo step
-        self.assertEqual(server._undo[-1]["label"], "move board data out of 2 projects")
+        self.assertEqual(undo_list()[-1]["label"], "move board data out of 2 projects")
         self.post("/api/undo", {}); self.assertEqual(self.snapshot(), before)
 
     def test_the_report_names_public_repos(self):

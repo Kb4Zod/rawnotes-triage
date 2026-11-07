@@ -14,7 +14,7 @@ from unittest import mock
 
 import safefs
 import server
-from testkit import Fixture
+from testkit import Fixture, undo_list
 
 
 class Containment(Fixture):
@@ -36,7 +36,7 @@ class Containment(Fixture):
         for body in ({"name": "linked", "action": "shipped"}, {"name": "linked", "action": "kill", "note": "x"}):
             r = self.post("/api/project/status", body, ok=False); self.assertIn("symlink", r["error"])
         r = self.post("/api/done", {"name": "linked", "text": "Hacked", "expected": "Safe."}, ok=False); self.assertIn("symlink", r["error"])
-        self.assertOutsideUntouched(); self.assertEqual(server._undo, [])
+        self.assertOutsideUntouched(); self.assertEqual(undo_list(), [])
 
     def test_symlinked_project_is_still_listed_and_readable(self):
         p = next(x for x in self.get("/api/projects")["projects"] if x["name"] == "linked")
@@ -56,7 +56,7 @@ class Containment(Fixture):
         self.note("2026-10-01-a.md", "A"); before = self.snapshot()
         r = self.post("/api/action", {"file": "2026-10-01-a.md", "action": "promote", "dest": "active", "note": "Ships.", "due_days": 3}, ok=False)
         self.assertIn("symlink", r["error"])
-        self.assertEqual(self.snapshot(), before); self.assertEqual(server._undo, [])
+        self.assertEqual(self.snapshot(), before); self.assertEqual(undo_list(), [])
         self.assertEqual(os.listdir(moved), ["active-real"])
 
     def test_symlinked_notes_cannot_be_decided_or_listed_when_they_point_outside(self):
@@ -224,7 +224,7 @@ class Restart(Fixture):
 
     def test_this_server_is_recognised(self):
         info = server.running_server(self.port)
-        self.assertEqual((info["version"], info["foreign"], info["pid"]), (server.VERSION, False, os.getpid()))
+        self.assertEqual((info["version"], info["foreign"], info["pid"]), (server.VERSION, False, self.server_pid()))
 
     def test_stop_server_never_signals_a_foreign_service(self):
         with mock.patch.object(os, "kill") as kill, mock.patch.object(server, "port_pid", return_value=4242):

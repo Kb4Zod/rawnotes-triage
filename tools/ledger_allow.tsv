@@ -1,0 +1,3 @@
+key	reason
+test_engine.py|Faults.fail_nth|<dynamic>|patch|1	fail_nth(target, n) patches the target it is given; every caller is a fail_nth site of its own with an R row
+test_browser.py|BrowserCase.no_real_github|target.<dynamic>|patch|1	patches server.gh_graphql and server._gh through a loop over a literal table on the next lines; one F row (fake gh) covers both

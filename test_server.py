@@ -15,10 +15,10 @@ from testkit import Fixture
 from http.server import ThreadingHTTPServer
 
 import server
-from testkit import isolate_git
+from testkit import SERVER_BIN, Switchable, isolate_git, undo_list
 
 
-class ApiTestCase(unittest.TestCase):
+class ApiTestCase(Switchable, unittest.TestCase):
     def setUp(self):
         isolate_git(self)  # promote runs git: never with the real global config or hooks
         p = unittest.mock.patch.object(server, "SHIP_NEEDS_GITHUB", ()); p.start(); self.addCleanup(p.stop)  # the GitHub gate on Ship has its own tests (test_github_push.py)
@@ -34,6 +34,7 @@ class ApiTestCase(unittest.TestCase):
         server.PROJECTS = self.tmp
         server.log = lambda msg: None  # never write test actions into the real triage.log
         self.addCleanup(self._restore)
+        if SERVER_BIN: return self.switch_to_child(self.notes, server.CONFIG_DIR)
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.H)
         self.port = self.httpd.server_address[1]
         self.thread = threading.Thread(target=lambda: self.httpd.serve_forever(poll_interval=0.02), daemon=True)
@@ -107,7 +108,7 @@ class ApiTestCase(unittest.TestCase):
     def test_version_endpoint_and_running_server(self):
         info = self.get("/api/version")
         self.assertEqual(info["version"], server.VERSION)
-        self.assertEqual(info["pid"], os.getpid())
+        self.assertEqual(info["pid"], self.server_pid())
         self.assertEqual(server.running_server(self.port)["version"], server.VERSION)
 
     def test_running_server_none_when_port_free(self):
@@ -485,14 +486,14 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(d["gh"]["repo"], "me/viaport")
 
 
-class DecisionBase(unittest.TestCase):
+class DecisionBase(Switchable, unittest.TestCase):
     """The decision fixture and helpers, with no tests of its own (so subclasses don't run DecisionTestCase twice)."""
     _restore, get = ApiTestCase._restore, ApiTestCase.get
 
     def setUp(self):
         ApiTestCase.setUp(self)
-        server._undo.clear()
-        self.addCleanup(server._undo.clear)
+        self.clear_undo()
+        self.addCleanup(self.clear_undo)
 
     def note(self, name, title="A note", status="open", body="Some notes."):
         path = os.path.join(self.notes, name)

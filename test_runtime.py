@@ -11,7 +11,7 @@ from unittest import mock
 
 import safefs
 import server
-from testkit import Fixture
+from testkit import Fixture, undo_list
 
 
 class ReadsBesideWrites(Fixture):
@@ -240,7 +240,7 @@ class HttpLimits(Fixture):
     def test_oversized_and_malformed_bodies_are_refused_without_changes(self):
         import urllib.request, urllib.error
         self.note("2026-10-01-keep-me.md")
-        before, undo = self.snapshot(), len(server._undo)
+        before, undo = self.snapshot(), len(undo_list())
         big = json.dumps({"file": "2026-10-01-keep-me.md", "action": "kill", "note": "x" * (server.MAX_BODY + 1)}).encode()
         self.assertGreater(len(big), server.MAX_BODY)
         code, answer = self.oversized_post(big)
@@ -249,7 +249,7 @@ class HttpLimits(Fixture):
             req = urllib.request.Request(f"http://127.0.0.1:{self.port}/api/action", method="POST", data=body, headers={"Content-Type": "application/json"})
             with self.assertRaises(urllib.error.HTTPError) as cm: urllib.request.urlopen(req)
             self.assertEqual(cm.exception.code, 400)
-        self.assertEqual((self.snapshot(), len(server._undo)), (before, undo))  # nothing written, no undo step
+        self.assertEqual((self.snapshot(), len(undo_list())), (before, undo))  # nothing written, no undo step
 
     def test_responses_are_not_cached_or_sniffed(self):
         import urllib.request

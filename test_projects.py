@@ -9,7 +9,7 @@ import unittest
 from unittest import mock
 
 import server
-from testkit import Fixture, TEST_EMAIL
+from testkit import Fixture, TEST_EMAIL, undo_list
 
 ACTIVE_FILES = {".gitignore", ".scratch/.gitkeep", "AGENTS.md", "CLAUDE.md", "NOTES.md", "README.md"}
 EXPERIMENT_FILES = {".gitignore", "AGENTS.md", "CLAUDE.md", "NOTES.md", "README.md"}
@@ -165,7 +165,7 @@ class PromoteSkeleton(PromoteBase):
     def test_notes_md_is_the_plan_while_the_old_flat_layout_still_copies_the_note(self):
         self.promote(); proj = os.path.join(self.tmp, "active", "a")
         with mock.patch.object(server, "DESTS", {**server.DESTS, "active": "file"}):  # the flat layout writes the plain promoted note
-            server._undo.clear(); self.promote("2026-10-02-b.md")
+            self.clear_undo(); self.promote("2026-10-02-b.md")
         flat = self.read(self.tmp, "active/b.md")
         self.assertIn("Why Note B?", flat); self.assertEqual(server.field(flat, "status"), "promoted")
         self.assertIsNone(self.record("active", "b"))  # a flat file is its own board file
@@ -304,11 +304,11 @@ class PromoteSkeleton(PromoteBase):
                 for f in os.listdir(self.notes): os.path.isdir(os.path.join(self.notes, f)) or os.remove(os.path.join(self.notes, f))
                 shutil.rmtree(os.path.join(self.notes, "done"), ignore_errors=True); shutil.rmtree(os.path.join(self.tmp, "active"), ignore_errors=True)
                 shutil.rmtree(os.path.join(self.notes, "projects"), ignore_errors=True)
-                server._undo.clear(); self.note("2026-10-01-a.md", "Note A", question="Can it ship?")
+                self.clear_undo(); self.note("2026-10-01-a.md", "Note A", question="Can it ship?")
                 self.promote(); change(); mid = self.snapshot()
                 r = self.post("/api/undo", {}, ok=False)
                 self.assertIn("changed since", r["error"])
-                self.assertEqual(self.snapshot(), mid); self.assertEqual(len(server._undo), 1)
+                self.assertEqual(self.snapshot(), mid); self.assertEqual(len(undo_list()), 1)
 
     def test_undo_with_no_commit_refuses_once_a_commit_exists(self):
         self.set_email("me@example.com"); self.promote(); proj = os.path.join(self.tmp, "active", "a")
@@ -346,14 +346,14 @@ class PromoteSkeleton(PromoteBase):
         with mock.patch("os.rename", fail_first):
             r = self.promote(ok=False)
         self.assertIn("simulated", r["error"]); self.assertEqual(len(calls), 1)
-        self.assertEqual((self.snapshot(), server._undo), (self.before, []))
+        self.assertEqual((self.snapshot(), undo_list()), (self.before, []))
         self.assertFalse(os.path.exists(os.path.join(self.tmp, "active")))
 
     def test_a_failed_git_init_rolls_back_a_half_made_git_folder(self):
         self.fail_git("init", after=lambda path: os.makedirs(os.path.join(path, ".git", "objects")))
         r = self.promote(ok=False)
         self.assertIn("git init failed", r["error"])
-        self.assertEqual((self.snapshot(), server._undo), (self.before, []))
+        self.assertEqual((self.snapshot(), undo_list()), (self.before, []))
 
     def test_a_half_made_git_inside_an_outer_repo_never_reads_the_outer_one(self):
         """Projects inside an outer repo (a dotfiles or ~/Projects repo with a remote): a .git that git can't read must not
@@ -364,7 +364,7 @@ class PromoteSkeleton(PromoteBase):
         self.fail_git("init", after=lambda path: os.makedirs(os.path.join(path, ".git", "objects")))
         r = self.promote(ok=False)
         self.assertIn("git init failed", r["error"]); self.assertNotIn("remote", r["error"])
-        self.assertEqual((self.snapshot(), server._undo), (before, []))
+        self.assertEqual((self.snapshot(), undo_list()), (before, []))
         self.assertIsNone(server.git_out(os.path.join(self.tmp, "active"), ["rev-parse", "--show-toplevel"]))  # no upward search
 
     def test_git_init_and_first_commit_errors_spell_home_as_tilde(self):
@@ -401,22 +401,22 @@ class PromoteSkeleton(PromoteBase):
             if args[0] == "init": raise subprocess.TimeoutExpired("git", timeout)
             return real(path, args, timeout)
         with mock.patch.object(server, "_git", slow): r = self.promote(ok=False)
-        self.assertIn("git init failed", r["error"]); self.assertEqual((self.snapshot(), server._undo), (self.before, []))
+        self.assertIn("git init failed", r["error"]); self.assertEqual((self.snapshot(), undo_list()), (self.before, []))
 
     def test_undo_that_cannot_remove_git_changes_nothing(self):
         self.promote(); after = self.snapshot()
         with mock.patch.object(server.shutil, "rmtree", side_effect=OSError(5, "simulated")):
             r = self.post("/api/undo", {}, ok=False)
         self.assertIn("nothing was changed", r["error"])
-        self.assertEqual((self.snapshot(), len(server._undo)), (after, 1))
+        self.assertEqual((self.snapshot(), len(undo_list())), (after, 1))
         self.post("/api/undo", {}); self.assertEqual(self.snapshot(), self.before)
 
     def test_rollback_that_cannot_remove_git_leaves_an_unfinished_undo_entry(self):
         with mock.patch("os.rename", side_effect=OSError(5, "simulated")), mock.patch.object(server.shutil, "rmtree", side_effect=OSError(5, "stuck")):
             r = self.promote(ok=False)
         self.assertIn("could not be rolled back", r["error"])
-        self.assertIn("unfinished", server._undo[-1]["label"])
-        self.post("/api/undo", {}); self.assertEqual((self.snapshot(), server._undo), (self.before, []))
+        self.assertIn("unfinished", undo_list()[-1]["label"])
+        self.post("/api/undo", {}); self.assertEqual((self.snapshot(), undo_list()), (self.before, []))
 
     def test_a_dot_git_already_in_the_new_folder_is_refused(self):
         tx = server.Tx(); proj = os.path.join(self.tmp, "active", "x"); os.makedirs(os.path.join(proj, ".git"))
@@ -489,7 +489,7 @@ class LearningAndTemplates(PromoteBase):
 
     def test_ship_extend_kill_and_done_means_work_on_the_new_folders(self):
         self.promote(dest="learning"); self.promote("2026-10-02-b.md", dest="templates"); self.promote("2026-10-03-c.md", dest="learning")
-        server._undo.clear()
+        self.clear_undo()
         lp, tp = os.path.join(self.tmp, "learning", "a"), os.path.join(self.tmp, "templates", "b")
         old_due = server.field(self.record("learning", "a"), "due")
         self.post("/api/project/status", {"path": "learning/a/NOTES.md", "action": "extend", "days": 7, "note": "Waiting on the exam date"})

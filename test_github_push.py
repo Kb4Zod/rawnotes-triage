@@ -12,7 +12,7 @@ import urllib.request
 from unittest import mock
 
 import server
-from testkit import Fixture
+from testkit import Fixture, undo_list, cli_argv
 
 GATED = ("active", "templates")
 STUB = r'''#!/bin/sh
@@ -141,10 +141,10 @@ class CloseOutGate(GithubCase):
             run(path, "add", "-A"); run(path, "commit", "-qm", f"work {i}")
 
     def assert_refused(self, contains="Push it first", **kw):
-        before = self.snapshot(); n = len(server._undo)
+        before = self.snapshot(); n = len(undo_list())
         err = self.close(ok=False, **kw)["error"]
         self.assertIn(contains, err)
-        self.assertEqual((self.snapshot(), len(server._undo)), (before, n))  # nothing moved, nothing written, no undo step
+        self.assertEqual((self.snapshot(), len(undo_list())), (before, n))  # nothing moved, nothing written, no undo step
         return err
 
     def test_maintained_needs_an_origin_in_active_and_templates(self):
@@ -295,7 +295,7 @@ class CloseOutGate(GithubCase):
         self.assertIn("no ship-by date", err)
         self.assertEqual(self.post("/api/project/status", {"name": "plain", "kind": "active", "action": "bogus"}, ok=False)["error"], "unknown project action")
         self.assertEqual(self.post("/api/project/status", {"name": "ghost", "kind": "active", "action": "extend"}, ok=False)["error"], "unknown project")
-        self.assertEqual((self.snapshot(), server._undo), (before, []))
+        self.assertEqual((self.snapshot(), undo_list()), (before, []))
 
     def test_the_gate_off_lets_everything_through(self):
         path = self.promoted(); self.work(path)
@@ -371,10 +371,10 @@ class CreateRepo(GithubCase):
 
     def test_undo_of_the_promote_is_refused_once_the_repo_has_a_remote(self):
         path = self.promoted(); self.bare("demo"); self.create("demo")
-        before = self.snapshot(); n = len(server._undo)
+        before = self.snapshot(); n = len(undo_list())
         err = self.post("/api/undo", {}, ok=False)["error"]
         self.assertIn("Delete the GitHub repo first", err); self.assertIn("origin", err)
-        self.assertEqual((self.snapshot(), len(server._undo)), (before, n))
+        self.assertEqual((self.snapshot(), len(undo_list())), (before, n))
         self.assertTrue(os.path.isdir(os.path.join(path, ".git")))
         run(path, "remote", "remove", "origin")  # GitHub repo deleted and the remote taken out by hand: undo works again
         self.post("/api/undo", {}); self.assertFalse(os.path.exists(path))
@@ -395,7 +395,7 @@ class CreateRepo(GithubCase):
         self.assertEqual(made["r"][0], 200, made["r"])
         self.assertEqual(code, 400, r); self.assertIn("Delete the GitHub repo first", r["error"])
         self.assertTrue(os.path.isdir(os.path.join(path, ".git"))); self.assertEqual(run(path, "remote"), "origin")
-        self.assertEqual(len(server._undo), 1)
+        self.assertEqual(len(undo_list()), 1)
 
     def test_the_sign_in_check_runs_without_the_lock(self):
         """github_status(True) can wait on the network for a minute: holding the read lock meanwhile froze every change."""
@@ -491,11 +491,11 @@ class Cli(GithubCase):
         import sys
         path = self.promoted(); self.bare("demo")
         cli = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin", "rawtriage")
-        r = subprocess.run([sys.executable, cli, "project", "github", "demo"], capture_output=True, text=True, timeout=60, cwd=self.tmp,
+        r = subprocess.run([*cli_argv(cli), "project", "github", "demo"], capture_output=True, text=True, timeout=60, cwd=self.tmp,
                            env={**os.environ, "RAWTRIAGE_PORT": str(self.port)})
         self.assertEqual(r.returncode, 0, r.stderr); self.assertIn("Created private repo me/demo", r.stdout)
         self.assertEqual(run(path, "remote"), "origin")
-        r = subprocess.run([sys.executable, cli, "project", "github", "demo"], capture_output=True, text=True, timeout=60, cwd=self.tmp,
+        r = subprocess.run([*cli_argv(cli), "project", "github", "demo"], capture_output=True, text=True, timeout=60, cwd=self.tmp,
                            env={**os.environ, "RAWTRIAGE_PORT": str(self.port)})
         self.assertEqual(r.returncode, 1); self.assertIn("already has an origin", r.stderr + r.stdout)
 
@@ -505,7 +505,7 @@ class Cli(GithubCase):
         path = self.promoted()
         with open(self.gitconfig, "a") as fh: fh.write(f'[url "{self.tmp}/nowhere.git"]\n\tpushInsteadOf = https://github.com/me/demo.git\n')
         cli = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin", "rawtriage")
-        r = subprocess.run([sys.executable, cli, "project", "github", "demo"], capture_output=True, text=True, timeout=60, cwd=self.tmp,
+        r = subprocess.run([*cli_argv(cli), "project", "github", "demo"], capture_output=True, text=True, timeout=60, cwd=self.tmp,
                            env={**os.environ, "RAWTRIAGE_PORT": str(self.port)})
         self.assertEqual(r.returncode, 4, r.stderr); self.assertIn("Created private repo me/demo, but the push failed", r.stderr)
         self.assertNotIn("Nothing was changed", r.stderr); self.assertEqual(run(path, "remote"), "origin")

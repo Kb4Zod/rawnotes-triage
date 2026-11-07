@@ -1,0 +1,5 @@
+#!/bin/sh
+# Test-only stand-in for the Rust rawtriage, to exercise TRIAGE_CLI before there is a Rust binary: this repo's
+# bin/rawtriage, run as its own process.   TRIAGE_CLI=tools/shim/rawtriage python3 -m unittest
+here=$(dirname "$(readlink -f "$0")")
+exec python3 "$here/../../bin/rawtriage" "$@"

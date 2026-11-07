@@ -10,7 +10,7 @@ import unittest
 from unittest import mock
 
 import server
-from testkit import Fixture
+from testkit import Fixture, undo_list
 
 try: from test_browser import BrowserCase, cdp
 except ImportError: BrowserCase = cdp = None
@@ -165,7 +165,7 @@ class AutoCommit(GitFixture):
         n = self.count()
         r = self.post("/api/project/close", {"name": "demo", "outcome": "archive"})
         self.assertTrue(r["commit"]["ok"], r); self.assertEqual(r["moved_to"], "archive/demo")
-        self.assertEqual(server._commit_paths(server._undo[-1]["ops"])[0], ["projects/active/demo.md", "projects/archive/demo.md"])
+        self.assertEqual(server._commit_paths(undo_list()[-1]["ops"])[0], ["projects/active/demo.md", "projects/archive/demo.md"])
         self.assertEqual((self.count(), self.changed()), (n + 1, ["A\tprojects/archive/demo.md"]))
         r = self.post("/api/undo", {}); self.assertTrue(r["commit"]["ok"], r)
         self.assertEqual((self.count(), self.changed()), (n + 2, ["D\tprojects/archive/demo.md"]))  # never tracked at active/: gone
