@@ -519,15 +519,17 @@ function renderRail(){
   $('#tabbar').innerHTML=tab('inbox','inbox','Inbox')+tab('projects','proj','Projects',c.late)+tab('archive','arch','Archive')+tab('pulse','pulse','Pulse')}
 // Reload: what Ctrl-R does, but the reloaded page also skips the server's short caches (git facts, GitHub status, activity).
 // The ask is one-shot (sessionStorage), so a later plain Ctrl-R behaves as before.
-// It asks once, itself, about anything typed (decision drafts are kept in S.forms once you type or pick, done-means edits in S.dods),
+// It asks once, itself, about anything typed: decision drafts (S.forms gets one once you type or pick; drafts of notes no longer
+// in the Inbox don't count), a stack's batch form you typed in (data-typed), done-means edits (S.dods). It
 // then tells beforeunload not to ask again: cancelling a browser prompt would leave the fresh flag set for a later plain Ctrl-R.
 let reloading=false;
 function reloadAll(){
-  const typed=Object.keys(S.forms).length>0||Object.values(S.dods).some(dodDirty);
+  const live=new Set((S.notes?S.notes.live:[]).map(n=>n.file));
+  const typed=Object.keys(S.forms).some(k=>live.has(k.slice(0,k.lastIndexOf('|'))))||!!$('#form[data-typed]')||Object.values(S.dods).some(dodDirty);
   if(typed&&!confirm('Reload the page? What you typed and haven\'t saved will be lost.'))return;
   reloading=true;
   try{sessionStorage.setItem('reloadFresh','1')}catch(e){}
-  location.reload()}
+  location.reload();setTimeout(()=>{reloading=false},3000)}  // still here (a blocked reload): the leave-page prompt is back
 function takeReloadFresh(){try{const v=sessionStorage.getItem('reloadFresh');sessionStorage.removeItem('reloadFresh');return v==='1'}catch(e){return false}}
 function toggleTheme(){const d=document.documentElement.classList.toggle('dark');localStorage.setItem('theme',d?'dark':'light');renderRail();if(S.route==='pulse')render()}
 
@@ -742,7 +744,7 @@ function renderBatch(){const k=S.sel.slice(6),stk=inboxModel().stacks[k];const r
   $$('[data-bm]').forEach(b=>b.onclick=()=>{S.batchMode=b.dataset.bm;S.armed=S.sel;renderBatch()});
   const f=$('#form'),sync=()=>{if(S.batchMode==='merge'){$('#promoteBits').style.display=segVal('then')==='promote'?'':'none';syncShipBy(segVal('dest'));batchPreview()}};wireSegs(f,sync);
   f.onsubmit=e=>{e.preventDefault();apply()};$('#cancel').onclick=()=>{S.sel=stk.members[0].file;S.expanded=k;renderInboxList();renderReader()};
-  f.querySelectorAll('input,textarea').forEach(i=>i.oninput=batchPreview);if(S.batchMode==='reference')wireSec(f,'rsec',batchPreview);wireShipBy(f,sync);  // after: it owns #dueDate's oninput
+  f.querySelectorAll('input,textarea').forEach(i=>i.oninput=batchPreview);f.addEventListener('input',()=>{f.dataset.typed='1'});if(S.batchMode==='reference')wireSec(f,'rsec',batchPreview);wireShipBy(f,sync);  // after: it owns #dueDate's oninput
   renderBatchSummary()}
 function batchForm(stk){const m=S.batchMode;
   const foot=(btn,cls)=>`<div class="formfoot"><button type="submit" class="btn ${cls}" id="go">${btn} ${kbh('↵')}</button><button type="button" class="btn ghost" id="cancel">Cancel</button><span class="err" id="ferr" role="alert"></span><span class="hint" id="bleft"></span></div>`;

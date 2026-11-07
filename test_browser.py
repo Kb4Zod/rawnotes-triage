@@ -634,6 +634,21 @@ class ReloadButton(BrowserCase):
         self.assertEqual(self.page.eval("window.__before"), 1)  # not reloaded
         self.assertEqual(self.page.eval("document.querySelector('#note').value"), "half typed")
 
+    def test_a_stack_form_asks_only_once_typed_in(self):
+        self.page.click(self.stack_row()); self.page.wait("document.querySelector('#decide #mtitle')")
+        self.page.eval("window.confirm=()=>{throw new Error('asked')}")  # prefilled and untouched: nothing to lose
+        self.reload_with("document.querySelector('#reload').click()")
+        self.page.click(self.stack_row()); self.page.wait("document.querySelector('#decide #mtitle')")
+        self.focus("#mtitle"); self.page.type("x")
+        self.page.eval("window.__asked=0;window.confirm=()=>{window.__asked++;return false};window.__before=1")
+        self.page.click("#reload"); self.settle(0.3)
+        self.assertEqual(self.page.eval("window.__asked"), 1)
+        self.assertEqual(self.page.eval("window.__before"), 1)
+
+    def test_a_draft_for_a_note_no_longer_in_the_inbox_does_not_ask(self):
+        self.page.eval("S.forms['gone-away.md|promote']={note:'old'};window.confirm=()=>{throw new Error('asked')}")
+        self.reload_with("document.querySelector('#reload').click()")
+
     def test_nothing_typed_reloads_without_asking(self):
         self.page.click("#list .item[data-f='2026-10-15-recent.md']"); self.page.key("p"); self.page.wait("document.querySelector('#form.promote')")
         self.page.eval("window.confirm=()=>{throw new Error('asked')}")  # a form only opened holds nothing to lose
