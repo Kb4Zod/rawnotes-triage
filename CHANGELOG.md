@@ -32,8 +32,10 @@ answers to D1–D8 on 2026-11-06).
   commit. Sections still the same as in the original note (Promote's copy, ignoring the lines the app added to the
   original's `## Outcome`; the note's own `## Plan` when Promote added a second) are dropped too, and the record links
   the original; the app's lines go from every `## Plan`; of `## Outcome` only the `**Killed …:**` reasons move;
-  anything you wrote stays. A symlinked folder,
-  `NOTES.md` or record is skipped and listed.
+  anything you wrote stays (user text on or next to an app line stays too: only the app's exact formats move). A
+  folder that already has a record (made by hand, or left over) is migrated too, merged into it (a value the record
+  has wins; `NOTES.md`'s goes under `## From NOTES.md`). A symlinked folder, `NOTES.md` or record is skipped and
+  listed, and a board action refuses a symlinked `NOTES.md` that holds board data.
 - **`rawtriage brief <name> [--kind K]` (06).** `GET /api/brief?name=&kind=` returns a project's original note and its
   plan, with no paths, so an agent in a worktree can read what `NOTES.md` no longer copies.
 - Docs: README (**Board records**), the user guide, the `rawnotes` skill's triage steps, and the close-out toast's

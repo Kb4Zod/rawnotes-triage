@@ -527,7 +527,11 @@ note's own `## Plan` when Promote added a second; the record links the original 
 commits in a project's repo: commit each trimmed `NOTES.md` yourself. The old data is still in that repo's git history;
 the report says so, names the repos that are public on GitHub (asked through `gh`; rewriting history is up to you), and
 lists each `NOTES.md` that still holds more than the plan (sections, a second `## Plan`, text above the first
-heading: your own, or a copy of the original it couldn't match), so you read those before committing. A symlinked folder, `NOTES.md` or record is skipped and listed.
+heading: your own, or a copy of the original it couldn't match), so you read those before committing. A symlinked folder, `NOTES.md` or record is skipped and listed
+(and a board action on a folder whose `NOTES.md` is a symlink holding board data is refused). A folder that already has
+a record (made by hand, or left over) and a `NOTES.md` that still holds board data is migrated all the same: what the
+record lacks is added to it, sections are appended, and a value the record already has wins, with `NOTES.md`'s kept
+under `## From NOTES.md`.
 
 **Symlinked project folders** are listed read-only with a note. Every write
 must land on a real path inside `RawNotes/` or the projects folders with no

@@ -73,7 +73,7 @@ class SplitLegacy(unittest.TestCase):
         notes, fields, sections, moved = server.split_legacy(TPL_LEGACY, TPL_CAPTURE)
         self.assertEqual(notes, "# Tpl\n\nA private aside above the first heading.\n\n## Plan\n\n- definition of done: It ships.\n- first step:\n")
         self.assertEqual(sections["Extensions"], "- pushed 2026-11-24 → 2026-12-01 (2026-10-20): a private reason")
-        self.assertEqual([k for k, _ in fields].count("status"), 1)  # a doubled header line moves once, and goes from NOTES.md
+        self.assertEqual([k for k, _ in fields].count("status"), 2)  # a doubled header line: both copies reach the record, none stays
         self.assertEqual(server.left_in_notes(notes), ["text above the first heading"])
         self.assertEqual(server.left_in_notes(server.split_legacy(TPL_LEGACY)[0])[-1], "a second Plan")  # no original to match
         self.assertFalse(server.has_legacy(notes))
@@ -87,10 +87,21 @@ class SplitLegacy(unittest.TestCase):
         self.assertEqual((notes, sections["Outcome"]), ("# P\n\n## Plan\n\n- x\n", "**Killed 2026-10-01:** no."))
         self.assertNotIn("Outcome", server.split_legacy("# P\n\n- status: x\n\n## Outcome\n\nMine.\n")[2])
 
+    def test_user_text_next_to_an_app_line_stays(self):
+        text = ("# P\n\n- promoted: 2026-10-01\n- due: 2026-12-01\n- due: 2026-12-15 (the real one)\n\n## Plan\n\n"
+                "- promoted from RawNotes on 2026-10-01, due 2026-11-24 -- plus my note\n- definition of done: x\n\n"
+                "## Outcome\n\nMy conclusion.\n**Merged 2026-10-05** my extra thoughts\n")
+        cap = "# P\n\n## Outcome\n\nMy conclusion.\n"
+        notes, fields, _, _ = server.split_legacy(text, cap)
+        self.assertIn("plus my note", notes); self.assertIn("my extra thoughts", notes)
+        self.assertEqual([v for k, v in fields if k == "due"], ["2026-12-01", "2026-12-15 (the real one)"])
+
     def test_record_text_and_capture_link_round_trip(self):
         rec = server.record_text("T", [("status", "promoted")], {"Outcome": "x", "Capture": server.capture_line("T", "done/2026-10-01-a b.md")})
         self.assertEqual(rec, "# T\n\n- status: promoted\n\n## Capture\n\n- [T](<../../done/2026-10-01-a b.md>)\n\n## Outcome\n\nx\n")
         self.assertEqual(server.capture_of(rec), "done/2026-10-01-a b.md")
+        odd = "done/2026-10-01-a (b) <c> 100%.md"
+        self.assertEqual(server.capture_of(server.record_text("T", [], {"Capture": server.capture_line("T", odd)})), odd)
 
 
 class Base(Fixture):
@@ -184,6 +195,31 @@ class Legacy(Base):
                       "yourself, after reading what it still has (Notes).", r["msg"])
         r = self.post("/api/done", {"name": "demo", "text": "It ships twice.", "expected": "It ships."})
         self.assertEqual(r["msg"], "Saved to NOTES.md")  # a record exists now: nothing more to move
+
+    def test_a_record_made_by_hand_still_gets_the_legacy_data_merged_in(self):
+        """The drawer says to put a due: line in a record; a NOTES.md that still holds board data is cleaned anyway."""
+        os.makedirs(os.path.join(self.notes, "projects", "active"))
+        with open(os.path.join(self.notes, "projects", "active", "demo.md"), "w") as fh: fh.write("# Demo\n\n- due: 2026-12-24\n")
+        self.assertEqual(self.get("/api/stats")["legacy_board"], ["active/demo"])  # Pulse still lists it
+        before = self.snapshot()
+        r = self.post("/api/project/status", {"path": "active/demo/NOTES.md", "action": "extend", "note": "Waiting on the parts."})
+        self.assertIn("Its board data moved out of NOTES.md", r["msg"])
+        rec = self.record("active", "demo")
+        self.assertEqual([field(rec, k) for k in ("status", "extensions", "github")], ["promoted", "2", "private"])
+        self.assertIn("- due: 2026-12-01", rec.split("## From NOTES.md", 1)[1])  # the record's own due won; NOTES.md's is kept
+        self.assertEqual(field(open(os.path.join(self.proj, "NOTES.md")).read(), "status"), "")
+        self.assertEqual(self.get("/api/stats")["legacy_board"], [])
+        self.post("/api/undo", {}); self.assertEqual(self.snapshot(), before)
+
+    def test_a_symlinked_notes_md_with_board_data_is_refused(self):
+        real = os.path.join(self.tmp, "real-notes.md"); os.replace(os.path.join(self.proj, "NOTES.md"), real)
+        os.symlink(real, os.path.join(self.proj, "NOTES.md")); before = self.snapshot()
+        r = self.post("/api/project/status", {"name": "demo", "kind": "active", "action": "kill", "note": "Not needed."}, ok=False)
+        self.assertIn("symlink", r["error"]); self.assertEqual(self.snapshot(), before)
+
+    def test_after_a_move_the_message_names_where_notes_md_is_now(self):
+        r = self.post("/api/project/close", {"name": "demo", "outcome": "archive"})
+        self.assertIn("commit the trimmed archive/demo/NOTES.md yourself", r["msg"])
 
     def test_closing_out_another_promoted_file_still_moves_the_record(self):
         self.post("/api/project/status", {"path": "active/demo/NOTES.md", "action": "extend", "note": "Waiting on the parts."})

@@ -71,7 +71,7 @@ class Outcomes(CloseBase):
         before = self.snapshot(); mem = self.memory(); t = server.today().isoformat()
         r = self.close()
         self.assertEqual((r["moved_to"], r["msg"]), ("archive/demo", "Shipped demo 🎉 → archive/demo. Its board data moved out of "
-                                                     "NOTES.md into RawNotes/projects/: commit the trimmed active/demo/NOTES.md yourself."))
+                                                     "NOTES.md into RawNotes/projects/: commit the trimmed archive/demo/NOTES.md yourself."))
         self.assertFalse(os.path.exists(self.demo))
         text = self.record("archive", "demo")  # the board record moved with the folder
         self.assertIsNone(self.record("active", "demo"))
