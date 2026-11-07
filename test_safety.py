@@ -224,7 +224,7 @@ class Restart(Fixture):
 
     def test_this_server_is_recognised(self):
         info = server.running_server(self.port)
-        self.assertEqual((info["version"], info["foreign"], info["pid"]), (server.VERSION, False, os.getpid()))
+        self.assertEqual((info["version"], info["foreign"], info["pid"]), (server.VERSION, False, self.server_pid()))
 
     def test_stop_server_never_signals_a_foreign_service(self):
         with mock.patch.object(os, "kill") as kill, mock.patch.object(server, "port_pid", return_value=4242):

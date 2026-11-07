@@ -107,6 +107,14 @@ TEST_OWNER = {
 }
 FUNC_OWNER = {"github_repo_of": "09", "running_server": "11", "stop_server": "11", "port_pid": "11", "is_triage_process": "11", "open_page": "11",
               "service_owns": "11", "in_own_scope": "11", "restart_service": "11", "open_argv": "06", "open_target": "06"}
+# Direct calls that read or change the server's state (spec 8.1, kind 3): under the switch they would act on this
+# process's copy, not the server under test. A test that makes one beside its routes needs a conversion (a fixture step,
+# a file read) or a port; PR 2 decides which. Pure helpers that only build an expectation are not listed.
+STATE_FUNCS = {"mutation", "Tx", "act", "batch", "merge", "restore", "new_note", "undo", "list_notes", "scan_notes", "inflight",
+               "project_status", "close_project", "set_done", "projects_listing", "project_detail", "project_deps", "project_brief",
+               "github_status", "github_activity", "repo_overview", "repo_path", "forget_github", "set_github_token",
+               "remove_github_token", "setup_notes", "setup_state", "migrate_board_data", "stats", "reference_index_add",
+               "reference_unindexed", "create_github_repo", "note_view", "check_headers", "summarize", "_push_undo"}
 # Python functions that make a request to the port they are given (a route call when that port is the fixture's).
 FUNC_ROUTES = {"running_server": [("GET", "/api/version")]}
 
@@ -406,7 +414,8 @@ class Walk:
             self.run(target[0], target[1], self.bind(target[1], target[2], env), setup)
         # server.<function>(...)
         if name.startswith("server.") and name.count(".") == 1:
-            fn = name.split(".")[1]; self.direct.append(fn)
+            fn = name.split(".")[1]
+            if mod.name != "testkit": self.direct.append(fn)  # testkit's own calls reset this process's copy, in-process only
             if fn in FUNC_ROUTES and any(dotted(a) == "self.port" for a in node.args):
                 for m, p in FUNC_ROUTES[fn]: self.route(m, p, None, setup, node)
         # the CLI as a process: [sys.executable, CLI, ...], [*cli_argv(), ...], [sys.executable, self.cli, ...]
@@ -488,7 +497,7 @@ class Walk:
 
 # ---- the ledger ----------------------------------------------------------------------------------------------------------
 Test = collections.namedtuple("Test", "id module cls name outcome reason owner due uses calls_route cli routes setup_routes "
-                                      "helpers rows pending unplaced")
+                                      "helpers rows pending state_calls unplaced")
 
 
 class Ledger:
@@ -625,7 +634,9 @@ class Ledger:
                     ",".join(sorted(uses, key=BUILD_ORDER.index)), "y" if calls_route else "n", "y" if cli else "n",
                     fmt([p for p in placed if not p[2]]), fmt([p for p in placed if p[2]]),
                     ",".join(dict.fromkeys(w.helpers)), ",".join(f"{r['file']}:{r['line']}" for r in rows),
-                    ",".join(f"{r['file']}:{r['line']}" for r in pending), "; ".join(dict.fromkeys(unplaced)))
+                    ",".join(f"{r['file']}:{r['line']}" for r in pending),
+                    ",".join(dict.fromkeys(f for f in w.direct if f in STATE_FUNCS)) if outcome == "runs" else "",
+                    "; ".join(dict.fromkeys(unplaced)))
 
     def loose_routes(self, func, cls, w):
         """Every route the test's own body (and its class's constants) spells out, paired with the body next to it in a
@@ -753,6 +764,9 @@ def summary(L):
                                                                 else (pure[t] - a[2]) for n in d]))
         out.append(f"{t or '?':>6}  {owned[t]:>5}  {due[t]:>3}  {pure[t]:>4}  {ported[t]:>6}   "
                    f"{'%d/%d/%d' % a if a else '-':>29}   {flag}")
+    out.append(f"runs, with patch rows PR 2 converts: {sum(bool(t.pending) for t in L.tests if t.outcome == 'runs')}   "
+               f"runs, with direct calls on server state (kind 3, PR 2): {sum(bool(t.state_calls) for t in L.tests)}   "
+               f"runs, neither: {sum(not t.pending and not t.state_calls for t in L.tests if t.outcome == 'runs')}")
     un = [t for t in L.tests if t.unplaced]
     out.append(f"unplaceable: {len(un)}")
     for t in un: out.append(f"  {t.id}: {t.unplaced}  (owner {t.owner or '?'}, due {t.due or '?'})")
@@ -804,7 +818,7 @@ def write_sites(L):
 
 
 FIELDS = ["id", "module", "cls", "name", "outcome", "reason", "owner", "due", "uses", "calls_route", "cli", "routes",
-          "setup_routes", "helpers", "rows", "pending", "unplaced"]
+          "setup_routes", "helpers", "rows", "pending", "state_calls", "unplaced"]
 
 
 def main(argv):

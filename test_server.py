@@ -108,7 +108,7 @@ class ApiTestCase(Switchable, unittest.TestCase):
     def test_version_endpoint_and_running_server(self):
         info = self.get("/api/version")
         self.assertEqual(info["version"], server.VERSION)
-        self.assertEqual(info["pid"], os.getpid())
+        self.assertEqual(info["pid"], self.server_pid())
         self.assertEqual(server.running_server(self.port)["version"], server.VERSION)
 
     def test_running_server_none_when_port_free(self):

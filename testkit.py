@@ -75,13 +75,19 @@ server.SYNC_APPS = os.path.join(SESSION_DIR, "no-sync-apps")  # an absolute path
 # reach the real GitHub; GH_TOKEN and GITHUB_TOKEN are not passed on. tools/shim/ has stand-ins for the two binaries
 # that run this repo's own server.py and bin/rawtriage as separate processes, to exercise the switch without Rust.
 HERE = os.path.dirname(os.path.abspath(__file__))
-SERVER_BIN = os.environ.get("TRIAGE_SERVER") or None
-CLI_BIN = os.environ.get("TRIAGE_CLI") or None
+def _binary(var):
+    path = os.environ.get(var) or None  # a path with a slash is made absolute: tests run commands from other folders
+    return os.path.abspath(path) if path and os.sep in path else path
+
+
+SERVER_BIN, CLI_BIN = _binary("TRIAGE_SERVER"), _binary("TRIAGE_CLI")
 SWITCHED = bool(SERVER_BIN or CLI_BIN)
 CLI = os.path.join(HERE, "bin", "rawtriage")
 FAKE_GH = os.path.join(HERE, "tools", "fake_gh.py")
 NO_CRONTAB = os.path.join(SESSION_DIR, "deps-crontab")  # never created: an empty crontab
 _undo_dump = None  # under TRIAGE_SERVER: the dump file of the server the current test started
+# The GitHub sign-in of whoever runs the suite never reaches a server under test (a test may still set its own).
+OWN_GH_ENV = {k: os.environ[k] for k in ("GH_TOKEN", "GITHUB_TOKEN") if k in os.environ}
 
 
 def cli_argv(cli=CLI):
@@ -100,7 +106,8 @@ def undo_entry(entry):
 def undo_list():
     """The server's undo list, oldest first: [{"label", "ops": [[kind, path, ...]], "unfinished"}]. In-process it is
     server._undo; under TRIAGE_SERVER it is the file the binary rewrites after every request (RAWTRIAGE_TEST_UNDO_DUMP)."""
-    if _undo_dump is None: return [undo_entry(e) for e in server._undo]
+    if not SERVER_BIN: return [undo_entry(e) for e in server._undo]
+    if _undo_dump is None: return []  # the test's server hasn't started yet (or was just restarted): nothing to undo
     with open(_undo_dump, encoding="utf-8") as fh: return json.load(fh)
 
 
@@ -159,7 +166,8 @@ class ChildServer:
         case.addCleanup(self.stop)
 
     def env(self):
-        env = {k: v for k, v in os.environ.items() if k not in ("GH_TOKEN", "GITHUB_TOKEN", "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")}
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE") and not (k in OWN_GH_ENV and OWN_GH_ENV[k] == v)}
         opener = os.path.join(self.side, "opened"); env.update({
             "RAWTRIAGE_CONFIG_DIR": self.config_dir, "RAWTRIAGE_TEST_UNDO_DUMP": self.dump,
             "RAWTRIAGE_TEST_DEPS_HOME": FAKE_DEPS_HOME, "RAWTRIAGE_TEST_PROC": FAKE_PROC, "RAWTRIAGE_TEST_CRONTAB": NO_CRONTAB,
@@ -225,6 +233,10 @@ class Switchable:
         p.start(); self.addCleanup(p.stop)
         self.child = ChildServer(self, notes, config_dir, relax_limits)
         p = mock.patch.object(server, "LOG_PATH", self.child.log); p.start(); self.addCleanup(p.stop)
+
+    def server_pid(self):
+        """The process serving this test: this one in-process, the child under TRIAGE_SERVER."""
+        return os.getpid() if self.child is None else (self.port and self.child.proc.pid)
 
     def clear_undo(self):
         """Empty the server's undo list: in-process server._undo.clear(); under TRIAGE_SERVER a fresh process."""

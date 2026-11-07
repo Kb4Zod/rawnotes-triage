@@ -202,28 +202,28 @@ testkit.py	48	<module>	os.environ['RAWTRIAGE_CONFIG_DIR'] =	env	1	S RAWTRIAGE_CO
 testkit.py	48	<module>	server.CONFIG_DIR =	assign	1	S `RAWTRIAGE_CONFIG_DIR`	02	1	patch-map	
 testkit.py	55	<module>	server.DEPS =	assign	1	H `RAWTRIAGE_TEST_DEPS_*`	02	1	patch-map	
 testkit.py	56	<module>	server.SYNC_APPS =	assign	1	H `RAWTRIAGE_TEST_SYNC_APPS`	02	1	patch-map	
-testkit.py	103	undo_list	server._undo	state	1	H RAWTRIAGE_TEST_UNDO_DUMP (undo_list's in-process half)	02	1	new (02 walk)	
-testkit.py	224	Switchable.switch_to_child	os.environ (patch.dict)	patch	1	S RAWTRIAGE_TODAY, fixed when the fixture starts	02	1	new (02 walk)	
-testkit.py	227	Switchable.switch_to_child	server.LOG_PATH	patch	1	S --log (the child's log, outside the fixture's tree)	02	1	new (02 walk)	
-testkit.py	231	Switchable.clear_undo	server._undo	state	1	S a fresh process (clear_undo's in-process half)	02	1	new (02 walk)	
-testkit.py	245	isolate_git	os.environ (patch.dict)	patch	1	S the fixture's environment (fake HOME, isolated git), set before the server starts	02	1	new (02 walk)	
-testkit.py	248	isolate_git	os.environ.pop	env	1	S the fixture's environment, set before the server starts	02	1	new (02 walk)	
-testkit.py	262	Fixture.setUp	server.CONFIG_DIR =	assign	1	S `RAWTRIAGE_CONFIG_DIR`	02	1	patch-map	
-testkit.py	263	Fixture.setUp	os.environ (patch.dict)	patch	1	S RAWTRIAGE_CONFIG_DIR	02	1	new (02 walk)	
-testkit.py	265	Fixture.setUp	server.SHIP_NEEDS_GITHUB	patch	1	H `RAWTRIAGE_TEST_SHIP_NEEDS_GITHUB`	02	1	patch-map	
-testkit.py	267	Fixture.setUp	server.LIMIT_DEFAULTS (patch.dict)	patch	1	S fixture `config.json` limits	02	1	patch-map	
-testkit.py	268	Fixture.setUp	server.NOTES =	assign	1	S --notes	02	1	new (02 walk)	
-testkit.py	268	Fixture.setUp	server.PROJECTS =	assign	1	S --notes (projects root is its parent)	02	1	new (02 walk)	
-testkit.py	269	Fixture.setUp	server.log =	assign	1	S `--log` (temp file)	02	1	patch-map	
-testkit.py	270	Fixture.setUp	server.LOG_PATH =	assign	1	S `--log` (temp file)	02	1	patch-map	
-testkit.py	271	Fixture.setUp	server._git_cache	state	1	S a fresh process	02	1	new (02 walk)	
-testkit.py	271	Fixture.setUp	server._undo	state	1	S a fresh process	02	1	new (02 walk)	
-testkit.py	272	Fixture.setUp	server._meta_cache	state	1	S a fresh process	02	1	new (02 walk)	
-testkit.py	272	Fixture.setUp	server._notes_cache	state	1	S a fresh process	02	1	new (02 walk)	
-testkit.py	272	Fixture.setUp	server._proj_cache	state	1	S a fresh process	02	1	new (02 walk)	
-testkit.py	281	Fixture._restore	server.CONFIG_DIR =	assign	1	S RAWTRIAGE_CONFIG_DIR (restore)	02	1	new (02 walk)	
-testkit.py	281	Fixture._restore	server.LOG_PATH =	assign	1	S --log (restore)	02	1	new (02 walk)	
-testkit.py	281	Fixture._restore	server.NOTES =	assign	1	S --notes (restore)	02	1	new (02 walk)	
-testkit.py	281	Fixture._restore	server.PROJECTS =	assign	1	S --notes (restore)	02	1	new (02 walk)	
-testkit.py	281	Fixture._restore	server.log =	assign	1	S --log (restore)	02	1	new (02 walk)	
-testkit.py	283	Fixture._restore	server._undo	state	1	S a fresh process	02	1	new (02 walk)	
+testkit.py	109	undo_list	server._undo	state	1	H RAWTRIAGE_TEST_UNDO_DUMP (undo_list's in-process half)	02	1	new (02 walk)	
+testkit.py	232	Switchable.switch_to_child	os.environ (patch.dict)	patch	1	S RAWTRIAGE_TODAY, fixed when the fixture starts	02	1	new (02 walk)	
+testkit.py	235	Switchable.switch_to_child	server.LOG_PATH	patch	1	S --log (the child's log, outside the fixture's tree)	02	1	new (02 walk)	
+testkit.py	243	Switchable.clear_undo	server._undo	state	1	S a fresh process (clear_undo's in-process half)	02	1	new (02 walk)	
+testkit.py	257	isolate_git	os.environ (patch.dict)	patch	1	S the fixture's environment (fake HOME, isolated git), set before the server starts	02	1	new (02 walk)	
+testkit.py	260	isolate_git	os.environ.pop	env	1	S the fixture's environment, set before the server starts	02	1	new (02 walk)	
+testkit.py	274	Fixture.setUp	server.CONFIG_DIR =	assign	1	S `RAWTRIAGE_CONFIG_DIR`	02	1	patch-map	
+testkit.py	275	Fixture.setUp	os.environ (patch.dict)	patch	1	S RAWTRIAGE_CONFIG_DIR	02	1	new (02 walk)	
+testkit.py	277	Fixture.setUp	server.SHIP_NEEDS_GITHUB	patch	1	H `RAWTRIAGE_TEST_SHIP_NEEDS_GITHUB`	02	1	patch-map	
+testkit.py	279	Fixture.setUp	server.LIMIT_DEFAULTS (patch.dict)	patch	1	S fixture `config.json` limits	02	1	patch-map	
+testkit.py	280	Fixture.setUp	server.NOTES =	assign	1	S --notes	02	1	new (02 walk)	
+testkit.py	280	Fixture.setUp	server.PROJECTS =	assign	1	S --notes (projects root is its parent)	02	1	new (02 walk)	
+testkit.py	281	Fixture.setUp	server.log =	assign	1	S `--log` (temp file)	02	1	patch-map	
+testkit.py	282	Fixture.setUp	server.LOG_PATH =	assign	1	S `--log` (temp file)	02	1	patch-map	
+testkit.py	283	Fixture.setUp	server._git_cache	state	1	S a fresh process	02	1	new (02 walk)	
+testkit.py	283	Fixture.setUp	server._undo	state	1	S a fresh process	02	1	new (02 walk)	
+testkit.py	284	Fixture.setUp	server._meta_cache	state	1	S a fresh process	02	1	new (02 walk)	
+testkit.py	284	Fixture.setUp	server._notes_cache	state	1	S a fresh process	02	1	new (02 walk)	
+testkit.py	284	Fixture.setUp	server._proj_cache	state	1	S a fresh process	02	1	new (02 walk)	
+testkit.py	293	Fixture._restore	server.CONFIG_DIR =	assign	1	S RAWTRIAGE_CONFIG_DIR (restore)	02	1	new (02 walk)	
+testkit.py	293	Fixture._restore	server.LOG_PATH =	assign	1	S --log (restore)	02	1	new (02 walk)	
+testkit.py	293	Fixture._restore	server.NOTES =	assign	1	S --notes (restore)	02	1	new (02 walk)	
+testkit.py	293	Fixture._restore	server.PROJECTS =	assign	1	S --notes (restore)	02	1	new (02 walk)	
+testkit.py	293	Fixture._restore	server.log =	assign	1	S --log (restore)	02	1	new (02 walk)	
+testkit.py	295	Fixture._restore	server._undo	state	1	S a fresh process	02	1	new (02 walk)	
