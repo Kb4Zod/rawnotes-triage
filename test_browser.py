@@ -605,6 +605,49 @@ class Caches(BrowserCase):
         self.page.key("z"); self.page.wait(f"document.querySelectorAll('[data-pid]').length=={n}")  # undo drops it again, no Refresh
 
 
+class ReloadButton(BrowserCase):
+    """v2.15: one button does a Ctrl-R, and the reloaded page skips the server's short caches."""
+    def reload_with(self, js):
+        self.page.eval("window.__before=1")
+        self.page.eval(js)
+        self.page.wait("!window.__before && typeof S!=='undefined' && S.notes && document.querySelector('#main h1, #main .empty')")
+
+    def test_rail_button_reloads_and_asks_for_fresh_data_once(self):
+        self.open("projects")
+        self.assertIn("Reload", self.text("#reload"))
+        self.reload_with("document.querySelector('#reload').click()")
+        self.page.wait("document.querySelector('[data-pid]')")
+        self.assertEqual(self.page.eval("location.hash"), "#/projects")  # stays on the same page, like Ctrl-R
+        self.page.wait("window.__calls.some(c=>c.url.includes('/api/activity?refresh=1'))")
+        for part in ("/api/projects?refresh=1", "/api/github?refresh=1", "/api/activity?refresh=1"):
+            self.assertTrue(self.calls("GET", part), part)
+        self.reload_with("location.reload()")  # a plain Ctrl-R afterwards is not a fresh one
+        self.page.wait("document.querySelector('[data-pid]')"); self.settle(0.3)
+        self.assertFalse(self.calls("GET", "refresh=1"))
+
+    def test_typed_decision_form_asks_first_and_cancel_keeps_it(self):
+        self.page.click("#list .item[data-f='2026-10-15-recent.md']"); self.page.key("p"); self.page.wait("document.querySelector('#form.promote')")
+        self.focus("#note"); self.page.type("half typed")
+        self.page.eval("window.__asked=0;window.confirm=()=>{window.__asked++;return false};window.__before=1")
+        self.page.click("#reload"); self.settle(0.5)
+        self.assertEqual(self.page.eval("window.__asked"), 1)
+        self.assertEqual(self.page.eval("window.__before"), 1)  # not reloaded
+        self.assertEqual(self.page.eval("document.querySelector('#note').value"), "half typed")
+
+    def test_nothing_typed_reloads_without_asking(self):
+        self.page.eval("window.confirm=()=>{throw new Error('asked')}")
+        self.reload_with("document.querySelector('#reload').click()")
+
+    def test_palette_command_and_phone_header_button_reload(self):
+        self.page.key("k", ctrl=True); self.page.wait("document.querySelector('#pq')"); self.page.type("reload"); self.settle(0.2)
+        self.assertIn("refresh everything", self.text("#pres"))
+        self.reload_with("palGo(0)")
+        self.page.resize(390, 844, mobile=True); self.open()
+        self.assertEqual(self.page.eval("document.querySelector('#mReload').getAttribute('aria-label')"), "Reload the page")
+        self.reload_with("document.querySelector('#mReload').click()")
+        self.assertTrue(self.calls("GET", "/api/github?refresh=1"))
+
+
 class Overlays(BrowserCase):
     def test_palette_is_a_modal_dialog_with_a_focus_trap_and_returns_focus(self):
         self.focus("#kPal"); self.page.key("k", ctrl=True); self.page.wait("document.querySelector('[role=dialog]')")

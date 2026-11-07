@@ -339,7 +339,7 @@ button.tile{cursor:pointer;font:inherit;color:inherit}
   .doc{padding:20px 18px}.doc .title{font-size:32px}
   .scroll{height:auto;overflow:visible;padding:0 14px 30px}
   .tiles{grid-template-columns:repeat(2,minmax(0,1fr))}.tile .lab{flex-wrap:wrap}
-  #mPal{min-width:44px}.search input{min-height:44px}.copy{min-height:44px}
+  #mPal,#mReload{min-width:44px}.mbtns{display:flex;gap:6px}.search input{min-height:44px}.copy{min-height:44px}
   .board{display:block;width:auto;min-width:0}.board>.col{max-width:none}
   .board .drawer{display:none}
   body.detail .board>.col,body.detail .tiles,body.detail .pane-h{display:none}
@@ -358,7 +358,7 @@ button.tile{cursor:pointer;font:inherit;color:inherit}
 <a class="skip" href="#main">Skip to content</a>
 <div class="app">
   <aside class="rail" id="rail" aria-label="RawNotes Triage"></aside>
-  <header class="mtop"><div class="name">Raw<em>Notes</em></div><button class="btn sm ghost" id="mPal" aria-label="Search notes, projects and commands"></button></header>
+  <header class="mtop"><div class="name">Raw<em>Notes</em></div><div class="mbtns"><button class="btn sm ghost" id="mReload" aria-label="Reload the page" title="Reload the page"></button><button class="btn sm ghost" id="mPal" aria-label="Search notes, projects and commands"></button></div></header>
   <main id="main" tabindex="-1"></main>
 </div>
 <nav class="tabbar" id="tabbar" aria-label="Pages"></nav>
@@ -387,6 +387,7 @@ const I={
  clock:svg('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
  gh:svg('<path d="M9 19c-4.3 1.4-4.3-2.5-6-3m12 5v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.2 4.2 0 0 0-.1-3.2s-1.1-.3-3.5 1.3a12.3 12.3 0 0 0-6.2 0C6.5 2.8 5.4 3.1 5.4 3.1a4.2 4.2 0 0 0-.1 3.2A4.6 4.6 0 0 0 4 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21"/>'),
  undo:svg('<path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>'),
+ reload:svg('<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>'),
  restore:svg('<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>'),
  moon:svg('<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>'),
  sun:svg('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'),
@@ -511,11 +512,19 @@ function renderRail(){
   <div>${st('promoted')} → Projects</div><div>${st('reference')} → reference/</div><div>${st('killed')} → Archive</div></div></div>
   <div class="foot">${ghBtn}${spark?'<div style="margin-top:8px">'+spark+'</div>':''}
    <div class="row"><button class="linkish" id="kPal">${kb('Ctrl K')} search</button><button class="linkish" id="kKeys">${kb('?')} keys</button></div>
-   <div class="row"><button class="linkish" id="theme">${dark?I.sun:I.moon} ${dark?'Light':'Dark'}</button><span>v${VERSION}</span></div></div>`;
-  $('#ghStatus').onclick=openGithub;$('#kPal').onclick=openPalette;$('#kKeys').onclick=openKeys;$('#theme').onclick=toggleTheme;
+   <div class="row"><button class="linkish" id="theme">${dark?I.sun:I.moon} ${dark?'Light':'Dark'}</button><button class="linkish" id="reload" title="Reload the page and fetch everything fresh">${I.reload} Reload</button><span>v${VERSION}</span></div></div>`;
+  $('#ghStatus').onclick=openGithub;$('#kPal').onclick=openPalette;$('#kKeys').onclick=openKeys;$('#theme').onclick=toggleTheme;$('#reload').onclick=reloadAll;
   if(had&&document.getElementById(had))document.getElementById(had).focus({preventScroll:true});
   const tab=(id,ic,label,bd)=>`<a href="#/${id}" class="${S.route===id?'on':''}"${S.route===id?' aria-current="page"':''}>${I[ic]}${bd?`<span class="bd" aria-label="${bd} overdue">${bd}</span>`:''}${label}</a>`;
   $('#tabbar').innerHTML=tab('inbox','inbox','Inbox')+tab('projects','proj','Projects',c.late)+tab('archive','arch','Archive')+tab('pulse','pulse','Pulse')}
+// Reload: what Ctrl-R does, but the reloaded page also skips the server's short caches (git facts, GitHub status, activity).
+// The ask is one-shot (sessionStorage), so a later plain Ctrl-R behaves as before.
+function reloadAll(){
+  const dodTyped=Object.values(S.dods).some(dodDirty);  // the leave-page prompt (beforeunload) already asks about these
+  if(dirty()&&!dodTyped&&!confirm('Reload the page? What you typed in the open form will be lost.'))return;
+  try{sessionStorage.setItem('reloadFresh','1')}catch(e){}
+  location.reload()}
+function takeReloadFresh(){try{const v=sessionStorage.getItem('reloadFresh');sessionStorage.removeItem('reloadFresh');return v==='1'}catch(e){return false}}
 function toggleTheme(){const d=document.documentElement.classList.toggle('dark');localStorage.setItem('theme',d?'dark':'light');renderRail();if(S.route==='pulse')render()}
 
 /* ---------- Inbox model ---------- */
@@ -1099,7 +1108,7 @@ function openSetup(st,then){
       $('#setupGo').disabled=false;err(x.message)}};
   $('#setupPath').focus()}
 function openKeys(){showOverlay(`<div class="scrim" id="scrim"><div class="card keys" style="background:var(--solid)" role="dialog" aria-modal="true" aria-labelledby="keysH" tabindex="-1"><h2 id="keysH">Keyboard</h2><table>
-  <caption class="sr">Keyboard shortcuts</caption>${[['J / K or ↓ / ↑','next / previous'],['H / L or ← / →','scroll the Projects board left / right'],['P','Promote'],['R','Reference'],['C','Keep (cooking)'],['X','Kill'],['Enter','apply the open decision (Ctrl+Enter in a text box); on a stack, only after you chose an action with P R C X or a click'],['Esc','close the form / overlay (what you typed is kept)'],['Z','undo the last change'],['Y','copy the note’s full path'],['/','search the list'],['Ctrl K','search everything + commands'],['1 2 3 4','Inbox · Projects · Archive · Pulse'],['?','this help']].map(([k,v])=>`<tr><th scope="row" style="font-weight:400;text-align:left">${k.split(' ').map(x=>/^[A-Z↓↑←→]$|^[A-Za-z]{2,}$|^[\/?1-4]$/.test(x)?kb(x):x).join(' ')}</th><td>${v}</td></tr>`).join('')}</table>
+  <caption class="sr">Keyboard shortcuts</caption>${[['J / K or ↓ / ↑','next / previous'],['H / L or ← / →','scroll the Projects board left / right'],['P','Promote'],['R','Reference'],['C','Keep (cooking)'],['X','Kill'],['Enter','apply the open decision (Ctrl+Enter in a text box); on a stack, only after you chose an action with P R C X or a click'],['Esc','close the form / overlay (what you typed is kept)'],['Z','undo the last change'],['Y','copy the note’s full path'],['/','search the list'],['Ctrl K','search everything + commands'],['Ctrl R','reload the page (the Reload button also fetches git and GitHub fresh)'],['1 2 3 4','Inbox · Projects · Archive · Pulse'],['?','this help']].map(([k,v])=>`<tr><th scope="row" style="font-weight:400;text-align:left">${k.split(' ').map(x=>/^[A-Z↓↑←→]$|^[A-Za-z]{2,}$|^[\/?1-4]$/.test(x)?kb(x):x).join(' ')}</th><td>${v}</td></tr>`).join('')}</table>
   <div style="text-align:right;margin-top:14px"><button type="button" class="btn" id="keysClose">Close</button></div></div></div>`);
   $('#keysClose').onclick=()=>closeOverlay();$('#keysClose').focus()}
 function openPalette(){
@@ -1116,7 +1125,7 @@ function palRender(q){q=q.trim().toLowerCase();const hit=s=>!q||s.toLowerCase().
   const projs=projectCards().filter(c=>hit(c.title)).slice(0,4);if(projs.length)items.push({h:'Projects'},...projs.map(c=>({name:c.title,html:`${I.proj}<span class="grow">${hl(c.title)}</span><span class="muted">${c.f&&!c.f.done&&c.f.days_left!==null?(c.f.days_left<0?-c.f.days_left+'d late':c.f.days_left+'d left'):''}</span>`,go:()=>{S.psel=c.id;location.hash='#/projects';render()}})));
   const done=q?n.done.filter(x=>hit(x.title+' '+x.file)).slice(0,4):[];if(done.length)items.push({h:'Archive'},...done.map(x=>({name:x.title,html:`${st(x.fate)}<span class="grow">${hl(x.title)}</span>`,go:()=>{S.af={q:'',fate:'all'};S.asel=x.file;location.hash='#/archive';render()}})));
   const cmds=[['Go to Inbox',()=>location.hash='#/inbox','1'],['Go to Projects',()=>location.hash='#/projects','2'],['Go to Archive',()=>location.hash='#/archive','3'],['Go to Pulse',()=>location.hash='#/pulse','4'],
-    ['Undo last change',doUndo,'Z'],['Toggle dark mode',toggleTheme,''],['Refresh everything',async()=>{S.projects=null;S.stats=null;S.freshProjects=true;await refresh();loadActivity(true);render()},''],['Keyboard shortcuts',openKeys,'?']].filter(c=>hit(c[0]));
+    ['Undo last change',doUndo,'Z'],['Toggle dark mode',toggleTheme,''],['Reload — refresh everything',reloadAll,'Ctrl R'],['Keyboard shortcuts',openKeys,'?']].filter(c=>hit(c[0]));
   if(cmds.length)items.push({h:'Commands'},...cmds.map(([l,go,k])=>({name:l,html:`<span class="grow">${hl(l)}</span>${k?kbh(k):''}`,go})));
   pal.items=items.filter(x=>!x.h);let idx=0,group='';
   const out=[];items.forEach((x,gi)=>{if(x.h){if(group)out.push('</div>');group=x.h;out.push(`<div role="group" aria-labelledby="pg${gi}"><div class="sect label" id="pg${gi}">${x.h}</div>`)}
@@ -1187,7 +1196,7 @@ function route(){const r=(location.hash.match(/^#\/(\w+)/)||[])[1];const nr=['in
   if(moved){S.mode=null;S.armed=null;S.repo=null;document.body.classList.remove('note','detail')}S.route=nr;render();
   if(moved&&routed)focusMain();routed=true}  // a keyboard or screen-reader user lands on the new page's heading
 addEventListener('hashchange',route);
-$('#mPal').onclick=openPalette;$('#mPal').innerHTML=I.search;
+$('#mPal').onclick=openPalette;$('#mPal').innerHTML=I.search;$('#mReload').onclick=reloadAll;$('#mReload').innerHTML=I.reload;
 // coming back to the tab (or the phone app) picks up notes changed elsewhere, unless you're mid-decision
 // a tab left open across a restart (or an old server still running) talks to a different API: say so
 async function checkVersion(){try{const v=await api('/api/version');let b=$('#vbanner');
@@ -1197,8 +1206,8 @@ async function checkVersion(){try{const v=await api('/api/version');let b=$('#vb
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')checkVersion()});
 document.addEventListener('visibilitychange',async()=>{if(document.visibilityState!=='visible'||S.mode||$('#overlay').innerHTML)return;
   try{await refresh();if(!dirty())render()}catch(e){}});  // data is refreshed either way; the screen is redrawn only when nothing typed would be lost
-async function start(){try{await loadNotes()}catch(e){$('#main').innerHTML=`<div class="empty">Can't reach the triage server: ${esc(e.message)}</div>`;return}
-  route();loadGithub();loadActivity();checkVersion();setInterval(()=>loadActivity(),600000)}
+async function start(){const fresh=takeReloadFresh();if(fresh)S.freshProjects=true;try{await loadNotes()}catch(e){$('#main').innerHTML=`<div class="empty">Can't reach the triage server: ${esc(e.message)}</div>`;return}
+  route();loadGithub(fresh);loadActivity(fresh);checkVersion();setInterval(()=>loadActivity(),600000)}
 (async()=>{let st;try{st=await api('/api/setup')}catch(e){st=null}  // an older server has no /api/setup: carry on as before
   if(st&&st.needed)openSetup(st,start);else start()})();
 </script></body></html>
