@@ -22,7 +22,8 @@ with every change. Versions 1.00-1.03 were numbered after the fact from git hist
   named like that came back mangled. Now only a leading home folder becomes `~`.
 - **A first push that fails after the GitHub repo was made is a failed change, not a refusal.** `POST
   /api/project/github` answers 500 and `rawtriage project github` exits 4 ("stopped part-way"), not 1 ("refused,
-  nothing changed"): the repo and the `origin` remote exist by then. The message still says what to run.
+  nothing changed"): the repo and the `origin` remote exist by then. The message still says what to run, and the
+  page refreshes the project so it shows the new origin instead of the button.
 - **The commands the close-out gate suggests work for any branch name.** `git push origin refs/heads/<branch>` and
   `git branch -D -- <branch>` (and `git push -u origin refs/heads/main`), so a branch whose name starts with `-`, or a
   tag with the same name as the branch (`main`), no longer breaks them.

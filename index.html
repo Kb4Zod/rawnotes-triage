@@ -882,7 +882,8 @@ async function renderDrawer(){const d=$('#drawer');if(!d)return;const c=projectC
   $('#browse')&&($('#browse').onclick=()=>openRepo(p.gh.repo,'','projects'));
   $('#ghmake')&&($('#ghmake').onclick=async ev=>{const b=ev.currentTarget,pe=$('#perr');pe&&(pe.textContent='');b.disabled=true;b.textContent='Creating…';
     try{const r=await api('/api/project/github',{name:p.name,kind:p.kind});await changed();render();toast(r.msg)}
-    catch(e){b.disabled=false;b.innerHTML=I.gh+'Create private GitHub repo';pe&&(pe.textContent=e.message)}});
+    catch(e){if(/^Created private repo /.test(e.message)){await changed();render();toast(e.message,{bad:true});return}  // the repo exists now: show its origin
+      b.disabled=false;b.innerHTML=I.gh+'Create private GitHub repo';pe&&(pe.textContent=e.message)}});
   $('#openf')&&($('#openf').onclick=()=>api('/api/open',p?{name:p.name,kind:p.kind}:{path:f.path}).catch(e=>toast(e.message,{bad:true})));
   if(narrow()&&$('#openf'))$('#openf').style.display='none';
   if(!p){box.innerHTML='';return}
