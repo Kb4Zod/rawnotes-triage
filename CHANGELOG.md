@@ -4,6 +4,13 @@ The version shows in the page heading ("RawNotes Triage version X.XX") and
 in the startup line. Bump `VERSION` in `server.py` and add an entry here
 with every change. Versions 1.00-1.03 were numbered after the fact from git history.
 
+## 2.16 — 2026-11-07
+- **A Reload button.** In the rail's bottom row (next to Dark/Light) and as an icon in the phone header: it reloads
+  the page like Ctrl-R, and the reloaded page also skips the server's short caches, so Projects' git facts, the
+  GitHub sign-in state and the activity graph come back fresh. The palette's "Refresh everything" now does the same
+  reload. If you have typed something not yet saved (a decision or stack form, or a done-means edit) it asks once
+  first; nothing typed (or typed and deleted again), it just reloads. The keys dialog lists Ctrl R.
+
 ## 2.15 — 2026-11-06
 Board data out of project repos (spec and tickets in `.scratch/private-board-data/`; Hugh approved the recommended
 answers to D1–D8 on 2026-11-06).
