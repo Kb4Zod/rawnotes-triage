@@ -37,12 +37,12 @@ fetch everything fresh"; a plain Ctrl-R still uses the server's short caches, th
 
 ## Unsaved work
 
-- Anything typed and not saved: a decision draft (the form of a note still in the Inbox that you typed in or
-  changed, `S.forms`), a stack's batch form you typed in, or an unsaved done-means edit. The button asks once, itself:
+- Anything typed and not saved: a decision draft (the form of a note still in the Inbox that now differs
+  from how it opened, `S.forms`), a stack's batch form changed the same way, or an unsaved done-means edit. The button asks once, itself:
   `confirm("Reload the page? What you typed and haven't saved will be lost.")`. Cancel does nothing. OK reloads
   without the browser's leave-page prompt on top (so there is no second prompt, and no way to cancel after the
   fresh flag is set).
-- Nothing typed (including a form just opened, a stack's prefilled form, or a stale draft of a note already
+- Nothing typed (including a form just opened, text typed and then deleted again, a stack's prefilled form, or a stale draft of a note already
   decided): reloads straight away.
 - Plain Ctrl-R keeps the existing behaviour (leave-page prompt for an unsaved done-means edit only).
 

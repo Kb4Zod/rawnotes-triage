@@ -634,6 +634,19 @@ class ReloadButton(BrowserCase):
         self.assertEqual(self.page.eval("window.__before"), 1)  # not reloaded
         self.assertEqual(self.page.eval("document.querySelector('#note').value"), "half typed")
 
+    def test_typed_then_cleared_is_nothing_to_lose(self):
+        self.page.click("#list .item[data-f='2026-10-15-recent.md']"); self.page.key("p"); self.page.wait("document.querySelector('#form.promote')")
+        self.focus("#note"); self.page.type("ab")
+        self.assertEqual(len(self.page.eval("Object.keys(S.forms)")), 1)  # typing does make a draft...
+        self.page.key("Backspace"); self.page.key("Backspace")
+        self.assertEqual(self.page.eval("Object.keys(S.forms)"), [])  # ...and clearing it again drops it
+        self.page.click(self.stack_row()); self.page.wait("document.querySelector('#decide #mtitle')")
+        self.focus("#mtitle"); self.page.type("x"); self.assertTrue(self.exists("#form[data-typed]"))
+        self.page.key("Backspace"); self.assertFalse(self.exists("#form[data-typed]"))
+        self.assertEqual(self.page.eval("Object.keys(S.forms)"), [])
+        self.page.eval("window.confirm=()=>{throw new Error('asked')}")
+        self.reload_with("document.querySelector('#reload').click()")
+
     def test_a_stack_form_asks_only_once_typed_in(self):
         self.page.click(self.stack_row()); self.page.wait("document.querySelector('#decide #mtitle')")
         self.page.eval("window.confirm=()=>{throw new Error('asked')}")  # prefilled and untouched: nothing to lose

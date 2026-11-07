@@ -8,8 +8,8 @@ with every change. Versions 1.00-1.03 were numbered after the fact from git hist
 - **A Reload button.** In the rail's bottom row (next to Dark/Light) and as an icon in the phone header: it reloads
   the page like Ctrl-R, and the reloaded page also skips the server's short caches, so Projects' git facts, the
   GitHub sign-in state and the activity graph come back fresh. The palette's "Refresh everything" now does the same
-  reload. If you have typed something not yet saved (a decision draft or a done-means edit) it asks once first;
-  nothing typed, it just reloads. The keys dialog lists Ctrl R.
+  reload. If you have typed something not yet saved (a decision or stack form, or a done-means edit) it asks once
+  first; nothing typed (or typed and deleted again), it just reloads. The keys dialog lists Ctrl R.
 
 ## 2.14 — 2026-11-06
 - **`## Moved` in a moved project's `NOTES.md` names no absolute path.** That `NOTES.md` is tracked in the project's

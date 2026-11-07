@@ -519,8 +519,8 @@ function renderRail(){
   $('#tabbar').innerHTML=tab('inbox','inbox','Inbox')+tab('projects','proj','Projects',c.late)+tab('archive','arch','Archive')+tab('pulse','pulse','Pulse')}
 // Reload: what Ctrl-R does, but the reloaded page also skips the server's short caches (git facts, GitHub status, activity).
 // The ask is one-shot (sessionStorage), so a later plain Ctrl-R behaves as before.
-// It asks once, itself, about anything typed: decision drafts (S.forms gets one once you type or pick; drafts of notes no longer
-// in the Inbox don't count), a stack's batch form you typed in (data-typed), done-means edits (S.dods). It
+// It asks once, itself, about anything typed: decision drafts (S.forms holds one while a form differs from how it opened; drafts of
+// notes no longer in the Inbox don't count), a stack's batch form changed the same way (data-typed), done-means edits (S.dods). It
 // then tells beforeunload not to ask again: cancelling a browser prompt would leave the fresh flag set for a later plain Ctrl-R.
 let reloading=false;
 function reloadAll(){
@@ -685,11 +685,11 @@ function restoreForm(f,o){if(!o)return;for(const k in o){if(k.startsWith('seg:')
 function wireDecide(n){
   $$('#decide .opt').forEach(b=>b.onclick=()=>setMode(S.mode===b.dataset.m?null:b.dataset.m));
   const f=$('#form');if(!f)return;
-  const key=n.file+'|'+S.mode;restoreForm(f,S.forms[key]);
+  const key=n.file+'|'+S.mode,base=JSON.stringify(formState(f));restoreForm(f,S.forms[key]);  // base: the form as it opens untouched
   wireSegs(f,updatePreview);wireShipBy(f,updatePreview);$('#slug')&&($('#slug').oninput=updatePreview);
   if(S.mode==='reference'){wireSec(f,'rsec',updatePreview);const b=$('#blurb'),nt=$('#note');if(b&&nt){b.addEventListener('input',()=>b.dataset.t='1');if(b.value!==firstSentence(n.question))b.dataset.t='1';nt.addEventListener('input',()=>{if(!b.dataset.t)b.value=nt.value.trim()||firstSentence(n.question)})}}
   updatePreview();
-  const save=()=>{S.forms[key]=formState(f)};f.addEventListener('input',save);f.addEventListener('click',e=>{if(e.target.closest('[data-seg]'))save()});
+  const save=()=>{const st=formState(f);if(JSON.stringify(st)===base)delete S.forms[key];else S.forms[key]=st};f.addEventListener('input',save);f.addEventListener('click',e=>{if(e.target.closest('[data-seg]'))save()});  // typed then cleared again is no draft
   f.onsubmit=e=>{e.preventDefault();apply()};$('#cancel').onclick=()=>{delete S.forms[key];setMode(null)};
   const first=f.querySelector('textarea,input#note')||f.querySelector('input');if(first&&!narrow())first.focus()}
 function setMode(m){if(!S.sel||S.sel.startsWith('stack:'))return;S.mode=m;const n=S.notes.live.find(x=>x.file===S.sel);if(m==='keep'&&n&&n.expired){toast(expiredMsg(n));return}
@@ -744,7 +744,7 @@ function renderBatch(){const k=S.sel.slice(6),stk=inboxModel().stacks[k];const r
   $$('[data-bm]').forEach(b=>b.onclick=()=>{S.batchMode=b.dataset.bm;S.armed=S.sel;renderBatch()});
   const f=$('#form'),sync=()=>{if(S.batchMode==='merge'){$('#promoteBits').style.display=segVal('then')==='promote'?'':'none';syncShipBy(segVal('dest'));batchPreview()}};wireSegs(f,sync);
   f.onsubmit=e=>{e.preventDefault();apply()};$('#cancel').onclick=()=>{S.sel=stk.members[0].file;S.expanded=k;renderInboxList();renderReader()};
-  f.querySelectorAll('input,textarea').forEach(i=>i.oninput=batchPreview);f.addEventListener('input',()=>{f.dataset.typed='1'});if(S.batchMode==='reference')wireSec(f,'rsec',batchPreview);wireShipBy(f,sync);  // after: it owns #dueDate's oninput
+  f.querySelectorAll('input,textarea').forEach(i=>i.oninput=batchPreview);{const base=JSON.stringify(formState(f)),mark=()=>{if(JSON.stringify(formState(f))===base)delete f.dataset.typed;else f.dataset.typed='1'};f.addEventListener('input',mark);f.addEventListener('click',e=>{if(e.target.closest('[data-seg]'))setTimeout(mark)})}if(S.batchMode==='reference')wireSec(f,'rsec',batchPreview);wireShipBy(f,sync);  // after: it owns #dueDate's oninput
   renderBatchSummary()}
 function batchForm(stk){const m=S.batchMode;
   const foot=(btn,cls)=>`<div class="formfoot"><button type="submit" class="btn ${cls}" id="go">${btn} ${kbh('↵')}</button><button type="button" class="btn ghost" id="cancel">Cancel</button><span class="err" id="ferr" role="alert"></span><span class="hint" id="bleft"></span></div>`;
