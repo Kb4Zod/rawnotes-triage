@@ -635,13 +635,27 @@ class ReloadButton(BrowserCase):
         self.assertEqual(self.page.eval("document.querySelector('#note').value"), "half typed")
 
     def test_nothing_typed_reloads_without_asking(self):
-        self.page.eval("window.confirm=()=>{throw new Error('asked')}")
+        self.page.click("#list .item[data-f='2026-10-15-recent.md']"); self.page.key("p"); self.page.wait("document.querySelector('#form.promote')")
+        self.page.eval("window.confirm=()=>{throw new Error('asked')}")  # a form only opened holds nothing to lose
         self.reload_with("document.querySelector('#reload').click()")
+        self.assertFalse(self.calls("GET", "/api/projects?refresh=1"))  # landed on Inbox: Projects loads later, from the cache
+
+    def test_unsaved_done_means_asks_once_and_cancel_leaves_no_fresh_flag(self):
+        self.open("projects"); self.page.click("[data-pid='active/demo/NOTES.md']"); self.page.wait("document.querySelector('#dodEdit')")
+        self.page.click("#dodEdit"); self.page.wait("document.querySelector('#dodText')"); self.focus("#dodText"); self.page.type("x")
+        self.page.eval("window.__asked=0;window.confirm=()=>{window.__asked++;return false}")
+        self.page.click("#reload"); self.settle(0.3)
+        self.assertEqual(self.page.eval("window.__asked"), 1)
+        self.assertIsNone(self.page.eval("sessionStorage.getItem('reloadFresh')"))
+        self.page.eval("window.confirm=()=>{window.__asked++;return true}")
+        self.reload_with("document.querySelector('#reload').click()")  # OK: no leave-page prompt on top (it would hang this wait)
 
     def test_palette_command_and_phone_header_button_reload(self):
         self.page.key("k", ctrl=True); self.page.wait("document.querySelector('#pq')"); self.page.type("reload"); self.settle(0.2)
         self.assertIn("refresh everything", self.text("#pres"))
-        self.reload_with("palGo(0)")
+        self.assertNotIn("Refresh everything", self.text("#pres"))  # the old in-place command is gone, not listed twice
+        self.reload_with("palGo(pal.items.findIndex(x=>x.name.startsWith('Reload')))")
+        self.page.wait("window.__calls.some(c=>c.url.includes('/api/github?refresh=1'))")
         self.page.resize(390, 844, mobile=True); self.open()
         self.assertEqual(self.page.eval("document.querySelector('#mReload').getAttribute('aria-label')"), "Reload the page")
         self.reload_with("document.querySelector('#mReload').click()")

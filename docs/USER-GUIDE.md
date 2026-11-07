@@ -244,7 +244,7 @@ Inbox limits must be whole numbers at least 1. `max_extensions` and `closed_wind
 - `z`: undo; `y`: copy note path.
 - `/`: search; `Ctrl K`: search everything and commands.
 - `1`–`4`: switch pages; `?`: show all keys.
-- `Ctrl R`: reload the page. The **Reload** button (rail, or the phone header icon) does the same and also fetches git facts, GitHub sign-in and activity fresh instead of from the short caches; it asks first if a decision form has text in it.
+- `Ctrl R`: reload the page. The **Reload** button (rail, or the phone header icon) does the same and also fetches git facts, GitHub sign-in and activity fresh instead of from the short caches; it asks first if you have typed something not yet saved.
 
 Decision and done-means drafts survive switching notes/pages and data refreshes, but not browser reloads. Cancel clears a decision draft. Only an unsaved done-means edit prompts before closing the tab.
 

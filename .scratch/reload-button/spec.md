@@ -14,7 +14,8 @@ A **Reload** button that reloads the whole page (`location.reload()`), the same 
 asks the server for fresh data everywhere it would otherwise reuse a cache:
 
 - notes and reference index: always re-read on load (no change);
-- Projects: git facts fetched fresh (`/api/projects?refresh=1`, skips the 20 s git cache);
+- Projects: git facts fetched fresh (`/api/projects?refresh=1`, skips the 20 s git cache) when the reload lands on
+  Projects (anywhere else, Projects loads later, past the cache's useful life anyway);
 - GitHub sign-in state (`/api/github?refresh=1`) and the activity graph (`/api/activity?refresh=1`).
 
 The page is rebuilt from scratch, so a new page version from the server is picked up too (this is what the
@@ -36,10 +37,13 @@ fetch everything fresh"; a plain Ctrl-R still uses the server's short caches, th
 
 ## Unsaved work
 
-- An unsaved done-means edit: the browser's existing leave-page prompt (`beforeunload`) asks, as it does for Ctrl-R.
-- A decision form open with text in it, or a stack being decided (`dirty()` but no done-means edit): the button
-  asks first with `confirm("Reload the page? What you typed in the open form will be lost.")`. Cancel does nothing.
-- Nothing typed: reloads straight away.
+- Anything typed and not saved: a decision draft (any note's form you typed in or changed, `S.forms`) or an
+  unsaved done-means edit. The button asks once, itself:
+  `confirm("Reload the page? What you typed and haven't saved will be lost.")`. Cancel does nothing. OK reloads
+  without the browser's leave-page prompt on top (so there is no second prompt, and no way to cancel after the
+  fresh flag is set).
+- Nothing typed (including a form just opened, or a stack selected): reloads straight away.
+- Plain Ctrl-R keeps the existing behaviour (leave-page prompt for an unsaved done-means edit only).
 
 ## Out of scope
 

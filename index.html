@@ -519,9 +519,13 @@ function renderRail(){
   $('#tabbar').innerHTML=tab('inbox','inbox','Inbox')+tab('projects','proj','Projects',c.late)+tab('archive','arch','Archive')+tab('pulse','pulse','Pulse')}
 // Reload: what Ctrl-R does, but the reloaded page also skips the server's short caches (git facts, GitHub status, activity).
 // The ask is one-shot (sessionStorage), so a later plain Ctrl-R behaves as before.
+// It asks once, itself, about anything typed (decision drafts are kept in S.forms once you type or pick, done-means edits in S.dods),
+// then tells beforeunload not to ask again: cancelling a browser prompt would leave the fresh flag set for a later plain Ctrl-R.
+let reloading=false;
 function reloadAll(){
-  const dodTyped=Object.values(S.dods).some(dodDirty);  // the leave-page prompt (beforeunload) already asks about these
-  if(dirty()&&!dodTyped&&!confirm('Reload the page? What you typed in the open form will be lost.'))return;
+  const typed=Object.keys(S.forms).length>0||Object.values(S.dods).some(dodDirty);
+  if(typed&&!confirm('Reload the page? What you typed and haven\'t saved will be lost.'))return;
+  reloading=true;
   try{sessionStorage.setItem('reloadFresh','1')}catch(e){}
   location.reload()}
 function takeReloadFresh(){try{const v=sessionStorage.getItem('reloadFresh');sessionStorage.removeItem('reloadFresh');return v==='1'}catch(e){return false}}
@@ -985,7 +989,7 @@ function renderDod(p,mode,draft){const el=$('#dodbox');if(!el)return;const d=p.d
   el.innerHTML=d.defined?`<h3 class="sec label" style="display:flex;justify-content:space-between;align-items:center">Done means ${can?'<button class="btn sm ghost" id="dodEdit">Edit</button>':''}</h3><div class="dod">${esc(d.text)}</div><div class="muted" style="font-size:12px;margin-top:4px">From ${esc(d.source)}</div>`
     :`<h3 class="sec label" style="display:flex;justify-content:space-between;align-items:center">Done means ${can?'<button class="btn sm" id="dodEdit">Fill in</button>':''}</h3><div class="dod missing">Not defined yet. What does done look like? It goes into <span class="mono">${esc(file)}</span>.</div>`;
   $('#dodEdit')&&($('#dodEdit').onclick=()=>renderDod(p,'edit'))}
-addEventListener('beforeunload',e=>{if(Object.values(S.dods).some(dodDirty)){e.preventDefault();e.returnValue=''}});
+addEventListener('beforeunload',e=>{if(!reloading&&Object.values(S.dods).some(dodDirty)){e.preventDefault();e.returnValue=''}});
 
 /* ---------- repo viewer (read-only, through gh on the server) ---------- */
 const ghUrl=u=>/^https:\/\/github\.com\//.test(u||'')?u:'#';
@@ -1125,7 +1129,7 @@ function palRender(q){q=q.trim().toLowerCase();const hit=s=>!q||s.toLowerCase().
   const projs=projectCards().filter(c=>hit(c.title)).slice(0,4);if(projs.length)items.push({h:'Projects'},...projs.map(c=>({name:c.title,html:`${I.proj}<span class="grow">${hl(c.title)}</span><span class="muted">${c.f&&!c.f.done&&c.f.days_left!==null?(c.f.days_left<0?-c.f.days_left+'d late':c.f.days_left+'d left'):''}</span>`,go:()=>{S.psel=c.id;location.hash='#/projects';render()}})));
   const done=q?n.done.filter(x=>hit(x.title+' '+x.file)).slice(0,4):[];if(done.length)items.push({h:'Archive'},...done.map(x=>({name:x.title,html:`${st(x.fate)}<span class="grow">${hl(x.title)}</span>`,go:()=>{S.af={q:'',fate:'all'};S.asel=x.file;location.hash='#/archive';render()}})));
   const cmds=[['Go to Inbox',()=>location.hash='#/inbox','1'],['Go to Projects',()=>location.hash='#/projects','2'],['Go to Archive',()=>location.hash='#/archive','3'],['Go to Pulse',()=>location.hash='#/pulse','4'],
-    ['Undo last change',doUndo,'Z'],['Toggle dark mode',toggleTheme,''],['Reload — refresh everything',reloadAll,'Ctrl R'],['Keyboard shortcuts',openKeys,'?']].filter(c=>hit(c[0]));
+    ['Undo last change',doUndo,'Z'],['Toggle dark mode',toggleTheme,''],['Reload — refresh everything',reloadAll,''],['Keyboard shortcuts',openKeys,'?']].filter(c=>hit(c[0]));
   if(cmds.length)items.push({h:'Commands'},...cmds.map(([l,go,k])=>({name:l,html:`<span class="grow">${hl(l)}</span>${k?kbh(k):''}`,go})));
   pal.items=items.filter(x=>!x.h);let idx=0,group='';
   const out=[];items.forEach((x,gi)=>{if(x.h){if(group)out.push('</div>');group=x.h;out.push(`<div role="group" aria-labelledby="pg${gi}"><div class="sect label" id="pg${gi}">${x.h}</div>`)}
@@ -1206,7 +1210,8 @@ async function checkVersion(){try{const v=await api('/api/version');let b=$('#vb
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')checkVersion()});
 document.addEventListener('visibilitychange',async()=>{if(document.visibilityState!=='visible'||S.mode||$('#overlay').innerHTML)return;
   try{await refresh();if(!dirty())render()}catch(e){}});  // data is refreshed either way; the screen is redrawn only when nothing typed would be lost
-async function start(){const fresh=takeReloadFresh();if(fresh)S.freshProjects=true;try{await loadNotes()}catch(e){$('#main').innerHTML=`<div class="empty">Can't reach the triage server: ${esc(e.message)}</div>`;return}
+async function start(){const fresh=takeReloadFresh();if(fresh&&/^#\/projects/.test(location.hash))S.freshProjects=true;  // elsewhere Projects is loaded later, by when the 20 s cache is as good
+  try{await loadNotes()}catch(e){$('#main').innerHTML=`<div class="empty">Can't reach the triage server: ${esc(e.message)}</div>`;return}
   route();loadGithub(fresh);loadActivity(fresh);checkVersion();setInterval(()=>loadActivity(),600000)}
 (async()=>{let st;try{st=await api('/api/setup')}catch(e){st=null}  // an older server has no /api/setup: carry on as before
   if(st&&st.needed)openSetup(st,start);else start()})();
