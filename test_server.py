@@ -10,6 +10,8 @@ from unittest import mock
 import urllib.parse
 import urllib.error
 import urllib.request
+
+from testkit import Fixture
 from http.server import ThreadingHTTPServer
 
 import server
@@ -508,13 +510,15 @@ class DecisionBase(unittest.TestCase):
         if ok: self.assertNotIn("error", data, data)
         return data
 
-    def snapshot(self):
+    def snapshot(self, root=None):
         out = {}
-        for root, _, files in os.walk(self.tmp):
+        for root, _, files in os.walk(root or self.tmp):
             for f in files:
                 p = os.path.join(root, f)
                 with open(p, "rb") as fh: out[os.path.relpath(p, self.tmp)] = fh.read()
         return out
+
+    record = Fixture.record
 
 
 class DecisionTestCase(DecisionBase):
@@ -612,14 +616,16 @@ class DecisionTestCase(DecisionBase):
         self.assertEqual(status(), {"experiments/spike": "", "experiments/old": ""})
         self.post("/api/project/status", {"name": "spike", "kind": "experiments", "action": "shipped", "outcome": "archive"})
         self.assertNotIn("experiments/spike", status())
-        self.assertIn("- status: shipped", open(os.path.join(self.tmp, "archive", "spike", "NOTES.md")).read())
+        self.assertIn("- status: shipped", self.record("archive", "spike"))  # a board record; nothing is written into the folder
+        self.assertEqual(os.listdir(os.path.join(self.tmp, "archive", "spike")), [])
         self.post("/api/undo", {})
         self.assertEqual(status()["experiments/spike"], "")
-        self.assertFalse(os.path.exists(os.path.join(spike, "NOTES.md")))  # undo removes the file it created
+        self.assertEqual((os.listdir(spike), self.record("archive", "spike"), self.record("experiments", "spike")), ([], None, None))
         self.post("/api/project/status", {"name": "spike", "kind": "experiments", "action": "kill"}, ok=False)  # a reason is required
         self.post("/api/project/status", {"name": "old", "kind": "experiments", "action": "kill", "note": "Went nowhere."})
-        text = open(os.path.join(self.tmp, "archive", "old_abandoned", "notes.md")).read()  # existing file kept its name and content
-        self.assertIn("- status: dead", text); self.assertIn("Some notes.", text); self.assertIn("Went nowhere.", text)
+        self.assertEqual(open(os.path.join(self.tmp, "archive", "old_abandoned", "notes.md")).read(), "# old\n\nSome notes.\n")  # untouched
+        text = self.record("archive", "old_abandoned")
+        self.assertIn("- status: dead", text); self.assertIn("Went nowhere.", text)
         for bad in ({"name": "spike", "kind": "experiments", "action": "extend"}, {"name": "spike", "action": "shipped", "outcome": "archive"},
                     {"name": "../experiments/spike", "kind": "active", "action": "shipped", "outcome": "archive"},
                     {"name": "spike", "kind": "learning", "action": "shipped", "outcome": "archive"},
@@ -629,7 +635,7 @@ class DecisionTestCase(DecisionBase):
     def _promoted(self, extra=""):
         self.note("2026-10-01-a.md")
         self.post("/api/action", {"file": "2026-10-01-a.md", "action": "promote", "dest": "active", "note": "x", "due_days": 2})
-        path = os.path.join(self.tmp, "active", "a", "NOTES.md")
+        path = os.path.join(self.notes, "projects", "active", "a.md")  # its board record
         if extra:
             with open(path) as fh: text = fh.read()
             with open(path, "w") as fh: fh.write(server.set_field(text, "extensions", extra))
@@ -651,7 +657,7 @@ class DecisionTestCase(DecisionBase):
         self.post("/api/project/status", self._push(days=3))
         text = open(path).read(); due1 = (max(t, server.dt.date.fromisoformat(due0)) + server.dt.timedelta(days=3)).isoformat()
         self.assertEqual((server.field(text, "due"), server.field(text, "extensions")), (due1, "1"))
-        plan = text.split("## Plan", 1)[1]
+        plan = text.split("## Extensions", 1)[1]
         self.assertIn(f"- pushed {due0} → {due1} ({t.isoformat()}): Waiting on the parts to arrive.", plan)
         [f] = self.get("/api/notes")["inflight"]; self.assertEqual((f["extensions"], f["max_extensions"]), (1, 2))
         self.post("/api/project/status", self._push())
@@ -676,13 +682,12 @@ class DecisionTestCase(DecisionBase):
         self.post("/api/project/status", self._push()); self.assertNotEqual(open(path, "rb").read(), original)
         self.post("/api/undo", {}); self.assertEqual(open(path, "rb").read(), original)
 
-    def test_extend_adds_a_plan_section_when_missing(self):
-        path = self._promoted()
-        with open(path) as fh: text = fh.read()
-        with open(path, "w") as fh: fh.write(text.split("## Plan")[0].rstrip() + "\n")
-        original = open(path, "rb").read()
+    def test_extend_adds_an_extensions_section_to_the_record_and_leaves_the_project_alone(self):
+        path = self._promoted(); proj = os.path.join(self.tmp, "active", "a"); before = self.snapshot(proj)
+        original = open(path, "rb").read(); self.assertNotIn(b"## Extensions", original)
         self.post("/api/project/status", self._push())
-        self.assertIn("\n## Plan\n\n- pushed ", open(path).read())
+        self.assertIn("\n## Extensions\n\n- pushed ", open(path).read())
+        self.assertEqual(self.snapshot(proj), before)
         self.post("/api/undo", {}); self.assertEqual(open(path, "rb").read(), original)
 
     def test_extension_limit_comes_from_config(self):
@@ -697,8 +702,9 @@ class DecisionTestCase(DecisionBase):
         self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "kill", "note": "  "}, ok=False)
         self.assertEqual(self.snapshot(), before)
         self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "kill", "note": "Not worth it."})
-        path = os.path.join(self.tmp, "archive", "a_abandoned", "NOTES.md")
-        self.assertIn("**Killed", open(path).read().split("## Outcome", 1)[1]); self.assertIn("Not worth it.", open(path).read())
+        text = self.record("archive", "a_abandoned")
+        self.assertIn("**Killed", text.split("## Outcome", 1)[1]); self.assertIn("Not worth it.", text)
+        self.assertNotIn("Not worth it.", open(os.path.join(self.tmp, "archive", "a_abandoned", "NOTES.md")).read())
 
     def project(self, name, kind="active", notes=None):
         path = os.path.join(self.tmp, kind, name); os.makedirs(path)
@@ -710,14 +716,17 @@ class DecisionTestCase(DecisionBase):
 
     def test_ship_and_kill_write_closed_and_undo_removes_it(self):
         path = self._promoted(); original = open(path, "rb").read(); t = server.today().isoformat()
+        notes = open(os.path.join(self.tmp, "active", "a", "NOTES.md"), "rb").read()
         self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "shipped", "outcome": "maintained"})
-        text = open(os.path.join(self.tmp, "maintained", "a", "NOTES.md")).read()
+        text = self.record("maintained", "a")
         self.assertEqual((server.field(text, "closed"), server.field(text, "shipped")), (t, t))
+        self.assertEqual(open(os.path.join(self.tmp, "maintained", "a", "NOTES.md"), "rb").read(), notes)
         [f] = self.get("/api/notes")["inflight"]; self.assertEqual((f["path"], f["closed"]), ("maintained/a/NOTES.md", t))
         self.post("/api/undo", {}); self.assertEqual(open(path, "rb").read(), original)
         self.post("/api/project/status", {"path": "active/a/NOTES.md", "action": "kill", "note": "Not worth it."})
-        self.assertEqual(server.field(open(os.path.join(self.tmp, "archive", "a_abandoned", "NOTES.md")).read(), "closed"), t)
+        self.assertEqual(server.field(self.record("archive", "a_abandoned"), "closed"), t)
         self.post("/api/undo", {}); self.assertEqual(open(path, "rb").read(), original)
+        self.assertEqual(open(os.path.join(self.tmp, "active", "a", "NOTES.md"), "rb").read(), notes)
 
     def test_folder_ship_and_kill_write_closed_and_listing_reports_it(self):
         for name in ("s", "k"): os.makedirs(os.path.join(self.tmp, "experiments", name))
@@ -783,10 +792,10 @@ class DecisionTestCase(DecisionBase):
         self.assertIn("done means", err["error"])
         self.post("/api/action", {"file": "2026-10-01-spike.md", "action": "promote", "dest": "experiments", "note": "We know if it works."})
         notes = open(os.path.join(self.tmp, "experiments", "spike", "NOTES.md")).read()
-        self.assertNotIn("- due:", notes)
-        self.assertIn(f"- promoted: {server.today().isoformat()}", notes)
-        self.assertIn("- definition of done: We know if it works.", notes)
-        self.assertIn("open-ended experiment", notes)
+        self.assertEqual(notes, "# A note\n\n## Plan\n\n- definition of done: We know if it works.\n- first step:\n"
+                                "- check-in: when done means is met, mark it shipped; if it stalls, kill it\n")
+        rec = self.record("experiments", "spike")
+        self.assertNotIn("- due:", rec); self.assertIn(f"- promoted: {server.today().isoformat()}", rec)
         [f] = self.get("/api/notes")["inflight"]
         self.assertEqual((f["dest"], f["due"], f["days_left"], f["open_ended"], f["done"]), ("experiments", "", None, True, False))
         self.post("/api/project/status", {"path": f["path"], "action": "shipped", "outcome": "archive"})
@@ -796,7 +805,8 @@ class DecisionTestCase(DecisionBase):
         self.note("2026-10-01-a.md"); self.note("2026-10-02-b.md")
         when = (server.today() + server.dt.timedelta(days=45)).isoformat()
         self.post("/api/action", {"file": "2026-10-01-a.md", "action": "promote", "dest": "active", "note": "x", "due": when, "due_days": 3})
-        self.assertIn(f"- due: {when}", open(os.path.join(self.tmp, "active", "a", "NOTES.md")).read())
+        self.assertIn(f"- due: {when}", self.record("active", "a"))
+        self.assertNotIn("due", open(os.path.join(self.tmp, "active", "a", "NOTES.md")).read())
         for bad in (server.today().isoformat(), "2026-13-01", (server.today() + server.dt.timedelta(days=400)).isoformat()):
             self.assertIn("ship-by", self.post("/api/action", {"file": "2026-10-02-b.md", "action": "promote", "dest": "active",
                                                                "note": "x", "due": bad}, ok=False)["error"])

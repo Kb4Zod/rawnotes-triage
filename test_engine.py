@@ -215,14 +215,15 @@ class Faults(Fixture):
         self.assertEqual(errors, [])
         for i in range(12):
             text = open(os.path.join(self.tmp, "active", f"r{i}", "NOTES.md")).read()
-            self.assertIn(f"definition of done: New {i}", text); self.assertIn("- extensions: 1", text)
+            self.assertIn(f"definition of done: New {i}", text); self.assertIn("- extensions: 1", self.record("active", f"r{i}"))
+            self.assertEqual(server.field(text, "status"), "")  # whichever came first moved the board data to the record
         self.assertEqual(len(server._undo), server.UNDO_MAX)  # 24 changes, the newest UNDO_MAX kept
 
     def test_done_means_refuses_a_stale_edit_after_a_status_change(self):
         self.project("s", notes="# S\n\n- status: promoted\n- due: 2026-12-01\n\n- definition of done: Old.\n")
         self.post("/api/project/status", {"path": "active/s/NOTES.md", "action": "extend", "note": "Waiting on the parts."})
         self.post("/api/done", {"name": "s", "text": "Mine", "expected": "Something else"}, ok=False)
-        self.assertIn("- extensions: 1", open(os.path.join(self.tmp, "active", "s", "NOTES.md")).read())
+        self.assertIn("- extensions: 1", self.record("active", "s"))
 
     # ---- every page mutation can be undone
     def test_every_mutation_endpoint_pushes_an_undo_step(self):
@@ -260,20 +261,22 @@ class UndoContainment(Fixture):
 
     def shipped_demo(self):
         p = self.project("demo", notes="# Demo\n\n- status: promoted\n- due: 2026-12-01\n")
-        self.post("/api/project/status", {"path": "active/demo/NOTES.md", "action": "extend", "note": "Waiting on the parts."})  # an edit in place
+        # an edit in place: the first write moves the board data out of NOTES.md (undo would write it back there)
+        self.post("/api/project/status", {"path": "active/demo/NOTES.md", "action": "extend", "note": "Waiting on the parts."})
+        self.assertIn("- extensions: 1", self.record("active", "demo"))
         return p
 
     def test_undo_refuses_when_the_project_folder_became_a_symlink_to_the_renamed_folder_inside_the_projects_root(self):
         p = self.shipped_demo(); ext = os.path.join(self.tmp, "external")
         self.swap_for_link(p, ext); before = self.snapshot(); outside_text = open(ext + "/NOTES.md").read()
         self.assertRefused(before)
-        self.assertEqual(open(ext + "/NOTES.md").read(), outside_text); self.assertIn("- extensions: 1", outside_text)
+        self.assertEqual(open(ext + "/NOTES.md").read(), outside_text); self.assertEqual(outside_text, "# Demo\n")
 
     def test_undo_refuses_when_the_project_folder_became_a_symlink_to_a_folder_outside_the_roots(self):
         p = self.shipped_demo(); ext = os.path.join(self.outside, "demo")
         self.swap_for_link(p, ext); before = self.snapshot(self.outside); n = len(server._undo)
         r = self.post("/api/undo", {}, ok=False); self.assertIn("symlink", r["error"])
-        self.assertEqual((self.snapshot(self.outside), len(server._undo)), (before, n)); self.assertIn("- extensions: 1", open(ext + "/NOTES.md").read())
+        self.assertEqual((self.snapshot(self.outside), len(server._undo)), (before, n)); self.assertEqual(open(ext + "/NOTES.md").read(), "# Demo\n")
 
     def test_undo_refuses_when_the_file_itself_was_swapped_for_a_link_with_identical_content(self):
         p = self.shipped_demo(); copy = os.path.join(self.outside, "NOTES.md")

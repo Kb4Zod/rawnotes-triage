@@ -1,6 +1,6 @@
 # {{title}}
 
-- **Status:** building, ship by {{due}} (promoted {{today}})
+- **Status:** building
 - **Stack:** template (the files to copy are in `template/`)
 - **Run it:** copy it, see "How to use it"
 - **Repo:** private, local only so far

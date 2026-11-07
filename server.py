@@ -37,9 +37,9 @@ from urllib.parse import urlparse, parse_qs
 
 import depcheck, safefs
 from notemeta import (field, set_field, drop_field, title_of, append_outcome, append_to_section, closed_date, question_of, question_summary, note_body,
-                      eol_of, with_eol, to_lf, header_lines, title_index, HEAD_LINE)
+                      eol_of, with_eol, to_lf, header_lines, title_index, HEAD_LINE, section_span, section_body, section_names, take_section)
 
-VERSION = "2.15"  # bump on every change; history in CHANGELOG.md
+VERSION = "2.16"  # bump on every change; history in CHANGELOG.md
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOG_PATH = os.path.join(HERE, "triage.log")
 FONT_RE = re.compile(r"^/static/fonts/[A-Za-z0-9-]+\.woff2$")
@@ -211,31 +211,42 @@ def in_closed_window(day, window=None):
 
 def inflight(conf=None):
     """Promoted notes with a due date (plus open-ended experiments), and projects closed within closed_window_days
-    (from maintained/ and archive/ too, for the Closed column), found in the sibling project folders."""
+    (from maintained/ and archive/ too, for the Closed column), found in the sibling project folders. A folder with a
+    board record is listed from the record, as its NOTES.md (whether or not that file exists), and its NOTES.md is not
+    read; its other files (an old promoted file with a due: line) are read as before records existed."""
     conf = read_config() if conf is None else conf; out = []
     window = config_int("closed_window_days", CLOSED_WINDOW_DAYS, conf=conf); max_ext = config_int("max_extensions", MAX_EXTENSIONS, conf=conf)
-    for dest in ("active", "experiments", "learning", "templates", "maintained", "archive"):
-        d = os.path.join(PROJECTS, dest)
+    for dest in RECORD_KINDS:
+        d = os.path.join(PROJECTS, dest); records = set()
         if not os.path.isdir(d): continue
         for root, dirs, files in os.walk(d):
             if root[len(d):].count(os.sep) > 1: dirs[:] = []; continue
-            if root == d and dest in PROJECT_KINDS:  # the same folders the board lists: no linked worktree, no hand-made study folder
-                dirs[:] = [x for x in dirs if on_board(os.path.join(d, x), dest)]
-            for f in files:
-                if not f.endswith(".md"): continue
-                p = os.path.join(root, f)
-                try: m = _meta_cache.get(("meta", p), [p], lambda _: _meta_of(p, f))
+            found = []  # (path the board lists, file name, where its data is read from)
+            if root == d:
+                if dest in PROJECT_KINDS:  # the same folders the board lists: no linked worktree, no hand-made study folder
+                    dirs[:] = [x for x in dirs if on_board(os.path.join(d, x), dest)]
+                for x in dirs:
+                    rp = record_file(os.path.join(d, x))
+                    if not rp or os.path.islink(os.path.join(d, x)): continue  # os.walk doesn't read a symlinked folder either
+                    try: f = os.path.basename(notes_file(os.path.join(d, x)))
+                    except OSError: continue
+                    found.append((os.path.join(d, x, f), f, rp)); records.add(os.path.join(d, x, f))
+            found += [(os.path.join(root, f), f, os.path.join(root, f)) for f in files
+                      if f.endswith(".md") and os.path.join(root, f) not in records]  # a record speaks for its NOTES.md
+            for p, f, src in found:
+                try: m = _meta_cache.get(("meta", src), [src], lambda _: _meta_of(src, f))
                 except OSError: continue
+                main = src != p or root == d  # a record, or a flat file: the project's one board file, like its NOTES.md
                 due = m["due"]; recently_closed = False
                 if dest in ("maintained", "archive"):
                     # finished work that moved out of the board's folders: only the Closed column shows it, and only while recent
                     if m["closed"]:
-                        if not in_closed_window(m["closed"], window) or not (f.lower() == "notes.md" or root == d): continue
+                        if not in_closed_window(m["closed"], window) or not (f.lower() == "notes.md" or main): continue
                         recently_closed = True
                     elif dest == "archive" or not due: continue
                 # promoted with no ship-by: one per experiment (its NOTES.md, or a flat file), not every note it holds
                 open_ended = (not due and dest == "experiments" and bool(m["promoted"])
-                              and (f == "NOTES.md" or root == d))
+                              and (f == "NOTES.md" or main))
                 if not due and not open_ended and not recently_closed: continue
                 try: left = (dt.date.fromisoformat(due) - today()).days if due else None
                 except ValueError: left = None
@@ -256,14 +267,14 @@ DONE_MAX = 600
 def done_placeholder(text):
     return not text or bool(re.search(r"<fill in|^(tbd|todo|\?+|_+|\.+)$", text, re.I))
 
-def find_done(path):
-    """Locate the definition of done in a project folder.
+def find_done(path, only=None):
+    """Locate the definition of done in a project folder (`only`: in that one file).
     Returns None if nothing looks for one, else {file, start, end, kind ('line'|'head'), prefix, text, defined}:
     lines[start:end] of `file` hold it. The first real definition wins; failing that, the first blank/placeholder one."""
     files = {f.lower(): f for f in os.listdir(path)}
     blank = None
     for name in DONE_FILES:
-        if name not in files: continue
+        if name not in files or (only and files[name] != only): continue
         try: lines = _read_lines(os.path.join(path, files[name]))[0]
         except OSError: continue
         for i, line in enumerate(lines):
@@ -300,7 +311,8 @@ def _read_lines(target):
 
 def set_done(name, text, expected, kind=None):
     """Write a project's definition of done in place (or into NOTES.md's Plan if it has none), as one undoable change.
-    `expected` is the text the user was looking at; if the file moved on since, refuse rather than overwrite."""
+    `expected` is the text the user was looking at; if the file moved on since, refuse rather than overwrite.
+    A folder with no board record whose NOTES.md still holds board data has it moved to a record in the same change."""
     path, kind = project_dir(name, kind, write=True)
     text = re.sub(r"\s+", " ", text or "").strip()
     if done_placeholder(text): raise ValueError("Write what done looks like first.")
@@ -308,13 +320,18 @@ def set_done(name, text, expected, kind=None):
     with mutation(f"done means for {name}") as tx:
         hit = find_done(path)  # read under the write lock: a concurrent status edit can't be lost
         now = hit["text"] if hit and hit["defined"] else ""
-        if re.sub(r"\s+", " ", expected or "").strip() != now:
+        if re.sub(r"\s+", " ", expected or "").strip() != now:  # against what you saw, before a migration moves anything
             raise ValueError("This definition changed on disk since you opened it. Refresh and try again.")
+        rp = _stored(record_of(path))
+        got = migrate_folder(tx, path, record=read_note(rp)[0] if os.path.lexists(rp) else None)
+        if got:  # it trimmed NOTES.md, so find_done runs again on what is left, in the file you saw it in
+            board_save(tx, rp, got[0]); was = hit; hit = find_done(path)
+            if was and hit and hit["file"] != was["file"]: hit = find_done(path, only=was["file"])
         target, lines, eol = _with_done(path, name, text, hit)
         tx.write(target, eol.join(lines))
         tx.select = None
     _log(f"done {kind}/{name} -> {os.path.basename(target)}: {text[:80]}")
-    return {"ok": True, "file": os.path.basename(target), "msg": f"Saved to {os.path.basename(target)}"}
+    return {"ok": True, "file": os.path.basename(target), "msg": with_migration(f"Saved to {os.path.basename(target)}", tx)}
 
 def _with_done(path, name, text, hit):
     """(file, lines, eol): `text` put in as the definition of done where find_done found one (`hit`), else as a
@@ -350,20 +367,17 @@ def notes_file(path):
     return os.path.join(path, names.get("notes.md", "NOTES.md"))
 
 def project_facts(path):
-    """(status in its NOTES.md, whether done means is defined) for a project folder, kept until those files change."""
+    """(status in its board record, else in its NOTES.md; whether done means is defined) for a project folder, kept
+    until those files change."""
     try: names = os.listdir(path)
     except OSError: return "", False
-    files = sorted(os.path.join(path, n) for n in names if n.lower() in DONE_FILES or n.lower() == "notes.md")
+    files = sorted(os.path.join(path, n) for n in names if n.lower() in DONE_FILES or n.lower() == "notes.md") + [record_of(path)]
     def build(_):
-        status = ""
-        try:
-            with open(notes_file(path), "rb") as fh: status = field(to_lf(fh.read(4000).decode("utf-8", "replace")), "status")
-        except OSError: pass
-        return status, definition_of_done(path)["defined"]
+        return field(board_text(path), "status"), definition_of_done(path)["defined"]
     return _proj_cache.get(("proj", path), files, build)
 
 def folder_status(path):
-    """The `- status:` line in the project's NOTES.md, if it has one."""
+    """The `- status:` line in the project's board record (else its NOTES.md), if it has one."""
     return project_facts(path)[0]
 
 def is_worktree(path):
@@ -374,22 +388,20 @@ def is_worktree(path):
 
 def on_board(path, kind):
     """Whether a folder under a project kind counts as a project (shown on the board, reachable through the API):
-    never a linked worktree; in learning/ and templates/ only a folder whose NOTES.md has a `promoted:` line, so
-    hand-made study folders and template kits stay off the board."""
+    never a linked worktree; in learning/ and templates/ only a folder with a board record, or whose NOTES.md has a
+    (legacy) `promoted:` line, so hand-made study folders and template kits stay off the board."""
     if is_worktree(path): return False
-    if kind not in PROMOTED_ONLY: return True
+    if kind not in PROMOTED_ONLY or record_file(path): return True
     try:
         with open(notes_file(path), "rb") as fh: return bool(field(to_lf(fh.read(4000).decode("utf-8", "replace")), "promoted"))
     except OSError: return False
 
 def folder_closed(path, status):
-    """When a project folder was closed (see closed_date), "" if it is still open or says nothing; kept until its notes change."""
+    """When a project folder was closed (see closed_date), "" if it is still open or says nothing; kept until its board
+    record (else its NOTES.md) changes."""
     if status not in CLOSED: return ""
-    def build(_):
-        try:
-            with open(notes_file(path), "rb") as fh: return closed_date(to_lf(fh.read(CLOSED_READ).decode("utf-8", "replace")))
-        except OSError: return ""
-    try: return _proj_cache.get(("closed", path), [notes_file(path)], build)
+    def build(_): return closed_date(board_text(path, CLOSED_READ))
+    try: return _proj_cache.get(("closed", path), [notes_file(path), record_of(path)], build)
     except OSError: return ""
 
 def project_folders():
@@ -424,6 +436,267 @@ def project_dir(name, kind=None, write=False):
         except ValueError: raise ValueError(f"“{name}” is a symlink: Triage only changes real folders inside Projects.")
     return path, kind
 
+# ---- the board record: a project folder's board data, kept in RawNotes (private), never in the project's own repo ----
+# RawNotes/projects/<kind>/<folder>.md has the same `- key: value` header as a note (status, promoted, due, extensions,
+# shipped, closed, github) and the sections the app writes: ## Capture (a link to the original note in done/),
+# ## Extensions, ## Rounds, ## Moved, ## Outcome. It is written only through Tx, so undo, the lock and the auto-commit
+# of RawNotes cover it. A folder with no record is read from the legacy fields in its NOTES.md, as before 2.15; the
+# first board action that writes to it, or migrate-board-data, moves them into a record (migrate_folder).
+RECORD_DIR = "projects"
+RECORD_KINDS = PROJECT_KINDS + ("maintained", "archive")
+BOARD_FIELDS = ("status", "promoted", "due", "extensions", "shipped", "closed", "github")
+CAPTURE_FIELDS = ("date", "type", "kept", "keeps", "restored")  # the capture's own header: moved only out of a promoted copy
+BOARD_SECTIONS = ("Rounds", "Moved")  # whole sections the app wrote into a legacy NOTES.md (of ## Outcome, only its kill lines)
+KILLED_LINE = re.compile(r"^\*\*Killed \d{4}-\d{2}-\d{2}:\*\*")
+RECORD_ORDER = ("Capture", "Extensions", "Rounds", "Moved", "Outcome")
+EXT_SECTION = "Extensions"  # a record's pushed-ship-by lines (a legacy NOTES.md had them under ## Plan)
+PROMOTED_LINE = re.compile(r"^- promoted from RawNotes on \d{4}-\d{2}-\d{2}, (?:due \d{4}-\d{2}-\d{2}|open-ended experiment \(no ship-by date\))[ \t]*$")
+PUSHED_LINE = re.compile(r"^- pushed \S+ → \S+ \(\d{4}-\d{2}-\d{2}\): ")
+PROMOTED_OUTCOME = re.compile(r"\*\*Promoted (\d{4}-\d{2}-\d{2})\*\* -> `\.\./([^`]+?)/NOTES\.md`")
+MOVED_FROM = re.compile(r"moved from `([^`]+?)/` to")
+CAPTURE_LINK = re.compile(r"\]\(<?\.\./\.\./(done/[^<>()\n]+?\.md)>?\)")
+
+def record_path(kind, name): return os.path.join(NOTES, RECORD_DIR, kind, name + ".md")
+
+def record_of(path):
+    """Where the record of the project folder `path` (<projects>/<kind>/<name>) lives, whether or not it exists."""
+    return record_path(os.path.basename(os.path.dirname(path)), os.path.basename(path))
+
+def record_file(path):
+    """The record of the project folder `path` if it has one (a real file, not a symlink), else None."""
+    rp = record_of(path)
+    return rp if os.path.isfile(rp) and not os.path.islink(rp) else None
+
+def _head_of(path, n=4000):
+    with open(path, "rb") as fh: return to_lf(fh.read(n).decode("utf-8", "replace"))
+
+def board_text(path, n=4000):
+    """The first `n` bytes of what the board reads a project folder's data from: its record, else its NOTES.md (the
+    legacy fields), else ""."""
+    try: return _head_of(record_file(path) or notes_file(path), n)
+    except OSError: return ""
+
+def _spans(text, heading):
+    """(heading start, body start, end) of every `## heading` section, in order (a note may have two: a capture's own
+    ## Plan, then the one Promote added after it)."""
+    out = []
+    for m in re.finditer(r"^## " + re.escape(heading) + r"[ \t]*$", text, re.M):
+        body = m.end() + 1 if text[m.end():m.end() + 1] == "\n" else m.end()
+        nxt = re.compile(r"^## ", re.M).search(text, body)
+        out.append((m.start(), body, nxt.start() if nxt else len(text)))
+    return out
+
+def _bodies(text, heading): return [text[s[1]:s[2]] for s in _spans(text, heading)]
+
+def has_legacy(text):
+    """Does a NOTES.md still hold board data the app wrote there before 2.15: a board field in its header, ## Rounds or
+    ## Moved, a `**Killed <date>:**` line under ## Outcome, or Promote's dated line or a "pushed" line under a ## Plan?"""
+    lines = text.split("\n")
+    if any(HEAD_LINE.match(lines[i]).group(1) in BOARD_FIELDS for i in header_lines(lines)): return True
+    if any(n in BOARD_SECTIONS for n in section_names(text)): return True
+    if any(KILLED_LINE.match(l) for b in _bodies(text, "Outcome") for l in b.split("\n")): return True
+    return any(PROMOTED_LINE.match(l) or PUSHED_LINE.match(l) for b in _bodies(text, "Plan") for l in b.split("\n"))
+
+def _cut_lines(body, app):
+    """(body without the lines `app(line, inside)` claims, the claimed lines): a claimed line's paragraph goes with it,
+    and no double blank line is left where it was."""
+    took, rest, inside, cut = [], [], False, False
+    for l in body.split("\n"):
+        inside = app(l, inside)
+        if inside: took.append(l); cut = True; continue
+        if cut and not l.strip() and rest and not rest[-1].strip(): cut = False; continue
+        cut = False; rest.append(l)
+    return "\n".join(rest), took
+
+def _same(a, b): return re.sub(r"\n\s*\n+", "\n\n", a.strip()) == re.sub(r"\n\s*\n+", "\n\n", b.strip())
+
+APP_OUTCOME = re.compile(r"^\*\*(?:Killed \d{4}-\d{2}-\d{2}:\*\* .*|Promoted \d{4}-\d{2}-\d{2}\*\* -> `[^`\n]+`(?: \(.*\))?|"
+                         r"Merged \d{4}-\d{2}-\d{2}\*\* -> `[^`\n]+`|Restored \d{4}-\d{2}-\d{2}\*\* to the Inbox)[ \t]*$")  # exactly the lines the app adds to a note's ## Outcome
+
+def split_legacy(text, capture=None):
+    """A legacy NOTES.md split by audience: (what stays in NOTES.md, the record's header [(key, value)], the record's
+    sections {name: body}, what moved [labels]). The board fields always move (every copy of one in the header), and
+    the capture's own header (date, type, kept, keeps, restored) too when it is a promoted copy (it has `promoted:`);
+    ## Rounds and ## Moved move whole; from ## Outcome, the kill reasons (a `**Killed <date>:**` line and the rest of its
+    paragraph); from every ## Plan, Promote's dated "promoted from RawNotes" line (the record has the dates) and the
+    "pushed" lines (to ## Extensions). With `capture` (the original note in done/), every section still the same as the
+    capture's (ignoring the lines the app adds to an ## Outcome) is the copy Promote made, and goes too, since the
+    original stays in RawNotes; so does a first ## Plan that is the capture's own when Promote added a second.
+    Everything else stays as it is."""
+    lines = text.split("\n"); head = header_lines(lines); first = {}
+    for i in head: first.setdefault(HEAD_LINE.match(lines[i]).group(1), i)
+    keys = BOARD_FIELDS + (CAPTURE_FIELDS if "promoted" in first else ())
+    drop = {i for i in head if HEAD_LINE.match(lines[i]).group(1) in keys}
+    fields = [(HEAD_LINE.match(lines[i]).group(1), HEAD_LINE.match(lines[i]).group(3).strip()) for i in sorted(drop)]  # a doubled line too
+    kept = []
+    for i, l in enumerate(lines):
+        if i in drop: continue
+        if not l.strip() and kept and not kept[-1].strip() and i - 1 in drop: continue  # no double blank where the header was
+        kept.append(l)
+    out = "\n".join(kept); sections = {}; moved = list(dict.fromkeys(k for k, _ in fields))
+    for name in BOARD_SECTIONS:
+        while section_span(out, name):
+            out, body = take_section(out, name)
+            if body: sections[name] = (sections[name] + "\n" + body) if name in sections else body
+        if name in sections: moved.append(f"## {name}")
+    kills, ext, promoted_line = [], [], False
+    for name in ("Outcome", "Plan"):
+        for s in reversed(_spans(out, name)):  # from the end, so the earlier spans' offsets still hold
+            if name == "Outcome": rest, took = _cut_lines(out[s[1]:s[2]], lambda l, inside: bool(KILLED_LINE.match(l)) or (inside and bool(l.strip())))
+            else:
+                rest, took = _cut_lines(out[s[1]:s[2]], lambda l, inside: bool(PUSHED_LINE.match(l) or PROMOTED_LINE.match(l)))
+                promoted_line |= any(PROMOTED_LINE.match(l) for l in took); took = [l for l in took if PUSHED_LINE.match(l)]
+            if not took and not promoted_line: continue
+            (kills if name == "Outcome" else ext)[:0] = took
+            out = (out[:s[1]] + rest + out[s[2]:]) if rest.strip() or name == "Plan" else out[:s[0]] + out[s[2]:]
+    if kills: sections["Outcome"] = "\n".join(kills); moved.append("the kill reason (## Outcome)")
+    if ext: sections[EXT_SECTION] = "\n".join(ext); moved.append("ship-by pushes (## Plan)")
+    if promoted_line: moved.append("the promoted line (## Plan)")
+    if capture:
+        cap = {n: b for n in section_names(capture) for b in [section_body(capture, n)]}
+        cap["Outcome"] = "\n".join(l for l in cap.get("Outcome", "").split("\n") if not APP_OUTCOME.match(l))
+        for name in dict.fromkeys(section_names(out)):
+            if name == "Plan" or name not in cap: continue
+            mine = section_body(out, name)
+            if name == "Outcome": mine = "\n".join(l for l in mine.split("\n") if not APP_OUTCOME.match(l))
+            if _same(mine, cap[name]): out = take_section(out, name)[0]; moved.append(f"## {name} (copy of the original note)")
+        plans = _spans(out, "Plan")
+        if len(plans) > 1 and "Plan" in cap and _same(out[plans[0][1]:plans[0][2]], cap["Plan"]):
+            out = out[:plans[0][0]] + out[plans[0][2]:]; moved.append("the original note's own ## Plan (copy)")
+    out = re.sub(r"\n{3,}(?=## )", "\n\n", out)  # where a whole section went
+    return out.rstrip("\n") + "\n", fields, sections, moved
+
+def left_in_notes(text):
+    """What a trimmed NOTES.md still holds besides its title, header and one ## Plan, for the migration to name
+    (your own text, or a copy of the original note it couldn't match): section names, a second ## Plan, and text
+    above the first heading."""
+    out = [re.sub(r"[\x00-\x1f\x7f-\x9f]", "", n)[:80] for n in section_names(text) if n != "Plan"]  # headings of a tracked file: no terminal escapes
+    if len(_spans(text, "Plan")) > 1: out.append("a second Plan")
+    lines = text.split("\n"); skip = set(header_lines(lines)) | {title_index(lines)}
+    top = next((i for i, l in enumerate(lines) if l.startswith("## ")), len(lines))
+    if any(l.strip() for i, l in enumerate(lines[:top]) if i not in skip): out.insert(0, "text above the first heading")
+    return out
+
+def record_text(title, fields, sections=None):
+    """A record: `# title`, the header, then the sections in RECORD_ORDER (any others after them)."""
+    sections = sections or {}
+    out = "\n".join([f"# {title}", ""] + [f"- {k}: {v}".rstrip() for k, v in fields]).rstrip("\n") + "\n"
+    for name in list(RECORD_ORDER) + [n for n in sections if n not in RECORD_ORDER]:
+        if sections.get(name): out += f"\n## {name}\n\n{sections[name].strip(chr(10))}\n"
+    return out
+
+def capture_line(title, rel):
+    """The ## Capture line: a link from the record (two folders down in RawNotes) to the original note, `done/<file>`."""
+    return f"- [{index_clean(title) or os.path.basename(rel)}](<../../{urllib.parse.quote(rel, safe='/ ', errors='surrogateescape')}>)"
+
+def capture_of(text):
+    """`done/<file>` that a record's ## Capture links to, or None."""
+    m = CAPTURE_LINK.search(section_body(text, "Capture"))
+    return urllib.parse.unquote(m.group(1), errors="surrogateescape") if m else None
+
+def capture_index():
+    """{"<kind>/<folder>": [(promote date, "done/<file>"), …]}: the original notes promoted into each project folder
+    path (more than one when a name was reused), read from the `**Promoted <date>** -> ../<kind>/<folder>/NOTES.md`
+    line Promote writes under the note's ## Outcome."""
+    d = os.path.join(NOTES, "done"); out = {}
+    try: names = sorted(f for f in os.listdir(d) if NOTE_RE.match(f))
+    except OSError: return out
+    for f in names:
+        p = os.path.join(d, f)
+        if os.path.islink(p): continue
+        try: text = _head_of(p, CLOSED_READ)
+        except OSError: continue
+        for m in PROMOTED_OUTCOME.finditer(section_body(text, "Outcome")): out.setdefault(m.group(2), []).append((m.group(1), "done/" + f))
+    return out
+
+def pick_capture(index, keys, promoted):
+    """The original note of a project known under these past paths: the one promoted on its `promoted:` date (the
+    first round's: a next round changes that date, so with one candidate in all, that one), else None. Never a guess
+    between two."""
+    found = [c for k in keys for c in index.get(k, [])]
+    hit = [f for d, f in found if d == promoted]
+    return hit[0] if len(hit) == 1 else found[0][1] if len(found) == 1 else None
+
+def migrate_folder(tx, path, index=None, record=None):
+    """Move the legacy board data out of project folder `path`'s NOTES.md (split_legacy), through `tx`: the trimmed
+    NOTES.md is written now (the app never commits in a project's repo: that commit is yours). Returns (the record's
+    text: a new one, or `record`, the folder's existing record, with it merged in (merge_record); what moved; what
+    NOTES.md still holds besides the plan) for the caller to write, or None when NOTES.md holds no board data (nothing
+    written). A NOTES.md that is a symlink and holds board data is refused (ValueError): its data would be hidden behind
+    a record, and nothing may be written through the link. The original note is looked up under the folder's own path
+    and its earlier ones (legacy_capture). The migration is noted on tx.migrated."""
+    try: nf = notes_file(path)
+    except OSError: return None
+    if not os.path.isfile(nf): return None
+    if os.path.islink(nf):
+        try: linked = has_legacy(_head_of(nf, CLOSED_READ))
+        except OSError: linked = False
+        if linked: raise ValueError(f"{os.path.basename(path)}/NOTES.md is a symlink and holds board data: Triage only writes "
+                                    f"real files, so move that data out by hand (see Board records in the README).")
+        return None
+    text, eol = read_note(nf)
+    if not has_legacy(text): return None
+    kind, name = os.path.basename(os.path.dirname(path)), os.path.basename(path)
+    cap = legacy_capture(text, kind, name, index); cap_text = None
+    if cap:
+        try: cap_text = read_note(safe_note(cap))[0]
+        except (OSError, ValueError): cap = None
+    new, fields, sections, moved = split_legacy(text, cap_text)
+    if cap: sections["Capture"] = capture_line(title_of(text, name), cap)
+    tx.write(nf, new, eol); left = left_in_notes(new)
+    tx.migrated.append((f"{kind}/{name}", moved, left))
+    rec = record_text(title_of(text, name), fields, sections) if record is None else merge_record(record, fields, sections)
+    return rec, moved, left
+
+def merge_record(rec, fields, sections):
+    """A NOTES.md's legacy board data folded into a record the folder already has (made by hand, or left over): a field
+    the record lacks is added; one it already has keeps the record's value, and NOTES.md's is kept under
+    ## From NOTES.md; each section's lines are added to the record's (## Capture only if it has none). Nothing is lost."""
+    conflicts = []
+    for k, v in fields:
+        if not field(rec, k) and v: rec = set_field(rec, k, v)
+        elif v and field(rec, k) != v.split(None, 1)[0]: conflicts.append(f"- {k}: {v}")
+    for name, body in sections.items():
+        if name == "Capture" and capture_of(rec): continue
+        rec = append_to_section(rec, name, body.strip("\n"))
+    if conflicts: rec = append_to_section(rec, "From NOTES.md", "\n".join(conflicts))
+    return rec
+
+def legacy_capture(text, kind, name, index=None):
+    """`done/<file>` of the original note of a legacy project folder whose NOTES.md is `text`: looked up under the
+    folder's own path and under the earlier paths its ## Moved names, but only ones with the same folder name (a move
+    may add a suffix), by its promote date (pick_capture). None if it can't be told."""
+    earlier = [k for k in MOVED_FROM.findall(section_body(text, "Moved"))
+               if re.fullmatch(re.escape(k.rsplit("/", 1)[-1]) + r"(?:_abandoned)?(?:-\d+)?", name)]
+    return pick_capture(capture_index() if index is None else index, [f"{kind}/{name}"] + earlier, field(text, "promoted"))
+
+def with_migration(msg, tx, where=None):
+    """A board action's message, plus a sentence when it was the project's first write since 2.15 (migrate_folder ran).
+    `where`: the folder's path now, when the action moved it."""
+    if not tx.migrated: return msg
+    rel, _, left = tx.migrated[0]; rel = where or rel
+    return (msg.rstrip(".") + ". Its board data moved out of NOTES.md into RawNotes/projects/: commit the trimmed "
+            f"{rel}/NOTES.md yourself" + (f", after reading what it still has ({', '.join(left)})" if left else "") + ".")
+
+def board_open(tx, path):
+    """(record path, text) of project folder `path`'s record, to change and then write back with board_save. With no
+    record yet it is made: from the legacy fields in NOTES.md (migrate_folder: NOTES.md is trimmed in the same change,
+    so one undo puts both back), or empty (just the title) for a folder whose NOTES.md has none, or that has none."""
+    rp = _stored(record_of(path))  # a symlinked records folder is refused here, before anything is written
+    rec = read_note(rp)[0] if os.path.lexists(rp) else None
+    got = migrate_folder(tx, path, record=rec)  # a NOTES.md that still holds board data is cleaned even with a record
+    if got: return rp, got[0]
+    if rec is not None: return rp, rec
+    title = os.path.basename(path)
+    try:
+        nf = notes_file(path)
+        if os.path.isfile(nf) and not os.path.islink(nf): title = title_of(read_note(nf)[0], title)
+    except OSError: pass
+    return rp, f"# {title}\n"
+
+def board_save(tx, rp, text):
+    tx.ensure_dir(os.path.dirname(rp)); tx.write(rp, text)
+
 # ---- close out: where a finished project folder goes, and what points at it first (depcheck, read-only) ----
 DEPS = None  # where the dependency check looks: a depcheck.Sources (tests give fake roots); None = this machine
 SYNC_APPS = "sync-apps"  # run after a folder moves (or moves back) so Obsidian's Apps/ links follow it; best effort
@@ -431,20 +704,18 @@ CLOSE_DEST = {"maintained": ("maintained", ""), "archive": ("archive", ""), "aba
 
 def dep_sources(): return DEPS or depcheck.Sources.default()
 
-def unique_dir(path):
-    """`path`, or `path`-2, -3 … if the name is taken (no extension splitting: folder names may contain dots)."""
-    n = 2; out = path
-    while os.path.lexists(out): out = f"{path}-{n}"; n += 1
-    return out
-
 def close_suggestion(path):
     """Maintained for a folder with a GitHub origin (a live tool that still gets fixes), else Archive (a one-off,
     often just a NOTES.md)."""
     return "maintained" if github_state(path)["repo"] else "archive"
 
 def close_target(path, outcome):
+    """Where a close out moves the folder: <base>/<name><suffix>, or -2, -3 … if that folder, or a board record by
+    that name, is taken."""
     base, suffix = CLOSE_DEST[outcome]
-    return unique_dir(os.path.join(PROJECTS, base, os.path.basename(path) + suffix))
+    want = os.path.join(PROJECTS, base, os.path.basename(path) + suffix); out = want; n = 2
+    while os.path.lexists(out) or os.path.lexists(record_of(out)): out = f"{want}-{n}"; n += 1
+    return out
 
 def project_deps(name, kind=None, to=None, local=True):
     """GET /api/project/deps: what points at a project folder (blockers and to-dos, each with its fix), for a move to
@@ -583,11 +854,10 @@ def has_skeleton_root(roots):
     return any(SKELETON_SUBJECT.fullmatch(r) for r in roots)
 
 def _promoted_days(path):
-    """Days since the project's NOTES.md says it was promoted, None if it doesn't say (or the date is unreadable)."""
-    try:
-        with open(notes_file(path), "rb") as fh: d = field(to_lf(fh.read(4000).decode("utf-8", "replace")), "promoted")
-        return (today() - dt.date.fromisoformat(d)).days
-    except (OSError, ValueError): return None
+    """Days since the project's board record (else its NOTES.md) says it was promoted, None if it doesn't say (or the
+    date is unreadable)."""
+    try: return (today() - dt.date.fromisoformat(field(board_text(path), "promoted"))).days
+    except ValueError: return None
 
 def github_state(path, fresh=False):
     """Is this project on GitHub? git: has a repo; origin: it has an `origin` remote (GitHub or not); repo: 'owner/name' of a GitHub origin; pushed: that remote has
@@ -1244,7 +1514,7 @@ class Tx:
     """One change to the files, applied step by step. Each step that succeeds is recorded, so the whole change can be
     rolled back if a later step fails, or undone later. Every path must be a real (non-symlink) path inside the notes
     folder or the projects root; a write replaces the file atomically and keeps its permissions."""
-    def __init__(self, label=""): self.label, self.ops, self.select, self.logs = label, [], None, []
+    def __init__(self, label=""): self.label, self.ops, self.select, self.logs, self.migrated = label, [], None, [], []
     def log(self, msg): self.logs.append(msg)  # written to triage.log only once the whole change has gone through
     def write(self, path, text, eol="\n"):
         path = _stored(path)
@@ -1684,7 +1954,7 @@ def _act(req, tx):
     dest_dir = os.path.join(PROJECTS, dest)
     tx.ensure_dir(dest_dir); proj = None
     if action == "promote" and DESTS[dest] == "folder":
-        proj = unique(os.path.join(dest_dir, slug)); tx.mkdir(proj)
+        proj = unique_project(dest_dir, slug); tx.mkdir(proj)
         target = os.path.join(proj, "NOTES.md")
     else:
         target = unique(os.path.join(dest_dir, slug + ".md"))
@@ -1704,10 +1974,10 @@ def _act(req, tx):
             f"- definition of done: {note}\n"
             "- first step:\n" + ("- ship / stop check-in: on the due date, either ship it or kill it\n" if due else
                                  "- check-in: when done means is met, mark it shipped; if it stalls, kill it\n"))
-    if proj:
-        copy = set_field(copy, "github", "private")  # intended visibility; going public is gopublic's job
+    if proj:  # NOTES.md gets the plan only; the board data and the link to the original note go to the board record
         pslug = os.path.basename(proj)
-        write_skeleton(tx, dest, proj, {"title": title, "slug": pslug, "done": note, "due": due or "", "today": t, "note": copy}, eol)
+        write_skeleton(tx, dest, proj, {"title": title, "slug": pslug, "done": note, "due": due or "", "today": t,
+                                        "note": plan_notes(title, note, due)}, eol)
         warning = tx.gitinit(proj, f"Start {pslug} (promoted from RawNotes)")
     else: tx.write(target, copy, eol)
     rel = os.path.relpath(target, PROJECTS)
@@ -1716,9 +1986,25 @@ def _act(req, tx):
     text = append_outcome(text, f"**Promoted {t}** -> `../{rel}`" + (f" ({note})" if note and action == 'reference' else ""))
     tx.write(src, text, eol)
     dst = to_done(src, tx); tx.log(f"{'durable' if action == 'reference' else action} {fname} -> {rel}; capture -> {dst}")
+    if proj:
+        fields = [("status", "promoted"), ("promoted", t)] + ([("due", due)] if due else []) + [("github", "private")]  # github: intended visibility; going public is gopublic's job
+        board_save(tx, _stored(record_of(proj)), record_text(title, fields, {"Capture": capture_line(title, "done/" + os.path.basename(dst))}))
     verb = "Promoted" if action == "promote" else "Filed"
     if warning: tx.log(f"warning {fname}: {warning}")  # not "promote …": Pulse counts those lines as decisions
     return {"ok": True, "msg": f"{verb} “{title}” → {rel}", "target": rel, "label": f"{action} “{title}”", **({"warning": warning} if warning else {})}
+
+def unique_project(dest_dir, slug):
+    """A new project folder's path: `slug`, or slug-2, -3 … if that folder, or a board record by that name, is taken."""
+    want = os.path.join(dest_dir, slug); out = want; n = 2
+    while os.path.lexists(out) or os.path.lexists(record_of(out)): out = f"{want}-{n}"; n += 1
+    return out
+
+def plan_notes(title, done, due):
+    """A promoted folder's NOTES.md: the title and the plan (done means, first step, the check-in), no dates and no
+    copy of the original note. It is tracked in the project's repo, which may go public."""
+    check = ("- ship / stop check-in: on the ship-by date, either ship it or kill it" if due else
+             "- check-in: when done means is met, mark it shipped; if it stalls, kill it")
+    return f"# {title}\n\n## Plan\n\n- definition of done: {done}\n- first step:\n{check}\n"
 
 SKELETONS = os.path.join(HERE, "starter", "skeletons")  # starter/skeletons/<dest>/: the files Promote writes into a new project folder
 SKELETON_VAR = re.compile(r"\{\{(title|slug|done|due|today|note)\}\}")
@@ -1938,8 +2224,9 @@ def unpushed_work(path):
 
 def times(n): return {1: "once", 2: "twice"}.get(n, f"{n} times")
 
-def _status_edit(text, req, name):
-    """The new text, label and message for a project status action (shipped / extend / kill)."""
+def _status_edit(text, req, name, pushed_to="Plan"):
+    """The new text, label and message for a project status action (shipped / extend / kill), on a board record or a
+    legacy project file. A push of the ship-by date is noted under `pushed_to` (a record's ## Extensions)."""
     t = today().isoformat(); action = req.get("action")
     if action == "shipped":
         return set_field(set_field(set_field(text, "status", "shipped"), "shipped", t), "closed", t), f"ship {name}", f"Shipped {name} 🎉"
@@ -1957,7 +2244,7 @@ def _status_edit(text, req, name):
         try: base = max(dt.date.fromisoformat(old), today())
         except ValueError: base = today()
         due = (base + dt.timedelta(days=days)).isoformat()
-        text = append_to_section(set_field(set_field(text, "due", due), "extensions", str(done + 1)), "Plan",
+        text = append_to_section(set_field(set_field(text, "due", due), "extensions", str(done + 1)), pushed_to,
                                  f"- pushed {old} → {due} ({t}): {' '.join(why.split())}")
         return text, f"push {name} to {due}", f"{name}: ship by {due}"
     if action == "kill":
@@ -1984,10 +2271,17 @@ def project_status(req, local=True):
     with mutation() as tx:
         if not isinstance(rel, str) or rel not in {x["path"] for x in inflight()}: raise ValueError("unknown project file")
         path = os.path.join(PROJECTS, rel)
-        text, eol = read_note(path)
         name = rel.split("/")[1] if rel.count("/") >= 2 else os.path.basename(rel)[:-3]
-        text, tx.label, msg = _status_edit(text, req, name)
-        tx.write(path, text, eol)
+        folder = board_folder(rel)
+        if folder:  # a project folder's NOTES.md: the change goes to its board record (made from NOTES.md if need be)
+            rp, text = board_open(tx, folder)
+            text, tx.label, msg = _status_edit(text, req, name, EXT_SECTION)
+            board_save(tx, rp, text)
+        else:  # a single-file project (the old flat layout), or another promoted file in a folder: edited in place
+            text, eol = read_note(path)
+            text, tx.label, msg = _status_edit(text, req, name)
+            tx.write(path, text, eol)
+        msg = with_migration(msg, tx)
     _log(f"project {req.get('action')} {rel}")
     return {"ok": True, "msg": msg}
 
@@ -1998,6 +2292,17 @@ SYNC_TIMEOUT = 60  # seconds sync-apps may take
 class Blocked(ValueError):
     """A move refused because something points at the folder. `payload` ({blockers, todos}) goes into the 400 answer."""
     def __init__(self, msg, payload): super().__init__(msg); self.payload = payload
+
+def board_folder(rel):
+    """The project folder whose board data the board-listed path `rel` (<kind>/<folder>/NOTES.md) stands for, or None
+    (a flat file, another file in a folder). A symlinked folder is refused, as for every write."""
+    parts = rel.split("/")
+    if len(parts) != 3 or parts[0] not in RECORD_KINDS or parts[2].lower() != "notes.md": return None
+    folder = os.path.join(PROJECTS, parts[0], parts[1])
+    if not os.path.isdir(folder): return None
+    try: safefs.ensure_inside([PROJECTS], folder)
+    except ValueError: raise ValueError(f"“{parts[1]}” is a symlink: Triage only changes real folders inside Projects.")
+    return folder
 
 def _folder_of(req):
     """(absolute folder, kind, project file or None) when a status request is about a project folder on the board:
@@ -2042,20 +2347,27 @@ def close_project(req, folder=None, local=True):
     with mutation() as tx:
         path, kind = project_dir(name, kind, write=True)  # again under the lock: it may have moved since
         if file and os.path.relpath(file, PROJECTS) not in {x["path"] for x in inflight()}: raise ValueError("unknown project file")
-        target = file or notes_file(path)
+        # the board record, unless the board listed another promoted file in the folder (legacy): that one is edited in place
+        target = None if not file or os.path.basename(file).lower() == "notes.md" else file
         require_github_to_close(path, kind, outcome)  # here, under the lock: every ship/close of a folder passes this way
         if outcome == "next": res["msg"] = _next_round(tx, path, kind, name, target, done, due)
         else: res.update(_close_and_move(tx, req, path, kind, name, target, action, outcome))
+        res["msg"] = with_migration(res["msg"], tx, res.get("moved_to"))
     if res.get("moved_to"): res["sync_apps"] = run_sync_apps()
     return res
 
 def _next_round(tx, path, kind, name, target, done, due):
-    t = today().isoformat(); old_done = definition_of_done(path)["text"]
+    """Another round in place. The new done means goes where the project keeps it (NOTES.md's Plan, made if missing):
+    that is project-facing. Everything else (status, dates, the finished round under ## Rounds) goes to the board
+    record, or to `target` (a legacy promoted file other than NOTES.md)."""
+    t = today().isoformat(); rp = None
+    if target is None: rp, text = board_open(tx, path); eol = "\n"  # first: a migration trims NOTES.md before done means is found
+    old_done = definition_of_done(path)["text"]
     dfile, dlines, deol = _with_done(path, name, done, find_done(path))
     if dfile == target: text, eol = "\n".join(dlines), deol
     else:
         tx.write(dfile, deol.join(dlines))
-        text, eol = read_note(target) if os.path.exists(target) else (f"# {name}\n", "\n")
+        if rp is None: text, eol = read_note(target) if os.path.exists(target) else (f"# {name}\n", "\n")
     promoted, old_due, ext = field(text, "promoted"), field(text, "due"), _count(field(text, "extensions"))
     text = _status_edit(text, {"action": "shipped"}, name)[0]  # the same checks and fields as any ship, then reopened
     text = set_field(set_field(set_field(text, "status", "promoted"), "promoted", t), "extensions", "0")
@@ -2063,12 +2375,14 @@ def _next_round(tx, path, kind, name, target, done, due):
     text = set_field(text, "due", due) if due else drop_field(text, "due")
     clock = f" (ship by {old_due}" + (f", pushed {ext}×" if ext else "") + ")" if old_due else ""
     text = append_to_section(text, "Rounds", f"- {promoted or '?'} → shipped {t}{clock}. Done means: {old_done or '(none written)'}")
-    tx.write(target, text, eol)
+    if rp: board_save(tx, rp, text)
+    else: tx.write(target, text, eol)
     tx.label = f"next round of {name}"; tx.log(f"project next {kind}/{name} due {due or 'open-ended'}")
     return f"Shipped {name} 🎉 Next round" + (f" ships by {due}" if due else " is open-ended")
 
-MOVED_TODO = {  # what ## Moved says for each to-do: no absolute path (NOTES.md is tracked in the project's own repo,
-    # which may be public); the exact commands go only to the toast and the panel, which stay on this machine
+MOVED_TODO = {  # what ## Moved says for each to-do: no absolute path (it is written to the board record, or for a legacy
+    # promoted file to that file, which a project's own repo may track); the exact commands go only to the toast and the
+    # panel, which stay on this machine
     "agent-memory": "move it in `~/.claude/projects/` to the key of its new path (the full path with every `/` as "
                     "`-`), or merge the two by hand if that one exists already; the close-out toast showed the exact command",
     "t3": "Point the T3 Code project for this folder at its new place",
@@ -2089,7 +2403,12 @@ def blocked_message(head, blockers):
             + "\n".join(f"- {b['where']}: {(b['detail'].splitlines() or [''])[0]} → {b['fix']}" for b in blockers))
 
 def _close_and_move(tx, req, path, kind, name, target, action, outcome):
-    text, eol = read_note(target) if os.path.exists(target) else (f"# {name}\n", "\n")
+    """Shipped or dead, then the folder moves. The status, dates, kill reason and ## Moved go to the board record
+    (made now if need be, so a folder never promoted gets one and nothing is written into it), which moves with the
+    folder in the same change; or to `target`, a legacy promoted file other than NOTES.md, which moves inside it."""
+    if target is None: rp, text = board_open(tx, path); eol = "\n"
+    else: rp = None; text, eol = read_note(target) if os.path.exists(target) else (f"# {name}\n", "\n")
+    carry = rp or record_file(path)  # a record the folder already has moves with it, whichever file was closed out
     text, label, msg = _status_edit(text, {**req, "action": action}, name)
     dest = close_target(path, outcome)
     found = depcheck.check(path, dep_sources(), dest)
@@ -2097,12 +2416,107 @@ def _close_and_move(tx, req, path, kind, name, target, action, outcome):
     if blockers: raise Blocked(blocked_message(f"Can't move {name}", blockers), found)
     old, new = f"{kind}/{name}", os.path.relpath(dest, PROJECTS)
     text = append_to_section(text, "Moved", _moved_lines(today().isoformat(), old, new, todos))
-    tx.write(target, text, eol)
+    if rp: board_save(tx, rp, text)
+    else: tx.write(target, text, eol)
     tx.ensure_dir(os.path.dirname(dest))
     tx.movedir(path, dest)
+    if carry:  # the record follows the folder; undo moves both back
+        new_rp = _stored(record_of(dest)); tx.ensure_dir(os.path.dirname(new_rp)); tx.move(carry, new_rp)
     tx.label = f"{'kill' if action == 'kill' else outcome} {name}"
     tx.log(f"project close {old} -> {new}")
     return {"msg": f"{msg} → {new}", "moved_to": new, "todos": todos}
+
+# ---- migrate-board-data: every legacy NOTES.md at once; and brief: what an agent needs that NOTES.md no longer has ----
+def legacy_projects():
+    """[(kind, name, folder)] of every project folder (the board's, and those in maintained/ and archive/) whose NOTES.md
+    still holds board data, whether or not it also has a board record (a record made by hand, or left over)."""
+    out = []
+    for kind in RECORD_KINDS:
+        base = os.path.join(PROJECTS, kind)
+        if not os.path.isdir(base): continue
+        for name in sorted(os.listdir(base), key=str.casefold):
+            full = os.path.join(base, name)
+            if name.startswith(".") or not os.path.isdir(full) or is_worktree(full): continue  # a record doesn't excuse a NOTES.md
+            if kind in PROJECT_KINDS and not on_board(full, kind): continue
+            def build(_, full=full):
+                try: return has_legacy(_head_of(notes_file(full), CLOSED_READ))
+                except OSError: return False
+            try:
+                if _proj_cache.get(("legacy", full), [notes_file(full), record_of(full)], build): out.append((kind, name, full))
+            except OSError: continue
+    return out
+
+def legacy_board():
+    """`<kind>/<folder>` of each project whose NOTES.md still holds board data (Pulse offers to move it)."""
+    with _lock.read(): return [f"{k}/{n}" for k, n, _ in legacy_projects()]
+
+def repo_public(repo):
+    """Is GitHub repo `owner/name` public? None when GitHub can't say (no gh, signed out, offline, not visible). The
+    sign-in is checked first (cached), so a signed-out gh doesn't cost a timeout per repo."""
+    if github_status()["state"] != "signed_in": return None
+    try: d = gh_rest(f"repos/{repo}")
+    except (RuntimeError, ValueError): return None
+    return (not d["private"]) if isinstance(d, dict) and isinstance(d.get("private"), bool) else None
+
+MIGRATE_NOTE = ("The app never commits in a project's repo: commit each trimmed NOTES.md yourself. The old board data "
+                "is still in each repo's git history; rewriting that (for example with git filter-repo) is up to you.")
+
+def migrate_board_data():
+    """POST /api/migrate-board-data: move the board data out of every legacy NOTES.md (migrate_folder) into board
+    records, as one undo step. A symlinked folder is skipped and listed. The report says what moved from where, and,
+    after the lock is released, which of the repos are on GitHub and public (their history already has the old data)."""
+    with mutation("move board data out of project repos") as tx:
+        index = capture_index(); moved, skipped = [], []
+        for kind, name, full in legacy_projects():
+            try: safefs.ensure_inside([PROJECTS], full); safefs.ensure_inside([PROJECTS], notes_file(full)); rp = _stored(record_of(full))
+            except ValueError: skipped.append({"path": f"{kind}/{name}", "why": "a symlink (the folder, its NOTES.md or its record): Triage only writes real paths"}); continue
+            got = migrate_folder(tx, full, index, record=read_note(rp)[0] if os.path.lexists(rp) else None)
+            if not got: continue
+            board_save(tx, rp, got[0]); moved.append({"path": f"{kind}/{name}", "moved": got[1], "kept": got[2], "folder": full})
+            tx.log(f"migrate-board-data {kind}/{name}: {', '.join(got[1])}")
+        n = len(moved); tx.label = f"move board data out of {n} project{'' if n == 1 else 's'}"
+    for m in moved:
+        repo = github_state(m.pop("folder"))["repo"]
+        m.update(repo=repo, public=repo_public(repo) if repo else False)
+    if not moved:
+        msg = (f"Nothing was moved: {len(skipped)} skipped (symlinks; move their board data by hand): {', '.join(x['path'] for x in skipped)}."
+               if skipped else "No project's NOTES.md holds board data: nothing to move.")
+        return {"ok": True, "msg": msg, "migrated": [], "skipped": skipped}
+    public = [m["repo"] for m in moved if m["public"]]; kept = [f"{m['path']} ({', '.join(m['kept'])})" for m in moved if m["kept"]]
+    msg = (f"Moved the board data of {n} project{'' if n == 1 else 's'} out of NOTES.md into RawNotes/projects/. {MIGRATE_NOTE}"
+           + (f" Public on GitHub, so their history already shows it: {', '.join(public)}." if public else "")
+           + (f" Read these NOTES.md before you commit: they still hold more than the plan (your own text, or a copy of "
+              f"the original note the app couldn't match to one in done/): {'; '.join(kept)}." if kept else ""))
+    return {"ok": True, "msg": msg, "migrated": moved, "skipped": skipped, "public": public, "note": MIGRATE_NOTE}
+
+def project_brief(name, kind=None):
+    """GET /api/brief: the original note a project was promoted from (it stays in RawNotes) and its plan, for an agent
+    working in the project (a worktree included) through `rawtriage brief`. Found by folder name in any project kind,
+    maintained/ or archive/ (`kind` when the name is in more than one). The answer holds note text, never a path."""
+    if not isinstance(name, str) or not name or name.startswith(".") or "/" in name or os.sep in name or "\0" in name: raise ValueError("unknown project")
+    if kind and kind not in RECORD_KINDS: raise ValueError("unknown kind")
+    with _lock.read():
+        hits = []
+        for k in [kind] if kind else RECORD_KINDS:
+            p = os.path.join(PROJECTS, k, name)
+            if os.path.isdir(p) and not is_worktree(p) and (k not in PROJECT_KINDS or on_board(p, k)): hits.append((k, p))
+        if not hits: raise ValueError(f"no project called “{name}”")
+        if len(hits) > 1: raise ValueError(f"“{name}” is in {', '.join(k for k, _ in hits)}: say which (--kind)")
+        k, path = hits[0]; rec = record_file(path)
+        try: nf = notes_file(path)
+        except OSError: nf = ""
+        real = os.path.isfile(nf) and not os.path.islink(nf)  # a NOTES.md that is a symlink is never read here
+        board = read_note(rec)[0] if rec else board_text(path, CLOSED_READ) if real else ""
+        cap = capture_of(board) if rec else legacy_capture(board, k, name)
+        capture = None
+        for rel in ((cap, os.path.basename(cap)) if cap else ()):  # in done/, or restored to the Inbox since
+            try: capture = read_note(safe_note(rel))[0]; break
+            except (OSError, ValueError): continue
+        notes = read_note(nf)[0] if real else ""
+        done = definition_of_done(path)
+        if not rec and has_legacy(notes): notes = split_legacy(notes, capture)[0]  # the plan as a migration would leave it
+    return {"name": name, "kind": k, "title": title_of(board or notes, name), "status": field(board, "status"),
+            "due": iso_day(field(board, "due")), "done": done["text"], "plan": section_body(notes, "Plan"), "capture": capture}
 
 def run_sync_apps():
     """Re-run obsidian-sync-apps after a folder moved (or moved back), so Obsidian's Apps/ links follow it. Best effort:
@@ -2190,7 +2604,7 @@ def stats(weeks=8):
     median = (ages[mid] if len(ages) % 2 else (ages[mid - 1] + ages[mid]) / 2) if ages else None
     return {"weeks": bins, "median_wait": median, "oldest": ages[-1] if ages else None, "live": len(notes["live"]),
             "expired": sum(1 for n in notes["live"] if n["expired"]), "stale": sum(1 for n in notes["live"] if n["stale"]),
-            "undo": [u["label"] for u in reversed(list(_undo))]}
+            "undo": [u["label"] for u in reversed(list(_undo))], "legacy_board": legacy_board()}
 
 
 
@@ -2200,7 +2614,8 @@ def open_target(req):
     if req.get("path") is not None:
         rel = req.get("path")
         if not isinstance(rel, str) or rel not in {x["path"] for x in inflight()}: raise ValueError("that is not a project the board knows")
-        return safefs.ensure_inside([PROJECTS], os.path.join(PROJECTS, rel))
+        p = safefs.ensure_inside([PROJECTS], os.path.join(PROJECTS, rel))
+        return p if os.path.exists(p) else os.path.dirname(p)  # a folder read from its board record may have no NOTES.md
     path, _ = project_dir(req.get("name"), req.get("kind"))
     return safefs.ensure_inside([PROJECTS], path)
 
@@ -2358,6 +2773,7 @@ class H(BaseHTTPRequestHandler):
             if u.path == "/api/reference/unindexed": return self._send(200, reference_unindexed())
             if u.path == "/api/stats": return self._send(200, stats())
             if u.path == "/api/check": return self._send(200, check_headers())
+            if u.path == "/api/brief": return self._send(200, project_brief(q.get("name", [""])[0], q.get("kind", [""])[0]))
             if FONT_RE.match(u.path):
                 p = os.path.join(HERE, u.path.lstrip("/"))
                 if not os.path.isfile(p): return self._send(404, {"error": "not found"})
@@ -2395,6 +2811,9 @@ class H(BaseHTTPRequestHandler):
                 if not self._this_machine(): raise ValueError("The notes folder can only be set up from the machine running the server.")
                 return self._send(200, setup_notes(req))
             if path == "/api/undo": return self._send(200, undo(self._this_machine()))
+            if path == "/api/migrate-board-data":
+                if not self._this_machine(): raise ValueError("Board data can only be moved from the machine running the server (it rewrites every project's NOTES.md).")
+                return self._send(200, migrate_board_data())
             if path == "/api/done": return self._send(200, set_done(req.get("name", ""), req.get("text", ""), req.get("expected", ""), req.get("kind")))
             if path == "/api/open":
                 if not self._this_machine(): raise ValueError("Open only works from the machine running the server.")

@@ -104,7 +104,7 @@ If activity limits truncate the data, the page says so. A failed refresh can sho
 
 Choose Active, Experiment, Learning or Template, and write **done means** (required). Active, Learning and Template need a ship-by date: 3, 7, 14 or 30 days, or an exact date, defaulting to 7 days in the page. Experiments get no due date; any old due line is removed.
 
-The app makes `<destination>/<slug>/` beside the notes folder using `starter/skeletons/`: README, AGENTS.md, CLAUDE.md, .gitignore and the capture as `NOTES.md`, plus the destination's working folder (`.scratch/`, `notes/` or `template/`). It stamps promotion metadata, `github: private`, and the plan. The original records the destination and moves to `done/`.
+The app makes `<destination>/<slug>/` beside the notes folder using `starter/skeletons/`: README, AGENTS.md, CLAUDE.md, .gitignore and a `NOTES.md` holding only the plan (done means, first step, check-in), plus the destination's working folder (`.scratch/`, `notes/` or `template/`). The project's repo may go public one day, so nothing private goes into it: the status, dates, `github: private` and a link to your original note go to the project's [board record](#board-records-private-to-rawnotes) in RawNotes. The original records the destination and moves to `done/`, where it stays; agents working in the project read it with `rawtriage brief <slug>`.
 
 It also initializes git on `main` and attempts a first commit, `Start <slug> (promoted from RawNotes)`, with your normal hooks. The default requires a git-config email ending in `@users.noreply.github.com`. No git, an unsuitable identity or a refused commit produces a warning; the project still exists. The app never changes your identity. **Promotion does not create a GitHub repo or push it.**
 
@@ -140,15 +140,21 @@ Changes are validated and rolled back if a step fails. If rollback cannot finish
 
 When the notes folder belongs to a git repo, successful changes auto-commit only touched notes-folder paths, including both sides of a move. Other staged/edited files stay alone; hand edits in a touched note are included and named in the commit body. Undo creates another commit; it never rewrites history. Hooks run normally. A skipped/failed commit does not reverse the action or remove its undo step: read the toast for the reason.
 
-Project-folder changes and reference copies/index edits are not included in the notes auto-commit. Promotion's first project commit is separate. Disable auto-commit with `--no-commit` or `"autocommit": false` in config.
+Project-folder changes and reference copies/index edits are not included in the notes auto-commit. Board records are: they live in RawNotes. Promotion's first project commit is separate. Disable auto-commit with `--no-commit` or `"autocommit": false` in config.
 
 ## Working with projects
 
 Select a card again or press `Esc` to close its panel. Git facts cache for 20 seconds; **Refresh** rereads them.
 
-**Done means:** Edit/Fill in → Review change (before/after) → Confirm and save. Maximum 600 characters. Empty placeholders count as missing and show **Define done means**. Saving is refused if the definition changed on disk. To give an undated project a ship-by date, add `- due: YYYY-MM-DD` to the header of its project note, before the first `##` heading.
+**Done means:** Edit/Fill in → Review change (before/after) → Confirm and save. Maximum 600 characters. Empty placeholders count as missing and show **Define done means**. Saving is refused if the definition changed on disk. To give an undated project a ship-by date, add `- due: YYYY-MM-DD` to the header of its board record, `RawNotes/projects/<kind>/<folder>.md` (make the file if there is none: `# <folder>`, a blank line, then that line), never to its `NOTES.md`.
 
-**+7 days:** asks for a reason of at least 10 characters, records it under `## Plan`, and increments `extensions:`. The new due date is seven days after today or the existing deadline, whichever is later. Not offered for open-ended experiments or undated folders. After two extensions by default, the button reads **No more extensions**; an overdue project with no extensions left shows **Decide**.
+**+7 days:** asks for a reason of at least 10 characters, records it under `## Extensions` in the board record, and increments `extensions:` there. The new due date is seven days after today or the existing deadline, whichever is later. Not offered for open-ended experiments or undated folders. After two extensions by default, the button reads **No more extensions**; an overdue project with no extensions left shows **Decide**.
+
+### Board records (private to RawNotes)
+
+Every board action (Mark shipped, Kill, +7 days, Next round, close out) writes the project's **board record**, `RawNotes/projects/<kind>/<folder>.md`, and leaves the project folder itself untouched, so it never leaves a change to commit or trips a "clean tree" check. The one exception is the new done means of a Next round: that is the plan, so it goes in the project. The record holds the status, dates, `github:`, extensions with their reasons, rounds, moves, the kill reason and a link to the original note. It is undoable and auto-committed like any note, and a close-out move renames it with the folder. A folder that was never promoted gets one the first time you ship or kill it.
+
+Projects promoted before 2.15 keep their board data in `NOTES.md` until something moves it: the first board action on such a project does, in the same undo step, and **Pulse → Board data in project repos → Move it to RawNotes** (or `rawtriage migrate-board-data`) does it for all of them at once. Your own text in `NOTES.md` stays; sections still exactly as in the original note are dropped, since the original stays in `done/`, and the report names each `NOTES.md` that still has sections besides the plan, so you can read it before committing. The bulk move works only from the machine running the server. The app never commits in a project's repo: commit each trimmed `NOTES.md` yourself. The old data stays in the repo's git history; the report says so and names the repos that are public on GitHub.
 
 ### Close out a round or a project
 
@@ -156,14 +162,14 @@ Select a card again or press `Esc` to close its panel. Git facts cache for 20 se
 
 | Choice | Result |
 | --- | --- |
-| **Next round** | Keeps the folder, records the finished round under `## Rounds`, sets a new done means and ship-by date (experiments may stay open-ended), resets extensions |
+| **Next round** | Keeps the folder, records the finished round under `## Rounds` in the board record, sets a new done means (in the project) and ship-by date (experiments may stay open-ended), resets extensions |
 | **Maintained** | Marks shipped/closed and moves to `maintained/<name>/` |
 | **Archive** | Marks shipped/closed and moves to `archive/<name>/` |
 | **Kill** | Requires a reason, marks dead/closed and moves to `archive/<name>_abandoned/` |
 
 Maintained is suggested when there is a GitHub origin; otherwise Archive is suggested. Older folders already marked shipped/done show **Close out…**. A single-file project is marked shipped in place. Closed shows the last seven days by default, including recent moves; **Show all (N)** expands the older closed projects still in active/experiments.
 
-**What points here** checks systemd user units, running processes, git worktrees, `~/.local/bin` links/scripts and crontab entries. Any blocker refuses a move and gives a fix. Agent-memory moves and updating the T3 Code project path are to-dos: they do not block, are listed in the result and recorded under `## Moved`. You do them yourself. If available, `sync-apps` runs after a move or its undo to refresh Obsidian links; failure does not reverse the move.
+**What points here** checks systemd user units, running processes, git worktrees, `~/.local/bin` links/scripts and crontab entries. Any blocker refuses a move and gives a fix. Agent-memory moves and updating the T3 Code project path are to-dos: they do not block, are listed in the result and recorded under `## Moved` in the board record. You do them yourself. If available, `sync-apps` runs after a move or its undo to refresh Obsidian links; failure does not reverse the move.
 
 Moves use a rename on the same filesystem. Undo checks the folder for changed/added/removed contents (excluding `.git` internals), a reused old name, and new dependencies. It lists reverse to-dos too. Folders over 200,000 entries or partly unreadable may move but cannot be undone by the app; the close-out form warns before you submit. Folder moves and their undo require localhost.
 
@@ -201,6 +207,8 @@ rawtriage project extend dns-check --reason "Need another measured sample"
 rawtriage project close dns-check --outcome next --done "Verify the fix on Wi-Fi" --due-days 7
 rawtriage project close dns-check --outcome maintained
 rawtriage project kill dns-check --reason "No longer needed"
+rawtriage brief dns-check                 # the original note and the plan, for an agent in the project
+rawtriage migrate-board-data              # move pre-2.15 board data out of every NOTES.md
 rawtriage undo
 ```
 

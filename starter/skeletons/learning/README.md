@@ -1,6 +1,6 @@
 # {{title}}
 
-- **Status:** studying, finish by {{due}} (promoted {{today}})
+- **Status:** studying
 - **Stack:** study notes (markdown in `notes/`)
 - **Run it:** nothing to run; read `notes/`
 - **Repo:** private, local only so far

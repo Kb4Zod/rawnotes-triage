@@ -6,13 +6,13 @@ reloaded page fetch projects, GitHub status and activity with `refresh=1`.
 
 **Blocked by:** None
 
-**Status:** done (v2.15)
+**Status:** done (v2.16)
 
-- [ ] Rail bottom row has a Reload button; phone header has a labelled reload icon button
-- [ ] Pressing it reloads the page; the new page requests `/api/projects?refresh=1` (when on or opening Projects), `/api/github?refresh=1`, `/api/activity?refresh=1`
-- [ ] The flag is used once: a later Ctrl-R behaves as before
-- [ ] Typed-in decision form: asks first; Cancel changes nothing
-- [ ] Palette "Refresh everything" runs the same reload
-- [ ] Keys dialog mentions Ctrl R
-- [ ] VERSION 2.15, CHANGELOG entry, USER-GUIDE mention
-- [ ] Browser tests; `python3 -m unittest` passes
+- [x] Rail bottom row has a Reload button; phone header has a labelled reload icon button
+- [x] Pressing it reloads the page; the new page requests `/api/projects?refresh=1` (when on or opening Projects), `/api/github?refresh=1`, `/api/activity?refresh=1`
+- [x] The flag is used once: a later Ctrl-R behaves as before
+- [x] Typed-in decision form: asks first; Cancel changes nothing
+- [x] Palette "Refresh everything" runs the same reload
+- [x] Keys dialog mentions Ctrl R
+- [x] VERSION 2.16, CHANGELOG entry, USER-GUIDE mention
+- [x] Browser tests; `python3 -m unittest` passes

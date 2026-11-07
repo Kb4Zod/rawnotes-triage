@@ -70,10 +70,15 @@ class Outcomes(CloseBase):
     def test_archive_moves_the_folder_and_writes_shipped_closed_and_moved(self):
         before = self.snapshot(); mem = self.memory(); t = server.today().isoformat()
         r = self.close()
-        self.assertEqual((r["moved_to"], r["msg"]), ("archive/demo", "Shipped demo 🎉 → archive/demo"))
+        self.assertEqual((r["moved_to"], r["msg"]), ("archive/demo", "Shipped demo 🎉 → archive/demo. Its board data moved out of "
+                                                     "NOTES.md into RawNotes/projects/: commit the trimmed archive/demo/NOTES.md yourself."))
         self.assertFalse(os.path.exists(self.demo))
-        text = self.read("archive", "demo", "NOTES.md")
+        text = self.record("archive", "demo")  # the board record moved with the folder
+        self.assertIsNone(self.record("active", "demo"))
         self.assertEqual((server.field(text, "status"), server.field(text, "closed"), server.field(text, "shipped")), ("shipped", t, t))
+        notes = self.read("archive", "demo", "NOTES.md")  # migrated on this first write: the board data left it
+        self.assertEqual(notes, "# Demo\n\n## Plan\n\n- definition of done: It ships.\n")
+        self.assertIn("- pushed 2026-11-24 → 2026-12-01 (2026-10-20): parts late", text.split("## Extensions", 1)[1])
         new_mem = os.path.join(self.sources.claude_projects, depcheck.claude_key(os.path.join(self.tmp, "archive", "demo")))
         moved = text.split("## Moved", 1)[1]
         self.assertIn(f"- {t}: moved from `active/demo/` to `archive/demo/`. Left to do by hand:", moved)
@@ -98,7 +103,7 @@ class Outcomes(CloseBase):
         wt = os.path.join(self.tmp, "wt"); subprocess.run(g + ["worktree", "add", "-q", wt], check=True)
         shutil.rmtree(wt)  # a stale worktree record: a to-do, not a blocker
         mem = self.memory(); os.makedirs(os.path.join(self.demo, "sub")); self.memory_of(os.path.join(self.demo, "sub"))
-        r = self.close(); moved = self.read("archive", "demo", "NOTES.md").split("## Moved", 1)[1]
+        r = self.close(); moved = self.record("archive", "demo").split("## Moved", 1)[1]
         self.assertEqual(sorted(x["kind"] for x in r["todos"]), ["agent-memory", "agent-memory", "t3", "worktree"])
         self.assertEqual(moved.count("\n  - "), 4)
         for secret in (self.tmp, self.home, depcheck.claude_key(self.tmp), depcheck.claude_key(self.home),
@@ -110,7 +115,8 @@ class Outcomes(CloseBase):
         self.assertIn(f"git -C {dest} worktree prune", fixes)
         self.assertIn(f"Update any T3 Code project whose folder is {self.demo} to {dest}", fixes)
         self.post("/api/undo", {}); self.assertTrue(os.path.isdir(self.demo))
-        self.assertNotIn("## Moved", self.read("active", "demo", "NOTES.md"))
+        self.assertEqual(self.read("active", "demo", "NOTES.md"), NOTES)
+        self.assertEqual((self.record("active", "demo"), self.record("archive", "demo")), (None, None))
 
     def test_maintained_is_suggested_for_a_github_origin_and_moves_there(self):
         subprocess.run(["git", "init", "-q", "-b", "main", self.demo], check=True)
@@ -133,20 +139,22 @@ class Outcomes(CloseBase):
         os.makedirs(os.path.join(self.tmp, "archive", "demo"))  # the plain name being taken does not matter
         r = self.post("/api/project/status", {"name": "demo", "action": "kill", "note": "Nobody needs it."})
         self.assertEqual(r["moved_to"], "archive/demo_abandoned"); self.assertIn("Killed demo → archive/demo_abandoned", r["msg"])
-        text = self.read("archive", "demo_abandoned", "NOTES.md")
+        text = self.record("archive", "demo_abandoned")
         self.assertEqual(server.field(text, "status"), "dead"); self.assertIn("Nobody needs it.", text.split("## Outcome", 1)[1])
+        self.assertNotIn("Nobody needs it.", self.read("archive", "demo_abandoned", "NOTES.md"))
         self.post("/api/undo", {}); self.assertEqual(self.read("active", "demo", "NOTES.md"), NOTES)
 
     def test_next_round_stays_and_records_the_finished_round(self):
         t = server.today().isoformat()
         r = self.close("next", done="Round two: it runs on the phone.", due_days=10)
         due = (server.today() + server.dt.timedelta(days=10)).isoformat()
-        self.assertNotIn("moved_to", r); self.assertEqual(r["msg"], f"Shipped demo 🎉 Next round ships by {due}")
-        text = self.read("active", "demo", "NOTES.md")
+        self.assertNotIn("moved_to", r); self.assertTrue(r["msg"].startswith(f"Shipped demo 🎉 Next round ships by {due}. Its board data moved"))
+        text = self.record("active", "demo")
         self.assertEqual([server.field(text, k) for k in ("status", "promoted", "due", "extensions", "closed", "shipped")],
                          ["promoted", t, due, "0", "", ""])
-        self.assertIn("- definition of done: Round two: it runs on the phone.", text); self.assertNotIn("definition of done: It ships.", text)
         self.assertIn(f"## Rounds\n\n- 2026-10-01 → shipped {t} (ship by 2026-12-01, pushed 1×). Done means: It ships.", text)
+        notes = self.read("active", "demo", "NOTES.md")  # done means stays in the project: it is the plan
+        self.assertEqual(notes, "# Demo\n\n## Plan\n\n- definition of done: Round two: it runs on the phone.\n")
         self.assertEqual(self.get("/api/project?name=demo&kind=active")["done"]["text"], "Round two: it runs on the phone.")
         self.post("/api/undo", {}); self.assertEqual(self.read("active", "demo", "NOTES.md"), NOTES)
 
@@ -159,15 +167,17 @@ class Outcomes(CloseBase):
         self.assertEqual(self.snapshot(), before)
         exp = self.project("spike", "experiments", "# Spike\n\n- status: promoted\n- promoted: 2026-10-01\n\n- definition of done: We know.\n")
         r = self.post("/api/project/close", {"name": "spike", "kind": "experiments", "outcome": "next", "done": "We know more."})
-        self.assertIn("open-ended", r["msg"]); self.assertEqual(server.field(open(exp + "/NOTES.md").read(), "due"), "")
+        self.assertIn("open-ended", r["msg"]); self.assertEqual(server.field(self.record("experiments", "spike"), "due"), "")
+        self.assertEqual(server.field(open(exp + "/NOTES.md").read(), "status"), "")
 
     def test_next_round_puts_done_means_where_it_was_found(self):
         with open(os.path.join(self.demo, "README.md"), "w") as fh: fh.write("# Demo\n\n## Definition of done\n\nThe old README goal.\n")
         os.remove(os.path.join(self.demo, "NOTES.md"))
         self.close("next", done="The new goal.", due_days=3)
         self.assertIn("The new goal.", self.read("active", "demo", "README.md"))
-        self.assertIn("Done means: The old README goal.", self.read("active", "demo", "NOTES.md"))
-        self.post("/api/undo", {}); self.assertFalse(os.path.exists(os.path.join(self.demo, "NOTES.md")))
+        self.assertIn("Done means: The old README goal.", self.record("active", "demo"))
+        self.assertFalse(os.path.exists(os.path.join(self.demo, "NOTES.md")))  # nothing board-side is written into the folder
+        self.post("/api/undo", {}); self.assertIsNone(self.record("active", "demo"))
         self.assertIn("The old README goal.", self.read("active", "demo", "README.md"))
 
     def test_a_single_file_project_cannot_be_closed_out(self):
@@ -245,7 +255,7 @@ class UndoMove(CloseBase):
         os.rename(self.moved, os.path.join(self.tmp, "archive", "renamed")); self.refused("no longer in archive/")
 
     def test_git_activity_inside_the_moved_repo_does_not_block_undo(self):
-        server._undo.clear(); shutil.rmtree(os.path.join(self.tmp, "archive"))
+        server._undo.clear(); shutil.rmtree(os.path.join(self.tmp, "archive")); shutil.rmtree(os.path.join(self.notes, "projects"))
         shutil.rmtree(self.demo, ignore_errors=True); self.demo = self.project("demo", notes=NOTES)
         subprocess.run(["git", "init", "-q", "-b", "main", self.demo], check=True)
         subprocess.run(["git", "-C", self.demo, "add", "-A"], check=True); subprocess.run(["git", "-C", self.demo, "commit", "-qm", "x"], check=True)

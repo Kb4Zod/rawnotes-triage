@@ -1,6 +1,6 @@
 # {{title}}
 
-- **Status:** experiment, open-ended (started {{today}})
+- **Status:** experiment, open-ended
 - **Stack:** to be decided
 - **Run it:** not runnable yet
 - **Repo:** private, local only so far
