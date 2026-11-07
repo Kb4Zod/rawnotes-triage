@@ -223,6 +223,19 @@ class Flows(BrowserCase):
         text = self.read("2026-10-15-recent.md"); self.assertIn("- status: cooking", text); self.assertIn("next step", text); self.assertIn("call the vendor", text)
         self.page.click("#tUndo"); self.settle(0.5); self.assertIn("- status: open", self.read("2026-10-15-recent.md"))
 
+    def test_pulse_moves_legacy_board_data_to_rawnotes_then_undo(self):
+        """2.15: a NOTES.md that still holds board data is listed on Pulse; one click moves it to a board record."""
+        demo = os.path.join(self.tmp, "active", "demo", "NOTES.md"); before = open(demo).read()
+        self.assertIn("- status:", before)
+        self.open("pulse"); self.page.wait("document.querySelector('#migBoard')")
+        self.assertIn("active/demo", self.text("#legacyb"))
+        self.page.click("#migBoard"); self.done_toast()
+        self.assertIn("RawNotes/projects/", self.text("#toast")); self.assertIn("active/demo", self.text("#toast"))
+        self.assertNotIn("- status:", open(demo).read()); self.assertIn("- status:", self.record("active", "demo"))
+        self.page.wait("!document.querySelector('#migBoard')")  # nothing left to move
+        self.page.click("#tUndo"); self.settle(0.5)
+        self.assertEqual((open(demo).read(), self.record("active", "demo")), (before, None))
+
     def test_expired_note_has_a_chip_a_badge_and_no_keep(self):
         with unittest.mock.patch.dict(server.LIMIT_DEFAULTS, {"inbox_limit_days": 30}):
             self.open(); self.page.wait("document.querySelector('[data-st=expired]')")

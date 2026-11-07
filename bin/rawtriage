@@ -27,6 +27,10 @@
   rawtriage project deps <name> [--to maintained|archive|abandoned] [--kind KIND]
                                      what points at the folder (blockers, and to-dos for after a move); read-only
   rawtriage project github <name> [--kind KIND]   first push: private GitHub repo + push main (this machine only)
+  rawtriage brief <name> [--kind KIND]   the original note a project was promoted from, and its plan (for agents
+                                     in the project or a worktree: NOTES.md holds only the plan)
+  rawtriage migrate-board-data       move the board data (status, dates, rounds, …) out of every project's NOTES.md
+                                     into RawNotes/projects/ (one undo step); lists what moved and which repos are public
 
 Every command goes through the running server, so a decision made here is logged, undoable in the page and counted
 in Pulse exactly like one made in the page. If the server is down it is started (the systemd unit if installed, else
@@ -73,7 +77,7 @@ class Lost(Exception):
     """The connection broke (or timed out) after a change was sent: the server may still have made it."""
 
 
-SLOW = ("/api/project/github", "/api/project/close", "/api/project/status", "/api/merge", "/api/undo")  # git, gh, a push, a folder move (or its undo: sync-apps)
+SLOW = ("/api/project/github", "/api/project/close", "/api/project/status", "/api/merge", "/api/undo", "/api/migrate-board-data")  # git, gh, a push, a folder move (or its undo: sync-apps)
 
 
 def timeout_for(path, body=None):
@@ -212,6 +216,9 @@ def make_parser():
              (("--done",), {"default": "", "help": "next round: what done means"}), (("--due",), {"help": "next round: ship-by YYYY-MM-DD"}),
              (("--due-days",), {"type": int, "help": "next round: ship-by in N days"}),
              (("--to",), {"choices": ["maintained", "archive", "abandoned"], "help": "deps: the move to check for"}))
+    add("brief", "print a project's original note (kept in RawNotes) and its plan", (("name",), {}),
+        (("--kind",), {"choices": ["active", "experiments", "learning", "templates", "maintained", "archive"]}))
+    add("migrate-board-data", "move the board data out of every project's NOTES.md into RawNotes/projects/")
     return p
 
 
@@ -300,7 +307,7 @@ def close_body(args):
 def closed_text(r):
     """The server's message, plus what is left to do by hand after a move."""
     lines = [r["msg"]]
-    if r.get("todos"): lines += ["Left to do by hand (## Moved in its NOTES.md lists them without paths):"] + [f"- {t['fix']}" for t in r["todos"]]
+    if r.get("todos"): lines += ["Left to do by hand (## Moved in its board record lists them without paths):"] + [f"- {t['fix']}" for t in r["todos"]]
     if r.get("sync_apps") == "failed": lines.append("sync-apps failed (see the server's log); run it yourself so Obsidian's Apps/ links follow.")
     return "\n".join(lines)
 
@@ -310,6 +317,22 @@ def undone_text(r):
     lines = [r["msg"]]
     if r.get("todos"): lines += ["Now that it is back, by hand:"] + [f"- {t['fix']}" for t in r["todos"]]
     if r.get("sync_apps") == "failed": lines.append("sync-apps failed (see the server's log); run it yourself so Obsidian's Apps/ links follow.")
+    return "\n".join(lines)
+
+
+def brief_text(r):
+    lines = [f"# {r['title']} ({r['kind']}/{r['name']})"]
+    lines.append(" · ".join(x for x in (r["status"] and f"status: {r['status']}", r["due"] and f"ship by {r['due']}") if x) or "no board data")
+    lines += ["", "## Plan", "", r["plan"] or (f"- definition of done: {r['done']}" if r["done"] else "(no plan in NOTES.md)")]
+    lines += ["", "## The original note", "", (r["capture"] or "(not found in RawNotes: promoted by hand, or before the link was kept)").rstrip()]
+    return "\n".join(lines)
+
+
+def migrated_text(r):
+    lines = [r["msg"]]
+    for m in r["migrated"]:
+        lines.append(f"- {m['path']}: {', '.join(m['moved'])}" + (f" (on GitHub: {m['repo']}, " + {True: "PUBLIC", False: "private", None: "visibility unknown"}[m["public"]] + ")" if m["repo"] else ""))
+    lines += [f"- skipped {s['path']}: {s['why']}" for s in r.get("skipped", [])]
     return "\n".join(lines)
 
 
@@ -348,6 +371,11 @@ def run(args):
         r = api("/api/reference/index", {"file": os.path.basename(args.file), "section": args.section, "blurb": args.blurb}); return out(args, r, r["msg"])
     if c == "undo":
         r = api("/api/undo", {}); return out(args, r, undone_text(r))
+    if c == "brief":
+        r = api(f"/api/brief?name={urllib.parse.quote(args.name)}" + (f"&kind={args.kind}" if args.kind else ""))
+        return out(args, r, brief_text(r))
+    if c == "migrate-board-data":
+        r = api("/api/migrate-board-data", {}); return out(args, r, migrated_text(r))
     if c == "project" and args.action == "deps":
         kind = folder_kind(args)
         r = api(f"/api/project/deps?name={urllib.parse.quote(args.name)}&kind={kind}" + (f"&to={args.to}" if args.to else ""))

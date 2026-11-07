@@ -2260,8 +2260,9 @@ def _next_round(tx, path, kind, name, target, done, due):
     tx.label = f"next round of {name}"; tx.log(f"project next {kind}/{name} due {due or 'open-ended'}")
     return f"Shipped {name} 🎉 Next round" + (f" ships by {due}" if due else " is open-ended")
 
-MOVED_TODO = {  # what ## Moved says for each to-do: no absolute path (NOTES.md is tracked in the project's own repo,
-    # which may be public); the exact commands go only to the toast and the panel, which stay on this machine
+MOVED_TODO = {  # what ## Moved says for each to-do: no absolute path (it is written to the board record, or for a legacy
+    # promoted file to that file, which a project's own repo may track); the exact commands go only to the toast and the
+    # panel, which stay on this machine
     "agent-memory": "move it in `~/.claude/projects/` to the key of its new path (the full path with every `/` as "
                     "`-`), or merge the two by hand if that one exists already; the close-out toast showed the exact command",
     "t3": "Point the T3 Code project for this folder at its new place",
@@ -2303,6 +2304,87 @@ def _close_and_move(tx, req, path, kind, name, target, action, outcome):
     tx.label = f"{'kill' if action == 'kill' else outcome} {name}"
     tx.log(f"project close {old} -> {new}")
     return {"msg": f"{msg} → {new}", "moved_to": new, "todos": todos}
+
+# ---- migrate-board-data: every legacy NOTES.md at once; and brief: what an agent needs that NOTES.md no longer has ----
+def legacy_projects():
+    """[(kind, name, folder)] of every project folder (the board's, and those in maintained/ and archive/) with no board
+    record whose NOTES.md still holds board data."""
+    out = []
+    for kind in RECORD_KINDS:
+        base = os.path.join(PROJECTS, kind)
+        if not os.path.isdir(base): continue
+        for name in sorted(os.listdir(base), key=str.casefold):
+            full = os.path.join(base, name)
+            if name.startswith(".") or not os.path.isdir(full) or is_worktree(full) or record_file(full): continue
+            if kind in PROJECT_KINDS and not on_board(full, kind): continue
+            try: text = _head_of(notes_file(full), CLOSED_READ)
+            except OSError: continue
+            if has_legacy(text): out.append((kind, name, full))
+    return out
+
+def legacy_board():
+    """`<kind>/<folder>` of each project whose NOTES.md still holds board data (Pulse offers to move it)."""
+    with _lock.read(): return [f"{k}/{n}" for k, n, _ in legacy_projects()]
+
+def repo_public(repo):
+    """Is GitHub repo `owner/name` public? None when GitHub can't say (no gh, signed out, offline, not visible)."""
+    try: d = gh_rest(f"repos/{repo}")
+    except (RuntimeError, ValueError): return None
+    return (not d["private"]) if isinstance(d, dict) and isinstance(d.get("private"), bool) else None
+
+MIGRATE_NOTE = ("The app never commits in a project's repo: commit each trimmed NOTES.md yourself. The old board data "
+                "is still in each repo's git history; rewriting that (for example with git filter-repo) is up to you.")
+
+def migrate_board_data():
+    """POST /api/migrate-board-data: move the board data out of every legacy NOTES.md (migrate_folder) into board
+    records, as one undo step. A symlinked folder is skipped and listed. The report says what moved from where, and,
+    after the lock is released, which of the repos are on GitHub and public (their history already has the old data)."""
+    with mutation("move board data out of project repos") as tx:
+        index = capture_index(); moved, skipped = [], []
+        for kind, name, full in legacy_projects():
+            try: safefs.ensure_inside([PROJECTS], full); safefs.ensure_inside([PROJECTS], notes_file(full))
+            except ValueError: skipped.append({"path": f"{kind}/{name}", "why": "a symlink: Triage only changes real folders inside Projects"}); continue
+            rp = _stored(record_of(full))
+            got = migrate_folder(tx, full, index)
+            if not got: continue
+            board_save(tx, rp, got[0]); moved.append({"path": f"{kind}/{name}", "moved": got[1], "folder": full})
+            tx.log(f"migrate-board-data {kind}/{name}: {', '.join(got[1])}")
+        n = len(moved); tx.label = f"move board data out of {n} project{'' if n == 1 else 's'}"
+    for m in moved:
+        repo = github_state(m.pop("folder"))["repo"]
+        m.update(repo=repo, public=repo_public(repo) if repo else False)
+    if not moved:
+        return {"ok": True, "msg": "No project's NOTES.md holds board data: nothing to move.", "migrated": [], "skipped": skipped}
+    public = [m["repo"] for m in moved if m["public"]]
+    msg = (f"Moved the board data of {n} project{'' if n == 1 else 's'} out of NOTES.md into RawNotes/projects/. {MIGRATE_NOTE}"
+           + (f" Public on GitHub, so their history already shows it: {', '.join(public)}." if public else ""))
+    return {"ok": True, "msg": msg, "migrated": moved, "skipped": skipped, "public": public, "note": MIGRATE_NOTE}
+
+def project_brief(name, kind=None):
+    """GET /api/brief: the original note a project was promoted from (it stays in RawNotes) and its plan, for an agent
+    working in the project (a worktree included) through `rawtriage brief`. Found by folder name in any project kind,
+    maintained/ or archive/ (`kind` when the name is in more than one). The answer holds note text, never a path."""
+    if not isinstance(name, str) or not name or name.startswith(".") or "/" in name or os.sep in name or "\0" in name: raise ValueError("unknown project")
+    if kind and kind not in RECORD_KINDS: raise ValueError("unknown kind")
+    with _lock.read():
+        hits = []
+        for k in [kind] if kind else RECORD_KINDS:
+            p = os.path.join(PROJECTS, k, name)
+            if os.path.isdir(p) and not is_worktree(p) and (k not in PROJECT_KINDS or on_board(p, k)): hits.append((k, p))
+        if not hits: raise ValueError(f"no project called “{name}”")
+        if len(hits) > 1: raise ValueError(f"“{name}” is in {', '.join(k for k, _ in hits)}: say which (--kind)")
+        k, path = hits[0]; rec = record_file(path)
+        board = read_note(rec)[0] if rec else board_text(path, CLOSED_READ)
+        cap = capture_of(board) if rec else capture_index().get(f"{k}/{name}")
+        capture = None
+        if cap:
+            try: capture = read_note(safe_note(cap))[0]
+            except (OSError, ValueError): capture = None
+        try: nf = notes_file(path); notes = read_note(nf)[0] if os.path.isfile(nf) else ""
+        except OSError: notes = ""
+        done = definition_of_done(path)
+    return {"name": name, "kind": k, "title": title_of(board or notes, name), "status": field(board, "status"),
+            "due": iso_day(field(board, "due")), "done": done["text"], "plan": section_body(notes, "Plan"), "capture": capture}
 
 def run_sync_apps():
     """Re-run obsidian-sync-apps after a folder moved (or moved back), so Obsidian's Apps/ links follow it. Best effort:
@@ -2390,7 +2472,7 @@ def stats(weeks=8):
     median = (ages[mid] if len(ages) % 2 else (ages[mid - 1] + ages[mid]) / 2) if ages else None
     return {"weeks": bins, "median_wait": median, "oldest": ages[-1] if ages else None, "live": len(notes["live"]),
             "expired": sum(1 for n in notes["live"] if n["expired"]), "stale": sum(1 for n in notes["live"] if n["stale"]),
-            "undo": [u["label"] for u in reversed(list(_undo))]}
+            "undo": [u["label"] for u in reversed(list(_undo))], "legacy_board": legacy_board()}
 
 
 
@@ -2559,6 +2641,7 @@ class H(BaseHTTPRequestHandler):
             if u.path == "/api/reference/unindexed": return self._send(200, reference_unindexed())
             if u.path == "/api/stats": return self._send(200, stats())
             if u.path == "/api/check": return self._send(200, check_headers())
+            if u.path == "/api/brief": return self._send(200, project_brief(q.get("name", [""])[0], q.get("kind", [""])[0]))
             if FONT_RE.match(u.path):
                 p = os.path.join(HERE, u.path.lstrip("/"))
                 if not os.path.isfile(p): return self._send(404, {"error": "not found"})
@@ -2596,6 +2679,7 @@ class H(BaseHTTPRequestHandler):
                 if not self._this_machine(): raise ValueError("The notes folder can only be set up from the machine running the server.")
                 return self._send(200, setup_notes(req))
             if path == "/api/undo": return self._send(200, undo(self._this_machine()))
+            if path == "/api/migrate-board-data": return self._send(200, migrate_board_data())
             if path == "/api/done": return self._send(200, set_done(req.get("name", ""), req.get("text", ""), req.get("expected", ""), req.get("kind")))
             if path == "/api/open":
                 if not self._this_machine(): raise ValueError("Open only works from the machine running the server.")

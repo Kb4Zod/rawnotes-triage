@@ -455,7 +455,7 @@ function md(src,min=2){ // small markdown renderer: headings, lists, code, bold/
 
 /* ---------- toast + undo ---------- */
 let toastTimer,toastClear;
-function toast(msg,{undo=false,bad=false,list=null,listHead='Left to do by hand (copy these now: ## Moved in its NOTES.md lists them without paths):'}={}){
+function toast(msg,{undo=false,bad=false,list=null,listHead='Left to do by hand (copy these now: ## Moved in its board record lists them without paths):'}={}){
   const t=$('#toast');t.className=bad?'bad':'';clearTimeout(toastClear);
   const warn=bad?'':commitWarn;commitWarn=null;
   t.innerHTML=`<span>${bad?'':I.check} ${esc(msg)}${list&&list.length?`<span class="tlist">${esc(listHead)}${list.map(x=>`<span class="mono">${esc(x)}</span>`).join('')}</span>`:''}${warn?`<span class="cwarn">⚠ ${esc(warn)}</span>`:''}</span>${undo?`<button type="button" id="tUndo">${I.undo}Undo ${kbh('Z')}</button>`:''}`;
@@ -1030,6 +1030,7 @@ function renderPulse(){
    <div class="card tile"><div class="num">${a&&a.streak!==undefined?a.streak:'–'}<span style="font-size:20px;color:var(--mute)">d</span></div><div class="lab">current streak</div></div>
    <div class="card tile"><div class="num" style="color:${s.expired?'var(--rust)':'inherit'}">${s.expired==null?'–':s.expired}</div><div class="lab">expired in the Inbox${s.stale!=null?` · ${s.stale} stale`:''} · decide or kill</div></div>
    <div class="card tile"><div class="num" style="color:${s.median_wait>7?'var(--rust)':'inherit'}">${s.median_wait==null?'–':s.median_wait}${s.median_wait==null?'':'<span style="font-size:20px;color:var(--mute)">d</span>'}</div><div class="lab">${s.error?`couldn't load: ${esc(s.error)}`:s.median_wait==null?'median wait in the Inbox (goal ≤ 7) · Inbox is empty':`median wait in the Inbox (goal ≤ 7) · oldest ${s.oldest}d · ${s.live} notes`}</div></div></div>
+  ${(s.legacy_board||[]).length?`<div class="card panel" style="margin-bottom:16px" id="legacyb"><h2>Board data in project repos</h2><div class="cap">${s.legacy_board.length} project${s.legacy_board.length===1?'':'s'} still keep${s.legacy_board.length===1?'s':''} the board's data (status, dates, pushes, rounds, moves) in NOTES.md, which the project's repo tracks and could publish: ${s.legacy_board.map(esc).join(', ')}. Moving it puts it in RawNotes/projects/ (one undo step); each trimmed NOTES.md is left for you to commit.</div><button class="btn sm" id="migBoard">Move it to RawNotes</button></div>`:''}
   <div class="card panel" style="margin-bottom:16px"><h2>Commits on GitHub</h2><div class="cap">Your commits on default branches, counted by commit date (not by when they were pushed), last 52 weeks · private repos included · local-only repos never show</div>${a&&a.notice?`<div class="flag" role="note">${esc(a.notice)} The graph may be missing some commits.</div>`:''}${heat}</div>
   <div class="pgrid"><div class="card panel"><h2>Inbox flow</h2><div class="cap">Notes captured vs. notes decided, per week (decisions from triage.log)</div>
     <div class="legend"><span><i style="background:var(--s1)"></i>Captured</span><span><i style="background:var(--s2)"></i>Decided</span></div>${chart}
@@ -1037,7 +1038,11 @@ function renderPulse(){
    <div class="card panel"><h2>Where the commits went</h2><div class="cap">Last ${a&&a.repo_days||30} days · click a repo to browse it</div><div class="bars">${bars}</div></div></div></div>`;
   const hw=$('#hmwrap');if(hw){hw.scrollLeft=hw.scrollWidth;scrollFocusable(document)}
   $('#actRef')&&($('#actRef').onclick=async()=>{$('#actRef').disabled=true;await loadActivity(true);render()});
-  $$('[data-repo]').forEach(b=>b.onclick=()=>openRepo(b.dataset.repo,'','pulse'))}
+  $$('[data-repo]').forEach(b=>b.onclick=()=>openRepo(b.dataset.repo,'','pulse'));
+  $('#migBoard')&&($('#migBoard').onclick=async()=>{$('#migBoard').disabled=true;
+    try{const r=await api('/api/migrate-board-data',{});if(r.migrated.length)S.undoCount++;await changed();render();
+      toast(r.msg,{undo:!!r.migrated.length,list:r.migrated.map(m=>m.path+(m.repo?` (${m.public?'public':m.public===false?'private':'visibility unknown'} on GitHub)`:'')),listHead:'Moved:'})}
+    catch(e){$('#migBoard').disabled=false;toast(e.message,{bad:true})}})}
 
 /* ---------- palette & keys: modal dialogs ---------- */
 let pal=null,returnFocus=null;
