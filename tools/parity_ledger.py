@@ -155,7 +155,7 @@ KIND3 = {
     "test_github_push.NotOnGithubFlag.test_an_inherited_git_dir_does_not_redirect_the_git_facts":
         ("ported", "every assertion is on server.git_out/github_state/work_commits under this process's patched environment"),
     "test_github_push.NotOnGithubFlag.test_an_inherited_git_dir_does_not_reach_gh_or_the_project_panel":
-        ("ported", "asserts server.gh_env() of this process; its route half runs converted (serve_with(env)) beside the port"),
+        ("ported", "asserts server.gh_env() of this process (and its route check needs the inherited GIT_DIR in the server's own environment, which the Rust test sets)"),
 }
 # Tests PR 2 split in two (patch-map.md): the Day 0 table has the original; each half's owner and due as the map gives them.
 SPLITS = {"test_engine.Faults.test_restore_and_project_writes_roll_back_too": {
@@ -861,7 +861,7 @@ def summary(L):
                                                                 else (pure[t] - a[2]) for n in d]))
         out.append(f"{t or '?':>6}  {owned[t]:>5}  {due[t]:>3}  {pure[t]:>4}  {ported[t]:>6}   "
                    f"{'%d/%d/%d' % a if a else '-':>29}   {flag}")
-    k3 = [t for t in L.tests if " " in t.state_calls]
+    k3 = [t for t in L.tests if "3 converted" in t.state_calls]
     out.append(f"runs, with patch rows not converted: {sum(bool(t.pending) for t in L.tests if t.outcome == 'runs')}   "
                f"runs, with a kind-3 direct call (converted): {len(k3)}   "
                f"ported for a kind-3 call: {sum(t.reason.startswith('kind 3') for t in L.tests)}   "

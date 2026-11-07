@@ -19,15 +19,15 @@ test_browser.py	42	BrowserCase.setUp	server.INDEX_HTML = (restore)	assign	1	N/A 
 test_browser.py	43	BrowserCase.setUp	server.INDEX_HTML =	assign	1	N/A under the switch: `TRIAGE_INDEX` reruns only in-process (page is embedded in Rust)	12	-	patch-map	
 test_browser.py	71	BrowserCase.no_real_github	target.<dynamic>	patch	1	F fake gh with the same answers	12	2	patch-map 2nd	converted: github_off() scripts the fake gh with the same graphql answers and fails every other call; the _activity reset is a fresh process; loop variable: server.gh_graphql, server._gh
 test_browser.py	72	BrowserCase.no_real_github	server._activity	state	1	S a fresh process (the reset is moot)	12	2	patch-map 2nd	converted: github_off() scripts the fake gh with the same graphql answers and fails every other call; the _activity reset is a fresh process
-test_browser.py	145	GithubPanel.test_status_and_token_dialog	server._gh	patch	1	F fake `gh` on PATH (scripted answers, argv/env logged)	12	2	patch-map	converted: fake gh answers api user by GH_TOKEN (tokenuser / gh auth login); saved_token read from the fixture's config folder
-test_browser.py	146	GithubPanel.test_status_and_token_dialog	server.shutil.which	patch	1	F fake `gh` on PATH	12	2	patch-map	converted: fake gh answers api user by GH_TOKEN (tokenuser / gh auth login); saved_token read from the fixture's config folder
-test_browser.py	265	Flows.test_expired_note_has_a_chip_a_badge_and_no_keep	server.LIMIT_DEFAULTS (patch.dict)	patch	1	S fixture `config.json` limits	12	2	patch-map	converted: a new server, then set_limits (config.json) before the page reloads
-test_browser.py	342	Flows.test_the_close_out_form_warns_when_the_move_cannot_be_undone	server.TREE_LIMIT	patch	1	H `RAWTRIAGE_TEST_TREE_LIMIT` (new)	12	2	patch-map	converted: a new server with RAWTRIAGE_TEST_TREE_LIMIT=0
-test_browser.py	387	Flows.test_a_blocked_close_out_cannot_be_sent_and_kill_shows_why	server.DEPS	patch	1	H `RAWTRIAGE_TEST_DEPS_HOME`/`_PROC`/`_CRONTAB`	12	2	patch-map	converted: a new server with deps_env(sources)
-test_browser.py	402	Flows.test_a_failed_dependency_lookup_shows_why_and_leaves_the_form_usable	server.project_deps	patch	1	H `RAWTRIAGE_TEST_DEPS_FAIL` (new)	12	2	patch-map	converted: a new server with RAWTRIAGE_TEST_DEPS_FAIL='deps exploded' (only GET /api/project/deps uses project_deps, so the close still runs)
-test_browser.py	454	Flows.test_the_drawer_shows_what_points_at_the_folder	server.DEPS	patch	1	H `RAWTRIAGE_TEST_DEPS_HOME`/`_PROC`/`_CRONTAB`	12	2	patch-map	converted: a new server with deps_env(sources)
-test_browser.py	479	Flows.test_server_text_on_a_card_is_shown_as_text_not_markup	server.inflight	patch	1	H `RAWTRIAGE_TEST_INFLIGHT_DUE` (new; wired by 06): sets the named fixture project's `due` after metadata extraction, so the exact hostile string reaches the page (a record's `due:` field keeps only its first word, `notemeta.field`, so a fixture record would lose `<img id=pwn`)	12	2	patch-map	converted: a new server with RAWTRIAGE_TEST_INFLIGHT_DUE=demo=<the hostile string, exactly>
-test_browser.py	506	Flows.test_open_folder_button_sends_a_project_not_a_path	server.open_path	patch	1	H `RAWTRIAGE_TEST_OPENER` (new)	12	2	patch-map	converted: the paths the test opener (tools/shim/record-open) was handed
+test_browser.py	139	GithubPanel.test_status_and_token_dialog	server._gh	patch	1	F fake `gh` on PATH (scripted answers, argv/env logged)	12	2	patch-map	converted: fake gh answers api user by GH_TOKEN (tokenuser / gh auth login); saved_token read from the fixture's config folder
+test_browser.py	140	GithubPanel.test_status_and_token_dialog	server.shutil.which	patch	1	F fake `gh` on PATH	12	2	patch-map	converted: fake gh answers api user by GH_TOKEN (tokenuser / gh auth login); saved_token read from the fixture's config folder
+test_browser.py	259	Flows.test_expired_note_has_a_chip_a_badge_and_no_keep	server.LIMIT_DEFAULTS (patch.dict)	patch	1	S fixture `config.json` limits	12	2	patch-map	converted: a new server, then set_limits (config.json) before the page reloads
+test_browser.py	336	Flows.test_the_close_out_form_warns_when_the_move_cannot_be_undone	server.TREE_LIMIT	patch	1	H `RAWTRIAGE_TEST_TREE_LIMIT` (new)	12	2	patch-map	converted: a new server with RAWTRIAGE_TEST_TREE_LIMIT=0
+test_browser.py	381	Flows.test_a_blocked_close_out_cannot_be_sent_and_kill_shows_why	server.DEPS	patch	1	H `RAWTRIAGE_TEST_DEPS_HOME`/`_PROC`/`_CRONTAB`	12	2	patch-map	converted: a new server with deps_env(sources)
+test_browser.py	396	Flows.test_a_failed_dependency_lookup_shows_why_and_leaves_the_form_usable	server.project_deps	patch	1	H `RAWTRIAGE_TEST_DEPS_FAIL` (new)	12	2	patch-map	converted: a new server with RAWTRIAGE_TEST_DEPS_FAIL='deps exploded' (only GET /api/project/deps uses project_deps, so the close still runs)
+test_browser.py	448	Flows.test_the_drawer_shows_what_points_at_the_folder	server.DEPS	patch	1	H `RAWTRIAGE_TEST_DEPS_HOME`/`_PROC`/`_CRONTAB`	12	2	patch-map	converted: a new server with deps_env(sources)
+test_browser.py	473	Flows.test_server_text_on_a_card_is_shown_as_text_not_markup	server.inflight	patch	1	H `RAWTRIAGE_TEST_INFLIGHT_DUE` (new; wired by 06): sets the named fixture project's `due` after metadata extraction, so the exact hostile string reaches the page (a record's `due:` field keeps only its first word, `notemeta.field`, so a fixture record would lose `<img id=pwn`)	12	2	patch-map	converted: a new server with RAWTRIAGE_TEST_INFLIGHT_DUE=demo=<the hostile string, exactly>
+test_browser.py	500	Flows.test_open_folder_button_sends_a_project_not_a_path	server.open_path	patch	1	H `RAWTRIAGE_TEST_OPENER` (new)	12	2	patch-map	converted: the paths the test opener (tools/shim/record-open) was handed
 test_cli.py	61	Reading.test_list_shows_the_real_expired_flag_and_the_summary	server.LIMIT_DEFAULTS (patch.dict)	patch	1	S fixture `config.json` limits	10	2	patch-map	converted: set_limits (config.json) before the server starts
 test_cli.py	151	NewNote.test_new_answers_with_home_as_tilde_and_the_cli_prints_the_full_path	os.environ (patch.dict)	patch	1	S the server's environment: must be set before the test's first request (the server starts then)	10	2	new (02 walk)	converted: serve_with(env HOME) before the first request
 test_cli.py	186	Deciding.setUp	server.log =	assign	1	S `--log` (temp file)	10	2	patch-map	converted by testkit: the child's --log, which server.LOG_PATH names
@@ -103,13 +103,13 @@ test_github_push.py	40	GithubCase.setUp	server.SHIP_NEEDS_GITHUB	patch	1	H `RAWT
 test_github_push.py	47	GithubCase.setUp	os.environ (patch.dict)	patch	1	S the fixture's PATH (a stub gh) and environment, set before the server starts	09	1	new (02 walk)	
 test_github_push.py	49	GithubCase.setUp	os.environ.pop	env	1	S the fixture's environment, set before the server starts	09	1	new (02 walk)	
 test_github_push.py	111	NotOnGithubFlag.test_an_inherited_git_dir_does_not_redirect_the_git_facts	os.environ (patch.dict)	patch	1	R (S→R, PR 2, kind 3: every assertion is on server.git_out/github_state/work_commits called here under the patched environment)	06	-	new (02 walk)	S→R; 
-test_github_push.py	124	NotOnGithubFlag.test_an_inherited_git_dir_does_not_reach_gh_or_the_project_panel	os.environ (patch.dict)	patch	1	R (S→R, PR 2, kind 3: asserts server.gh_env() of this process; the route half is converted too, serve_with(env), as evidence)	06	-	new (02 walk)	S→R; 
-test_github_push.py	254	CloseOutGate.test_a_git_check_that_fails_refuses_rather_than_lets_it_through	server.git_out	patch	1	R	08	-	patch-map	
-test_github_push.py	306	CloseOutGate.test_the_gate_off_lets_everything_through	server.SHIP_NEEDS_GITHUB	patch	1	H `RAWTRIAGE_TEST_SHIP_NEEDS_GITHUB`	08	2	patch-map	converted: a new server with RAWTRIAGE_TEST_SHIP_NEEDS_GITHUB='' (no undo after)
-test_github_push.py	408	CreateRepo.test_the_sign_in_check_runs_without_the_lock.status	server._lock	state	1	R (already R by github_status)	09	-	new (02 walk)	
-test_github_push.py	409	CreateRepo.test_the_sign_in_check_runs_without_the_lock	server.github_status	patch	1	R (asserts `server._lock._readers == 0` at the call; promote setup, so due 08)	09	-	patch-map	
-test_github_push.py	414	CreateRepo.test_refuses_off_this_machine	server.BIND_HOST	patch	1	S `--host`	09	2	patch-map	converted: a new server on --host 0.0.0.0
-test_github_push.py	466	CreateRepo.test_refuses_when_gh_is_missing	server.shutil.which	patch	1	S fixture PATH without `gh`	09	2	patch-map	converted: a new server with PATH without gh (path_without)
+test_github_push.py	123	NotOnGithubFlag.test_an_inherited_git_dir_does_not_reach_gh_or_the_project_panel	os.environ (patch.dict)	patch	1	R (S→R, PR 2, kind 3: asserts server.gh_env() of this process; the Rust test keeps the route check with the inherited GIT_DIR set in the server's environment)	06	-	new (02 walk)	S→R; 
+test_github_push.py	253	CloseOutGate.test_a_git_check_that_fails_refuses_rather_than_lets_it_through	server.git_out	patch	1	R	08	-	patch-map	
+test_github_push.py	305	CloseOutGate.test_the_gate_off_lets_everything_through	server.SHIP_NEEDS_GITHUB	patch	1	H `RAWTRIAGE_TEST_SHIP_NEEDS_GITHUB`	08	2	patch-map	converted: a new server with RAWTRIAGE_TEST_SHIP_NEEDS_GITHUB='' (no undo after)
+test_github_push.py	407	CreateRepo.test_the_sign_in_check_runs_without_the_lock.status	server._lock	state	1	R (already R by github_status)	09	-	new (02 walk)	
+test_github_push.py	408	CreateRepo.test_the_sign_in_check_runs_without_the_lock	server.github_status	patch	1	R (asserts `server._lock._readers == 0` at the call; promote setup, so due 08)	09	-	patch-map	
+test_github_push.py	413	CreateRepo.test_refuses_off_this_machine	server.BIND_HOST	patch	1	S `--host`	09	2	patch-map	converted: a new server on --host 0.0.0.0
+test_github_push.py	465	CreateRepo.test_refuses_when_gh_is_missing	server.shutil.which	patch	1	S fixture PATH without `gh`	09	2	patch-map	converted: a new server with PATH without gh (path_without)
 test_limits.py	21	InboxLimits.setUp	os.environ (patch.dict)	patch	1	S RAWTRIAGE_TODAY, set before the server starts (was the server.today patch)	03	1	new (02 walk)	
 test_limits.py	134	ConfigReadOncePerListing.test_a_listing_reads_config_json_once_not_once_per_note	server.read_config	patch	1	R	01	-	patch-map	
 test_projects.py	25	Worktrees.setUp	server.open_path	patch	1	H `RAWTRIAGE_TEST_OPENER` (new)	06	2	patch-map	converted: the paths the test opener was handed (opened_paths)
@@ -129,23 +129,23 @@ test_projects.py	415	PromoteSkeleton.test_undo_that_cannot_remove_git_changes_no
 test_projects.py	422	PromoteSkeleton.test_rollback_that_cannot_remove_git_leaves_an_unfinished_undo_entry	os.rename	patch	1	R	04	-	patch-map 2nd	already R by rmtree
 test_projects.py	422	PromoteSkeleton.test_rollback_that_cannot_remove_git_leaves_an_unfinished_undo_entry	server.shutil.rmtree	patch	1	R	04	-	patch-map	
 test_projects.py	436	PromoteSkeleton.test_git_never_follows_an_inherited_git_dir	os.environ (patch.dict)	patch	1	S the server's environment: must be set before the test's first request (the server starts then)	04	2	new (02 walk)	converted: serve_with(env GIT_DIR/GIT_WORK_TREE) before the first request
-test_runtime.py	52	ReadsBesideWrites.test_a_note_edited_or_removed_by_hand_while_listing_is_tolerated	server.summarize	patch	1	R	01/03	-	patch-map	
-test_runtime.py	82	Caches.test_git_inspection_is_cached_and_shares_one_bounded_pool	server.git_out	patch	1	R	06	-	patch-map	
-test_runtime.py	86	Caches.test_git_inspection_is_cached_and_shares_one_bounded_pool	server._git_pool	state	1	R (already R by git_out)	06	-	new (02 walk)	
-test_runtime.py	87	Caches.test_git_inspection_is_cached_and_shares_one_bounded_pool	server.git_out	patch	2	R	06	-	patch-map	
-test_runtime.py	101	Caches.test_git_cache_expires_and_is_bounded	server.git_out	patch	1	R	06	-	patch-map	
-test_runtime.py	103	Caches.test_git_cache_expires_and_is_bounded	server.GIT_TTL	patch	1	R	06	-	patch-map	
-test_runtime.py	108	Caches.test_stats_does_not_build_the_projects_board	server.inflight	patch	1	R	05	-	patch-map	
-test_runtime.py	115	Caches.test_unchanged_notes_are_not_read_again_but_changed_ones_are	server._summary_core	patch	1	R	01	-	patch-map	
-test_runtime.py	142	GithubActivity.setUp	server._activity	state	1	S a fresh process (the reset is moot)	09	1	new (02 walk)	
-test_runtime.py	143	GithubActivity.setUp	server._activity	state	2	S a fresh process (the reset is moot)	09	1	new (02 walk)	
-test_runtime.py	175	GithubActivity.run_with	server.gh_graphql	patch	1	F fake `gh`	09	2	patch-map	converted: fake gh answers api graphql in turn; calls are its logged queries (callable answers only in the R test)
-test_runtime.py	192	GithubActivity.test_hitting_the_repo_page_cap_is_reported_not_silent	server.REPO_PAGES	patch	1	R	09	-	patch-map	
-test_runtime.py	200	GithubActivity.test_history_cut_at_the_page_cap_names_the_repo	server.HISTORY_PAGES	patch	1	R	09	-	patch-map	
-test_runtime.py	217	GithubActivity.test_concurrent_callers_share_one_fetch_and_nobody_holds_a_lock_while_waiting	server.gh_graphql	patch	1	R (calls `github_activity()` directly, acquires `_activity_lock`)	09	-	patch-map	
-test_runtime.py	220	GithubActivity.test_concurrent_callers_share_one_fetch_and_nobody_holds_a_lock_while_waiting	server._activity_lock	state	1	R (already R by gh_graphql)	09	-	new (02 walk)	
-test_runtime.py	229	GithubActivity.test_a_failed_fetch_wakes_waiters_with_the_error	server.gh_graphql	patch	1	"R (calls `github_activity()` directly, asserts `_activity[""busy""] is None`)"	09	-	patch-map	
-test_runtime.py	233	GithubActivity.test_a_failed_fetch_wakes_waiters_with_the_error	server._activity	state	1	R (already R by gh_graphql)	09	-	new (02 walk)	
+test_runtime.py	54	ReadsBesideWrites.test_a_note_edited_or_removed_by_hand_while_listing_is_tolerated	server.summarize	patch	1	R	01/03	-	patch-map	
+test_runtime.py	84	Caches.test_git_inspection_is_cached_and_shares_one_bounded_pool	server.git_out	patch	1	R	06	-	patch-map	
+test_runtime.py	88	Caches.test_git_inspection_is_cached_and_shares_one_bounded_pool	server._git_pool	state	1	R (already R by git_out)	06	-	new (02 walk)	
+test_runtime.py	89	Caches.test_git_inspection_is_cached_and_shares_one_bounded_pool	server.git_out	patch	2	R	06	-	patch-map	
+test_runtime.py	103	Caches.test_git_cache_expires_and_is_bounded	server.git_out	patch	1	R	06	-	patch-map	
+test_runtime.py	105	Caches.test_git_cache_expires_and_is_bounded	server.GIT_TTL	patch	1	R	06	-	patch-map	
+test_runtime.py	110	Caches.test_stats_does_not_build_the_projects_board	server.inflight	patch	1	R	05	-	patch-map	
+test_runtime.py	117	Caches.test_unchanged_notes_are_not_read_again_but_changed_ones_are	server._summary_core	patch	1	R	01	-	patch-map	
+test_runtime.py	144	GithubActivity.setUp	server._activity	state	1	S a fresh process (the reset is moot)	09	1	new (02 walk)	
+test_runtime.py	145	GithubActivity.setUp	server._activity	state	2	S a fresh process (the reset is moot)	09	1	new (02 walk)	
+test_runtime.py	177	GithubActivity.run_with	server.gh_graphql	patch	1	F fake `gh`	09	2	patch-map	converted: fake gh answers api graphql in turn; calls are its logged queries (callable answers only in the R test)
+test_runtime.py	194	GithubActivity.test_hitting_the_repo_page_cap_is_reported_not_silent	server.REPO_PAGES	patch	1	R	09	-	patch-map	
+test_runtime.py	202	GithubActivity.test_history_cut_at_the_page_cap_names_the_repo	server.HISTORY_PAGES	patch	1	R	09	-	patch-map	
+test_runtime.py	219	GithubActivity.test_concurrent_callers_share_one_fetch_and_nobody_holds_a_lock_while_waiting	server.gh_graphql	patch	1	R (calls `github_activity()` directly, acquires `_activity_lock`)	09	-	patch-map	
+test_runtime.py	222	GithubActivity.test_concurrent_callers_share_one_fetch_and_nobody_holds_a_lock_while_waiting	server._activity_lock	state	1	R (already R by gh_graphql)	09	-	new (02 walk)	
+test_runtime.py	231	GithubActivity.test_a_failed_fetch_wakes_waiters_with_the_error	server.gh_graphql	patch	1	"R (calls `github_activity()` directly, asserts `_activity[""busy""] is None`)"	09	-	patch-map	
+test_runtime.py	235	GithubActivity.test_a_failed_fetch_wakes_waiters_with_the_error	server._activity	state	1	R (already R by gh_graphql)	09	-	new (02 walk)	
 test_safety.py	114	OpenEndpoint.setUp	server.open_path	patch	1	H `RAWTRIAGE_TEST_OPENER` (new)	06	2	patch-map	converted: the paths the test opener was handed (opened_paths)
 test_safety.py	138	OpenEndpoint.test_refuses_a_rebound_host_name_on_an_all_interfaces_bind	server.BIND_HOST	patch	1	S `--host`	01	2	patch-map	converted: serve_with(host=0.0.0.0)
 test_safety.py	155	OpenEndpoint.test_the_launcher_command_is_one_absolute_operand_without_a_shell	subprocess.Popen	patch	1	R	06	-	patch-map 2nd	direct open_argv/REAL_OPEN test
@@ -202,28 +202,29 @@ testkit.py	49	<module>	os.environ['RAWTRIAGE_CONFIG_DIR'] =	env	1	S RAWTRIAGE_CO
 testkit.py	49	<module>	server.CONFIG_DIR =	assign	1	S `RAWTRIAGE_CONFIG_DIR`	02	1	patch-map	
 testkit.py	56	<module>	server.DEPS =	assign	1	H `RAWTRIAGE_TEST_DEPS_*`	02	1	patch-map	
 testkit.py	57	<module>	server.SYNC_APPS =	assign	1	H `RAWTRIAGE_TEST_SYNC_APPS`	02	1	patch-map	
-testkit.py	118	undo_list	server._undo	state	1	H RAWTRIAGE_TEST_UNDO_DUMP (undo_list's in-process half)	02	1	new (02 walk)	
-testkit.py	277	Switchable.switch_to_child	os.environ (patch.dict)	patch	1	S RAWTRIAGE_TODAY, fixed when the fixture starts	02	1	new (02 walk)	
-testkit.py	280	Switchable.switch_to_child	server.LOG_PATH	patch	1	S --log (the child's log, outside the fixture's tree)	02	1	new (02 walk)	
-testkit.py	380	Switchable.clear_undo	server._undo	state	1	S a fresh process (clear_undo's in-process half)	02	1	new (02 walk)	
-testkit.py	394	isolate_git	os.environ (patch.dict)	patch	1	S the fixture's environment (fake HOME, isolated git), set before the server starts	02	1	new (02 walk)	
-testkit.py	397	isolate_git	os.environ.pop	env	1	S the fixture's environment, set before the server starts	02	1	new (02 walk)	
-testkit.py	411	Fixture.setUp	server.CONFIG_DIR =	assign	1	S `RAWTRIAGE_CONFIG_DIR`	02	1	patch-map	
-testkit.py	412	Fixture.setUp	os.environ (patch.dict)	patch	1	S RAWTRIAGE_CONFIG_DIR	02	1	new (02 walk)	
-testkit.py	414	Fixture.setUp	server.SHIP_NEEDS_GITHUB	patch	1	H `RAWTRIAGE_TEST_SHIP_NEEDS_GITHUB`	02	1	patch-map	
-testkit.py	416	Fixture.setUp	server.LIMIT_DEFAULTS (patch.dict)	patch	1	S fixture `config.json` limits	02	1	patch-map	under the switch the relaxed limits are the fixture's config.json; a test that creates the config folder, writes its own config.json or expects it absent must merge with it; PR 2: such tests merge through write_config()/read saved_config(), and GithubSignIn and FirstRun (which need the folder empty) set relax_limits = False
-testkit.py	417	Fixture.setUp	server.NOTES =	assign	1	S --notes	02	1	new (02 walk)	
-testkit.py	417	Fixture.setUp	server.PROJECTS =	assign	1	S --notes (projects root is its parent)	02	1	new (02 walk)	
-testkit.py	418	Fixture.setUp	server.log =	assign	1	S `--log` (temp file)	02	1	patch-map	
-testkit.py	419	Fixture.setUp	server.LOG_PATH =	assign	1	S `--log` (temp file)	02	1	patch-map	
-testkit.py	420	Fixture.setUp	server._git_cache	state	1	S a fresh process	02	1	new (02 walk)	
-testkit.py	420	Fixture.setUp	server._undo	state	1	S a fresh process	02	1	new (02 walk)	
-testkit.py	421	Fixture.setUp	server._meta_cache	state	1	S a fresh process	02	1	new (02 walk)	
-testkit.py	421	Fixture.setUp	server._notes_cache	state	1	S a fresh process	02	1	new (02 walk)	
-testkit.py	421	Fixture.setUp	server._proj_cache	state	1	S a fresh process	02	1	new (02 walk)	
-testkit.py	430	Fixture._restore	server.CONFIG_DIR =	assign	1	S RAWTRIAGE_CONFIG_DIR (restore)	02	1	new (02 walk)	
-testkit.py	430	Fixture._restore	server.LOG_PATH =	assign	1	S --log (restore)	02	1	new (02 walk)	
-testkit.py	430	Fixture._restore	server.NOTES =	assign	1	S --notes (restore)	02	1	new (02 walk)	
-testkit.py	430	Fixture._restore	server.PROJECTS =	assign	1	S --notes (restore)	02	1	new (02 walk)	
-testkit.py	430	Fixture._restore	server.log =	assign	1	S --log (restore)	02	1	new (02 walk)	
-testkit.py	432	Fixture._restore	server._undo	state	1	S a fresh process	02	1	new (02 walk)	
+testkit.py	119	undo_list	server._undo	state	1	H RAWTRIAGE_TEST_UNDO_DUMP (undo_list's in-process half)	02	1	new (02 walk)	
+testkit.py	279	Switchable.switch_to_child	os.environ (patch.dict)	patch	1	S RAWTRIAGE_TODAY, fixed when the fixture starts	02	1	new (02 walk)	
+testkit.py	282	Switchable.switch_to_child	server.LOG_PATH	patch	1	S --log (the child's log, outside the fixture's tree)	02	1	new (02 walk)	
+testkit.py	308	Switchable.serve_with	server.LOG_PATH =	assign	1	S --log (serve_with's own --log, which server.LOG_PATH then names; switch_to_child's patch puts it back)	02	2	new (PR 2)	
+testkit.py	385	Switchable.clear_undo	server._undo	state	1	S a fresh process (clear_undo's in-process half)	02	1	new (02 walk)	
+testkit.py	399	isolate_git	os.environ (patch.dict)	patch	1	S the fixture's environment (fake HOME, isolated git), set before the server starts	02	1	new (02 walk)	
+testkit.py	402	isolate_git	os.environ.pop	env	1	S the fixture's environment, set before the server starts	02	1	new (02 walk)	
+testkit.py	416	Fixture.setUp	server.CONFIG_DIR =	assign	1	S `RAWTRIAGE_CONFIG_DIR`	02	1	patch-map	
+testkit.py	417	Fixture.setUp	os.environ (patch.dict)	patch	1	S RAWTRIAGE_CONFIG_DIR	02	1	new (02 walk)	
+testkit.py	419	Fixture.setUp	server.SHIP_NEEDS_GITHUB	patch	1	H `RAWTRIAGE_TEST_SHIP_NEEDS_GITHUB`	02	1	patch-map	
+testkit.py	421	Fixture.setUp	server.LIMIT_DEFAULTS (patch.dict)	patch	1	S fixture `config.json` limits	02	1	patch-map	under the switch the relaxed limits are the fixture's config.json; a test that creates the config folder, writes its own config.json or expects it absent must merge with it; PR 2: such tests merge through write_config()/read saved_config(), and GithubSignIn and FirstRun (which need the folder empty) set relax_limits = False
+testkit.py	422	Fixture.setUp	server.NOTES =	assign	1	S --notes	02	1	new (02 walk)	
+testkit.py	422	Fixture.setUp	server.PROJECTS =	assign	1	S --notes (projects root is its parent)	02	1	new (02 walk)	
+testkit.py	423	Fixture.setUp	server.log =	assign	1	S `--log` (temp file)	02	1	patch-map	
+testkit.py	424	Fixture.setUp	server.LOG_PATH =	assign	1	S `--log` (temp file)	02	1	patch-map	
+testkit.py	425	Fixture.setUp	server._git_cache	state	1	S a fresh process	02	1	new (02 walk)	
+testkit.py	425	Fixture.setUp	server._undo	state	1	S a fresh process	02	1	new (02 walk)	
+testkit.py	426	Fixture.setUp	server._meta_cache	state	1	S a fresh process	02	1	new (02 walk)	
+testkit.py	426	Fixture.setUp	server._notes_cache	state	1	S a fresh process	02	1	new (02 walk)	
+testkit.py	426	Fixture.setUp	server._proj_cache	state	1	S a fresh process	02	1	new (02 walk)	
+testkit.py	435	Fixture._restore	server.CONFIG_DIR =	assign	1	S RAWTRIAGE_CONFIG_DIR (restore)	02	1	new (02 walk)	
+testkit.py	435	Fixture._restore	server.LOG_PATH =	assign	1	S --log (restore)	02	1	new (02 walk)	
+testkit.py	435	Fixture._restore	server.NOTES =	assign	1	S --notes (restore)	02	1	new (02 walk)	
+testkit.py	435	Fixture._restore	server.PROJECTS =	assign	1	S --notes (restore)	02	1	new (02 walk)	
+testkit.py	435	Fixture._restore	server.log =	assign	1	S --log (restore)	02	1	new (02 walk)	
+testkit.py	437	Fixture._restore	server._undo	state	1	S a fresh process	02	1	new (02 walk)	

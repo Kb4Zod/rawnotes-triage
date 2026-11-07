@@ -110,6 +110,7 @@ def _tool(name):
 
 
 undo_entry = _tool("undo_dump").entry  # the dump's format, shared with tools/shim/rawtriage-web
+_graphql_query = _tool("fake_gh").graphql_query  # how the fake gh finds a GraphQL query in its argv
 
 
 def undo_list():
@@ -163,7 +164,7 @@ class FakeGh:
 
     def queries(self):
         """The query of every `gh api graphql` call so far, oldest first."""
-        return [q for q in (_tool("fake_gh").graphql_query(c["argv"]) for c in self.calls()) if q is not None]
+        return [q for q in (_graphql_query(c["argv"]) for c in self.calls()) if q is not None]
 
     def calls(self):
         """Every call so far, oldest first: {"argv", "env", "cwd", "answered"}."""
@@ -188,7 +189,7 @@ class ChildServer:
     and fake gh live in a folder of their own outside the fixture's tree (snapshots compare that tree)."""
     def __init__(self, case, notes, config_dir, relax_limits=False):
         self.case, self.notes, self.config_dir = case, notes, config_dir
-        self.host, self.args, self.extra_env = "127.0.0.1", [], {}  # Switchable.serve_with changes them before a start
+        self.host, self.args, self.extra_env, self.gh_first = "127.0.0.1", [], {}, True  # serve_with changes them before a start
         self.side = tempfile.mkdtemp(prefix="rt-child-"); case.addCleanup(shutil.rmtree, self.side, ignore_errors=True)
         self.log = os.path.join(self.side, "triage.log"); self.dump = os.path.join(self.side, "undo.json")
         self.output = os.path.join(self.side, "server-output.txt")
@@ -206,11 +207,12 @@ class ChildServer:
             "RAWTRIAGE_CONFIG_DIR": self.config_dir, "RAWTRIAGE_TEST_UNDO_DUMP": self.dump,
             "RAWTRIAGE_TEST_DEPS_HOME": FAKE_DEPS_HOME, "RAWTRIAGE_TEST_PROC": FAKE_PROC, "RAWTRIAGE_TEST_CRONTAB": NO_CRONTAB,
             "RAWTRIAGE_TEST_SYNC_APPS": server.SYNC_APPS, "RAWTRIAGE_TEST_SHIP_NEEDS_GITHUB": "",
-            "RAWTRIAGE_TEST_OPENER": shlex.quote(os.path.join(HERE, "tools", "shim", "record-open")), "RAWTRIAGE_TEST_OPENED": opener,
-            "PATH": self.gh.bin + os.pathsep + env.get("PATH", os.defpath)})
+            "RAWTRIAGE_TEST_OPENER": shlex.quote(os.path.join(HERE, "tools", "shim", "record-open")), "RAWTRIAGE_TEST_OPENED": opener})
         for k, v in self.extra_env.items():  # serve_with: None removes a variable
             if v is None: env.pop(k, None)
             else: env[k] = v
+        path = env.get("PATH", os.defpath)  # serve_with's PATH is the base; the fake gh goes first unless the test brings its own
+        env["PATH"] = self.gh.bin + os.pathsep + path if self.gh_first else path
         return env
 
     def start(self):
@@ -285,13 +287,14 @@ class Switchable:
 
     _KEEP = object()
 
-    def serve_with(self, env=None, host=None, notes=_KEEP, args=None, log=None, restart=False, reset=()):
+    def serve_with(self, env=None, host=None, notes=_KEEP, args=None, log=None, gh=None, restart=False, reset=()):
         """Under TRIAGE_SERVER, how this test's server is started: env, variables for it (the test hooks; None removes
         one); host, its --host; notes, its --notes (None: started without it); args, more flags (--no-commit). The
         server starts on the test's first request, so this comes before it, or passes restart=True: a new process,
         so an empty undo list and cold caches. reset: names of variables to give back the fixture's own value.
         In-process it does nothing; the test patches server.* as before. log: its --log (default: a file
-        beside the child's own output, which server.LOG_PATH names)."""
+        beside the child's own output; server.LOG_PATH names whichever it is). env's PATH is the base of the server's
+        PATH: testkit's fake gh still goes first, unless gh=False (the test's PATH has its own gh, or none at all)."""
         if self.child is None: return
         if self.child.proc is not None:
             if not restart: raise RuntimeError("serve_with() after the server started: pass restart=True (a new process)")
@@ -301,7 +304,8 @@ class Switchable:
         if host is not None: self.child.host = host
         if notes is not self._KEEP: self.child.notes = notes
         if args is not None: self.child.args = list(args)
-        if log is not None: self.child.log = log
+        if gh is not None: self.child.gh_first = gh
+        if log is not None: self.child.log = server.LOG_PATH = log  # switch_to_child's patch of LOG_PATH puts it back
 
     def deps_env(self, sources):
         """The test hooks that give a server under TRIAGE_SERVER the dependency check's sources (a depcheck.Sources):
@@ -330,12 +334,13 @@ class Switchable:
         config.json (merged with what is there) before the server starts. In-process it does nothing."""
         if self.child is None: return
         if self.child.proc is not None: raise RuntimeError("set_limits() after the server started: serve_with(restart=True) first")
-        path = os.path.join(self.child.config_dir, "config.json")
+        self.write_config(**limits)
+
+    def saved_token(self):
+        """The GitHub token the server under test saved, from its file in the fixture's config folder ("" if none)."""
         try:
-            with open(path, encoding="utf-8") as fh: conf = json.load(fh)
-        except FileNotFoundError: conf = {}
-        conf.update(limits); os.makedirs(self.child.config_dir, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as fh: json.dump(conf, fh)
+            with open(server.token_path(), encoding="utf-8") as fh: return fh.read().strip()
+        except FileNotFoundError: return ""
 
     def opened_paths(self):
         """Under TRIAGE_SERVER, the paths the server handed to its opener (RAWTRIAGE_TEST_OPENER, tools/shim/record-open),

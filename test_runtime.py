@@ -35,12 +35,14 @@ class ReadsBesideWrites(Fixture):
         seen, stop = set(), threading.Event()
         def reader():
             while not stop.is_set():
-                code, d = self.call("/api/notes"); seen.add((len(d["live"]), len(d["done"])) if code == 200 else (code, json.dumps(d)))
+                try: code, d = self.call("/api/notes")
+                except Exception as e: seen.add(("error", repr(e))); continue  # a reader that fails is seen, not lost
+                seen.add((len(d["live"]), len(d["done"])) if code == 200 else (code, json.dumps(d)))
         ts = [threading.Thread(target=reader) for _ in range(4)]; [t.start() for t in ts]
         for _ in range(3):
             self.post("/api/batch", {"files": names, "action": "kill"}); self.post("/api/undo", {})
         stop.set(); [t.join() for t in ts]
-        self.assertTrue(seen <= {(9, 0), (0, 9)}, seen)
+        self.assertTrue(seen and seen <= {(9, 0), (0, 9)}, seen)
 
     def test_a_note_edited_or_removed_by_hand_while_listing_is_tolerated(self):
         for i in range(30): self.note(f"2026-10-0{i % 9 + 1}-n{i}.md", f"n{i}")

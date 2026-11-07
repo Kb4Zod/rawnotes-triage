@@ -80,12 +80,6 @@ class BrowserCase(Fixture):
         self.fake_gh.answer(graphql="node(id:", json_out={"data": {f"r{i}": node for i in range(2)}})  # alpha and beta: both pushed today
         self.fake_gh.answer(prefix=[], stderr="GitHub is off in tests", exit=1)
 
-    def saved_token(self):
-        """The token the server under test saved: its file in the fixture's config folder ("" if none)."""
-        try:
-            with open(os.path.join(self.config_dir(), "github-token"), encoding="utf-8") as fh: return fh.read().strip()
-        except FileNotFoundError: return ""
-
     def open(self, route="inbox"):
         self.page.eval("typeof S!=='undefined'&&(S.dods={})")  # an unsaved-edit prompt would (rightly) stop the page from unloading
         self.loads = getattr(self, "loads", 0) + 1  # a changed query string forces a full load, so notes made after setUp show up

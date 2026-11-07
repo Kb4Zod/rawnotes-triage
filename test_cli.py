@@ -301,11 +301,11 @@ class Projects(CliBase):
         home = os.path.join(self.tmp, "home"); os.makedirs(os.path.join(home, ".local", "bin"))
         with open(os.path.join(home, ".local", "bin", "spike"), "w") as fh: fh.write(f"#!/bin/sh\n{self.tmp}/experiments/spike/run\n")
         blocked = depcheck.Sources(home, proc=os.path.join(self.tmp, "proc"), crontab=lambda: "")
-        self.serve_with(env=self.deps_env(blocked), restart=True)  # under TRIAGE_SERVER: a server that sees the blocker
+        hooks = self.deps_env(blocked); self.serve_with(env=hooks, restart=True)  # under TRIAGE_SERVER: a server that sees the blocker
         with mock.patch.object(server, "DEPS", blocked):
             self.assertIn("BLOCKED: 1 thing(s)", self.ok("project", "deps", "spike", "--to", "abandoned").stdout)
             self.assertIn("Can't move spike", self.refused("project", "ship", "spike", "--outcome", "archive"))
-        self.serve_with(reset=self.deps_env(blocked), restart=True)  # and one that doesn't, as before
+        self.serve_with(reset=hooks, restart=True)  # and one that doesn't, as before
         r = self.ok("project", "ship", "spike", "--outcome", "archive").stdout
         self.assertIn("→ archive/spike", r); self.assertIn("Left to do by hand", r)
         self.assertTrue(os.path.isdir(os.path.join(self.tmp, "archive", "spike")))

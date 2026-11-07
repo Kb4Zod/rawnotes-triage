@@ -48,7 +48,7 @@ class GithubCase(Fixture):
         p.start(); self.addCleanup(p.stop)
         for var in ("GH_TOKEN", "GITHUB_TOKEN", "ALLOW_PUSH_MAIN"): os.environ.pop(var, None)
         # under TRIAGE_SERVER: the same gate through its hook, and this stub gh first on the PATH (not testkit's fake gh)
-        self.serve_with(env={"RAWTRIAGE_TEST_SHIP_NEEDS_GITHUB": ",".join(GATED), "PATH": os.environ["PATH"]})
+        self.serve_with(env={"RAWTRIAGE_TEST_SHIP_NEEDS_GITHUB": ",".join(GATED), "PATH": os.environ["PATH"]}, gh=False)
         self.remote = os.path.join(self.tmp, "github-me-%s.git")  # per-repo bare repos: "GitHub"
 
     def gh_calls(self): return open(self.log).read().splitlines()
@@ -120,7 +120,6 @@ class NotOnGithubFlag(GithubCase):
         path = self.promoted(); other = os.path.join(self.tmp, "other"); os.makedirs(other)
         run(other, "init", "-q", "-b", "elsewhere"); run(other, "commit", "-q", "--allow-empty", "-m", "not this project")
         drop = {"GIT_DIR": os.path.join(other, ".git"), "GIT_WORK_TREE": other, "GIT_INDEX_FILE": os.path.join(other, "idx")}
-        self.serve_with(env=drop, restart=True)  # under TRIAGE_SERVER: a server started with them (the test is ported: gh_env)
         with mock.patch.dict(os.environ, drop):
             self.assertFalse(set(server.gh_env()) & set(drop))
             d = self.get("/api/project?name=demo&kind=active")
@@ -462,7 +461,7 @@ class CreateRepo(GithubCase):
 
     def test_refuses_when_gh_is_missing(self):
         self.promoted()
-        self.serve_with(env={"PATH": self.path_without("gh")}, restart=True)  # under TRIAGE_SERVER: a server with no gh on its PATH
+        self.serve_with(env={"PATH": self.path_without("gh")}, gh=False, restart=True)  # under TRIAGE_SERVER: no gh on its PATH
         with mock.patch.object(server.shutil, "which", lambda n: None if n == "gh" else "/usr/bin/" + n):
             self.refused(contains="gh")
 

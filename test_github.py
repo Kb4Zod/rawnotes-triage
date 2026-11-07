@@ -53,11 +53,11 @@ class GithubSignIn(Fixture):
         self.stub_gh({"": RuntimeError("GitHub took too long to answer")})
         self.assertEqual(self.get("/api/github?refresh=1")["state"], "unavailable")
         if self.fake_gh is not None:  # a server started with no gh on its PATH, then one whose gh answers "[]"
-            self.serve_with(env={"PATH": self.path_without("gh")}, restart=True)
+            self.serve_with(env={"PATH": self.path_without("gh")}, gh=False, restart=True)
             self.assertEqual(self.get("/api/github?refresh=1")["state"], "no_gh")
             os.makedirs(self.config_dir(), exist_ok=True); self.write_token()  # a saved token can still be removed
             self.assertEqual(self.get("/api/github?refresh=1")["source"], "token")
-            self.fake_gh.reset().answer(["api", "user"], stdout="[]"); self.serve_with(reset=("PATH",), restart=True)
+            self.fake_gh.reset().answer(["api", "user"], stdout="[]"); self.serve_with(reset=("PATH",), gh=True, restart=True)
             self.assertEqual(self.get("/api/github?refresh=1")["state"], "unavailable")
             return
         with mock.patch.object(server.shutil, "which", lambda n: None):
