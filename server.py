@@ -318,13 +318,13 @@ def set_done(name, text, expected, kind=None):
     if done_placeholder(text): raise ValueError("Write what done looks like first.")
     if len(text) > DONE_MAX: raise ValueError(f"Keep it under {DONE_MAX} characters.")
     with mutation(f"done means for {name}") as tx:
-        if not record_file(path):
-            got = migrate_folder(tx, path)  # first: it trims NOTES.md, and find_done's line numbers must match what's left
-            if got: board_save(tx, _stored(record_of(path)), got[0])
         hit = find_done(path)  # read under the write lock: a concurrent status edit can't be lost
         now = hit["text"] if hit and hit["defined"] else ""
-        if re.sub(r"\s+", " ", expected or "").strip() != now:
+        if re.sub(r"\s+", " ", expected or "").strip() != now:  # against what you saw, before a migration moves anything
             raise ValueError("This definition changed on disk since you opened it. Refresh and try again.")
+        if not record_file(path):
+            got = migrate_folder(tx, path)  # it trims NOTES.md, so find_done runs again on what is left
+            if got: board_save(tx, _stored(record_of(path)), got[0]); hit = find_done(path)
         target, lines, eol = _with_done(path, name, text, hit)
         tx.write(target, eol.join(lines))
         tx.select = None
@@ -554,7 +554,9 @@ def split_legacy(text, capture=None):
         cap["Outcome"] = "\n".join(l for l in cap.get("Outcome", "").split("\n") if not APP_OUTCOME.match(l))
         for name in dict.fromkeys(section_names(out)):
             if name == "Plan" or name not in cap: continue
-            if _same(section_body(out, name), cap[name]): out = take_section(out, name)[0]; moved.append(f"## {name} (copy of the original note)")
+            mine = section_body(out, name)
+            if name == "Outcome": mine = "\n".join(l for l in mine.split("\n") if not APP_OUTCOME.match(l))
+            if _same(mine, cap[name]): out = take_section(out, name)[0]; moved.append(f"## {name} (copy of the original note)")
         plans = _spans(out, "Plan")
         if len(plans) > 1 and "Plan" in cap and _same(out[plans[0][1]:plans[0][2]], cap["Plan"]):
             out = out[:plans[0][0]] + out[plans[0][2]:]; moved.append("the original note's own ## Plan (copy)")
@@ -565,7 +567,7 @@ def left_in_notes(text):
     """What a trimmed NOTES.md still holds besides its title, header and one ## Plan, for the migration to name
     (your own text, or a copy of the original note it couldn't match): section names, a second ## Plan, and text
     above the first heading."""
-    out = [n for n in section_names(text) if n != "Plan"]
+    out = [re.sub(r"[\x00-\x1f\x7f-\x9f]", "", n)[:80] for n in section_names(text) if n != "Plan"]  # headings of a tracked file: no terminal escapes
     if len(_spans(text, "Plan")) > 1: out.append("a second Plan")
     lines = text.split("\n"); skip = set(header_lines(lines)) | {title_index(lines)}
     top = next((i for i, l in enumerate(lines) if l.startswith("## ")), len(lines))
@@ -638,7 +640,8 @@ def legacy_capture(text, kind, name, index=None):
     """`done/<file>` of the original note of a legacy project folder whose NOTES.md is `text`: looked up under the
     folder's own path and under the earlier paths its ## Moved names, but only ones with the same folder name (a move
     may add a suffix), by its promote date (pick_capture). None if it can't be told."""
-    earlier = [k for k in MOVED_FROM.findall(section_body(text, "Moved")) if name.startswith(k.rsplit("/", 1)[-1])]
+    earlier = [k for k in MOVED_FROM.findall(section_body(text, "Moved"))
+               if re.fullmatch(re.escape(k.rsplit("/", 1)[-1]) + r"(?:_abandoned)?(?:-\d+)?", name)]
     return pick_capture(capture_index() if index is None else index, [f"{kind}/{name}"] + earlier, field(text, "promoted"))
 
 def with_migration(msg, tx):
@@ -2483,6 +2486,7 @@ def project_brief(name, kind=None):
             except (OSError, ValueError): continue
         notes = read_note(nf)[0] if real else ""
         done = definition_of_done(path)
+        if not rec and has_legacy(notes): notes = split_legacy(notes, capture)[0]  # the plan as a migration would leave it
     return {"name": name, "kind": k, "title": title_of(board or notes, name), "status": field(board, "status"),
             "due": iso_day(field(board, "due")), "done": done["text"], "plan": section_body(notes, "Plan"), "capture": capture}
 

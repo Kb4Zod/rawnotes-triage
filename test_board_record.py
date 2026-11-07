@@ -68,6 +68,8 @@ class SplitLegacy(unittest.TestCase):
     def test_a_template_shaped_copy_goes_with_its_outcome_and_both_plans_are_cleaned(self):
         """The copy's ## Outcome differs from the original only by the Promoted line the app added later: still the copy.
         A capture with its own ## Plan gave Promote's NOTES.md two; the app's lines go from both, the copy of the first too."""
+        self.assertNotIn("Outcome", server.split_legacy(TPL_LEGACY.replace("My private conclusion.\n", "My private conclusion.\n**Restored 2026-09-01** to the Inbox\n"), TPL_CAPTURE)[0])
+        self.assertEqual(server.left_in_notes("# T\n\n## Evil\x1b[2J heading\n\nx\n"), ["Evil[2J heading"])
         notes, fields, sections, moved = server.split_legacy(TPL_LEGACY, TPL_CAPTURE)
         self.assertEqual(notes, "# Tpl\n\nA private aside above the first heading.\n\n## Plan\n\n- definition of done: It ships.\n- first step:\n")
         self.assertEqual(sections["Extensions"], "- pushed 2026-11-24 → 2026-12-01 (2026-10-20): a private reason")
@@ -221,6 +223,21 @@ class Legacy(Base):
         self.assertEqual(field(open(os.path.join(self.proj, "NOTES.md")).read(), "status"), "")
         self.assertEqual(field(self.record("active", "demo"), "due"), "2026-12-01")
         self.post("/api/undo", {}); self.assertEqual(self.snapshot(), before)
+
+    def test_a_done_means_edit_checks_what_you_saw_before_migrating(self):
+        """The original note's own ## Plan held a done line, so the page showed that one; the migration drops that Plan
+        as a copy of the original, and the edit lands on Promote's line instead of being refused for ever."""
+        self.project("two", notes=TPL_LEGACY.replace("- my own plan", "- definition of done: the note's own goal"))
+        with open(os.path.join(self.notes, "done", "2026-10-01-tpl.md"), "w") as fh:
+            fh.write(TPL_CAPTURE.replace("- my own plan", "- definition of done: the note's own goal").replace("active/tpl/", "active/two/"))
+        self.assertEqual(self.get("/api/project?name=two")["done"]["text"], "the note's own goal")
+        self.post("/api/done", {"name": "two", "text": "New goal.", "expected": "the note's own goal"})
+        notes = open(os.path.join(self.tmp, "active", "two", "NOTES.md")).read()
+        self.assertIn("- definition of done: New goal.", notes); self.assertNotIn("own goal", notes); self.assertEqual(notes.count("## Plan"), 1)
+
+    def test_brief_of_an_unmigrated_project_shows_the_plan_without_the_apps_lines(self):
+        b = self.get("/api/brief?name=demo")
+        self.assertEqual(b["plan"], "- definition of done: It ships.\n- first step: draw it")
 
     def test_a_stale_done_means_edit_migrates_nothing(self):
         before = self.snapshot()
