@@ -1,7 +1,7 @@
 # {{title}}: notes for agents
 
 `{{slug}}` was promoted from RawNotes on {{today}} with a ship-by date of {{due}}. Read `NOTES.md` first: it is
-the plan and what "done" means. Keep it up to date; it is tracked in git, so it holds nothing private.
+the plan and what "done" means. Keep it up to date; it is tracked in git, so keep anything private out of it.
 The original note it came from stays in RawNotes, with the board's own data (status, dates, pushes); `rawtriage brief {{slug}}` prints the note and the plan.
 
 ## Issue tracker

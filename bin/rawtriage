@@ -333,6 +333,7 @@ def migrated_text(r):
     for m in r["migrated"]:
         lines.append(f"- {m['path']}: {', '.join(m['moved'])}" + (f" (on GitHub: {m['repo']}, " + {True: "PUBLIC", False: "private", None: "visibility unknown"}[m["public"]] + ")" if m["repo"] else ""))
     lines += [f"- skipped {s['path']}: {s['why']}" for s in r.get("skipped", [])]
+    lines += [f"- check {m['path']}/NOTES.md before you commit it: it still has {', '.join(m['kept'])}" for m in r["migrated"] if m.get("kept")]
     return "\n".join(lines)
 
 

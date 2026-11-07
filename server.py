@@ -212,12 +212,12 @@ def in_closed_window(day, window=None):
 def inflight(conf=None):
     """Promoted notes with a due date (plus open-ended experiments), and projects closed within closed_window_days
     (from maintained/ and archive/ too, for the Closed column), found in the sibling project folders. A folder with a
-    board record is read from the record alone (listed as its NOTES.md, whether or not that file exists); one without
-    is read from its files, as before records existed."""
+    board record is listed from the record, as its NOTES.md (whether or not that file exists), and its NOTES.md is not
+    read; its other files (an old promoted file with a due: line) are read as before records existed."""
     conf = read_config() if conf is None else conf; out = []
     window = config_int("closed_window_days", CLOSED_WINDOW_DAYS, conf=conf); max_ext = config_int("max_extensions", MAX_EXTENSIONS, conf=conf)
     for dest in RECORD_KINDS:
-        d = os.path.join(PROJECTS, dest)
+        d = os.path.join(PROJECTS, dest); records = set()
         if not os.path.isdir(d): continue
         for root, dirs, files in os.walk(d):
             if root[len(d):].count(os.sep) > 1: dirs[:] = []; continue
@@ -225,14 +225,14 @@ def inflight(conf=None):
             if root == d:
                 if dest in PROJECT_KINDS:  # the same folders the board lists: no linked worktree, no hand-made study folder
                     dirs[:] = [x for x in dirs if on_board(os.path.join(d, x), dest)]
-                for x in list(dirs):
+                for x in dirs:
                     rp = record_file(os.path.join(d, x))
-                    if not rp: continue
-                    dirs.remove(x)  # its record speaks for it: the folder's own files hold no board data
+                    if not rp or os.path.islink(os.path.join(d, x)): continue  # os.walk doesn't read a symlinked folder either
                     try: f = os.path.basename(notes_file(os.path.join(d, x)))
                     except OSError: continue
-                    found.append((os.path.join(d, x, f), f, rp))
-            found += [(os.path.join(root, f), f, os.path.join(root, f)) for f in files if f.endswith(".md")]
+                    found.append((os.path.join(d, x, f), f, rp)); records.add(os.path.join(d, x, f))
+            found += [(os.path.join(root, f), f, os.path.join(root, f)) for f in files
+                      if f.endswith(".md") and os.path.join(root, f) not in records]  # a record speaks for its NOTES.md
             for p, f, src in found:
                 try: m = _meta_cache.get(("meta", src), [src], lambda _: _meta_of(src, f))
                 except OSError: continue
@@ -444,7 +444,8 @@ RECORD_DIR = "projects"
 RECORD_KINDS = PROJECT_KINDS + ("maintained", "archive")
 BOARD_FIELDS = ("status", "promoted", "due", "extensions", "shipped", "closed", "github")
 CAPTURE_FIELDS = ("date", "type", "kept", "keeps", "restored")  # the capture's own header: moved only out of a promoted copy
-BOARD_SECTIONS = ("Rounds", "Moved", "Outcome")  # whole sections the app wrote into a legacy NOTES.md
+BOARD_SECTIONS = ("Rounds", "Moved")  # whole sections the app wrote into a legacy NOTES.md (of ## Outcome, only its kill lines)
+KILLED_LINE = re.compile(r"^\*\*Killed \d{4}-\d{2}-\d{2}:\*\*")
 RECORD_ORDER = ("Capture", "Extensions", "Rounds", "Moved", "Outcome")
 EXT_SECTION = "Extensions"  # a record's pushed-ship-by lines (a legacy NOTES.md had them under ## Plan)
 PROMOTED_LINE = re.compile(r"^- promoted from RawNotes on \d{4}-\d{2}-\d{2}\b")
@@ -474,18 +475,19 @@ def board_text(path, n=4000):
     except OSError: return ""
 
 def has_legacy(text):
-    """Does a NOTES.md still hold board data the app wrote there before 2.15: a board field in its header, ## Rounds,
-    ## Moved or ## Outcome, or Promote's dated line or a "pushed" line under ## Plan?"""
+    """Does a NOTES.md still hold board data the app wrote there before 2.15: a board field in its header, ## Rounds or
+    ## Moved, a `**Killed <date>:**` line under ## Outcome, or Promote's dated line or a "pushed" line under ## Plan?"""
     lines = text.split("\n")
     if any(HEAD_LINE.match(lines[i]).group(1) in BOARD_FIELDS for i in header_lines(lines)): return True
     if any(n in BOARD_SECTIONS for n in section_names(text)): return True
+    if any(KILLED_LINE.match(l) for l in section_body(text, "Outcome").split("\n")): return True
     return any(PROMOTED_LINE.match(l) or PUSHED_LINE.match(l) for l in section_body(text, "Plan").split("\n"))
 
 def split_legacy(text, capture=None):
     """A legacy NOTES.md split by audience: (what stays in NOTES.md, the record's header [(key, value)], the record's
     sections {name: body}, what moved [labels]). The board fields always move, and the capture's own header (date, type,
-    kept, keeps, restored) too when it is a promoted copy (it has `promoted:`); ## Rounds, ## Moved and ## Outcome move
-    whole; under ## Plan, Promote's dated "promoted from RawNotes" line goes (the record has the dates) and the "pushed"
+    kept, keeps, restored) too when it is a promoted copy (it has `promoted:`); ## Rounds and ## Moved move whole, and
+    from ## Outcome the kill reasons (a `**Killed <date>:**` line and the lines up to the next blank one); under ## Plan, Promote's dated "promoted from RawNotes" line goes (the record has the dates) and the "pushed"
     lines move to ## Extensions. With `capture` (the original note in done/), every other section that is exactly the
     capture's is the copy Promote made: it goes too, since the original stays in RawNotes. Everything else stays as is."""
     lines = text.split("\n"); head = header_lines(lines); first = {}
@@ -502,6 +504,17 @@ def split_legacy(text, capture=None):
     for name in BOARD_SECTIONS:
         out, body = take_section(out, name)
         if body: sections[name] = body; moved.append(f"## {name}")
+    s = section_span(out, "Outcome")
+    if s:
+        app, rest, inside, cut = [], [], False, False
+        for l in out[s[1]:s[2]].split("\n"):
+            inside = bool(KILLED_LINE.match(l)) or (inside and bool(l.strip()))
+            if inside: app.append(l); cut = True; continue
+            if cut and not l.strip() and rest and not rest[-1].strip(): cut = False; continue  # no double blank where it was
+            cut = False; rest.append(l)
+        if app:
+            sections["Outcome"] = "\n".join(app); moved.append("the kill reason (## Outcome)")
+            out = out[:s[1]] + "\n".join(rest) + out[s[2]:] if any(l.strip() for l in rest) else take_section(out, "Outcome")[0]
     s = section_span(out, "Plan")
     if s:
         plan = out[s[1]:s[2]].split("\n")
@@ -549,7 +562,9 @@ def capture_index():
 def migrate_folder(tx, path, index=None):
     """Move the legacy board data out of project folder `path`'s NOTES.md (split_legacy), through `tx`: the trimmed
     NOTES.md is written now (the app never commits in a project's repo: that commit is yours). Returns (the new
-    record's text, what moved) for the caller to write, or None when NOTES.md holds no board data (nothing written)."""
+    record's text, what moved, the sections left in NOTES.md besides ## Plan) for the caller to write, or None when
+    NOTES.md holds no board data (nothing written). The original note is looked up under the folder's own path, and
+    under the earlier paths its ## Moved names, but only ones with the same folder name (a move may add a suffix)."""
     try: nf = notes_file(path)
     except OSError: return None
     if not os.path.isfile(nf) or os.path.islink(nf): return None
@@ -557,7 +572,8 @@ def migrate_folder(tx, path, index=None):
     if not has_legacy(text): return None
     kind, name = os.path.basename(os.path.dirname(path)), os.path.basename(path)
     index = capture_index() if index is None else index
-    cap = next((index[k] for k in [f"{kind}/{name}"] + MOVED_FROM.findall(section_body(text, "Moved")) if k in index), None)
+    earlier = [k for k in MOVED_FROM.findall(section_body(text, "Moved")) if name.startswith(k.rsplit("/", 1)[-1])]
+    cap = next((index[k] for k in [f"{kind}/{name}"] + earlier if k in index), None)
     cap_text = None
     if cap:
         try: cap_text = read_note(safe_note(cap))[0]
@@ -565,7 +581,7 @@ def migrate_folder(tx, path, index=None):
     new, fields, sections, moved = split_legacy(text, cap_text)
     if cap: sections["Capture"] = capture_line(title_of(text, name), cap)
     tx.write(nf, new, eol)
-    return record_text(title_of(text, name), fields, sections), moved
+    return record_text(title_of(text, name), fields, sections), moved, [n for n in section_names(new) if n != "Plan"]
 
 def board_open(tx, path):
     """(record path, text) of project folder `path`'s record, to change and then write back with board_save. With no
@@ -574,7 +590,13 @@ def board_open(tx, path):
     rp = _stored(record_of(path))  # a symlinked records folder is refused here, before anything is written
     if os.path.lexists(rp): return rp, read_note(rp)[0]
     got = migrate_folder(tx, path)
-    return rp, got[0] if got else f"# {os.path.basename(path)}\n"
+    if got: return rp, got[0]
+    title = os.path.basename(path)
+    try:
+        nf = notes_file(path)
+        if os.path.isfile(nf) and not os.path.islink(nf): title = title_of(read_note(nf)[0], title)
+    except OSError: pass
+    return rp, f"# {title}\n"
 
 def board_save(tx, rp, text):
     tx.ensure_dir(os.path.dirname(rp)); tx.write(rp, text)
@@ -2344,12 +2366,11 @@ def migrate_board_data():
     with mutation("move board data out of project repos") as tx:
         index = capture_index(); moved, skipped = [], []
         for kind, name, full in legacy_projects():
-            try: safefs.ensure_inside([PROJECTS], full); safefs.ensure_inside([PROJECTS], notes_file(full))
-            except ValueError: skipped.append({"path": f"{kind}/{name}", "why": "a symlink: Triage only changes real folders inside Projects"}); continue
-            rp = _stored(record_of(full))
+            try: safefs.ensure_inside([PROJECTS], full); safefs.ensure_inside([PROJECTS], notes_file(full)); rp = _stored(record_of(full))
+            except ValueError: skipped.append({"path": f"{kind}/{name}", "why": "a symlink (the folder, its NOTES.md or its record): Triage only writes real paths"}); continue
             got = migrate_folder(tx, full, index)
             if not got: continue
-            board_save(tx, rp, got[0]); moved.append({"path": f"{kind}/{name}", "moved": got[1], "folder": full})
+            board_save(tx, rp, got[0]); moved.append({"path": f"{kind}/{name}", "moved": got[1], "kept": got[2], "folder": full})
             tx.log(f"migrate-board-data {kind}/{name}: {', '.join(got[1])}")
         n = len(moved); tx.label = f"move board data out of {n} project{'' if n == 1 else 's'}"
     for m in moved:
@@ -2357,9 +2378,11 @@ def migrate_board_data():
         m.update(repo=repo, public=repo_public(repo) if repo else False)
     if not moved:
         return {"ok": True, "msg": "No project's NOTES.md holds board data: nothing to move.", "migrated": [], "skipped": skipped}
-    public = [m["repo"] for m in moved if m["public"]]
+    public = [m["repo"] for m in moved if m["public"]]; kept = [f"{m['path']} ({', '.join(m['kept'])})" for m in moved if m["kept"]]
     msg = (f"Moved the board data of {n} project{'' if n == 1 else 's'} out of NOTES.md into RawNotes/projects/. {MIGRATE_NOTE}"
-           + (f" Public on GitHub, so their history already shows it: {', '.join(public)}." if public else ""))
+           + (f" Public on GitHub, so their history already shows it: {', '.join(public)}." if public else "")
+           + (f" Read these NOTES.md before you commit: they still have sections besides the plan (your own text, or a copy "
+              f"of the original note the app couldn't match to one in done/): {'; '.join(kept)}." if kept else ""))
     return {"ok": True, "msg": msg, "migrated": moved, "skipped": skipped, "public": public, "note": MIGRATE_NOTE}
 
 def project_brief(name, kind=None):
@@ -2382,7 +2405,7 @@ def project_brief(name, kind=None):
         if cap:
             try: capture = read_note(safe_note(cap))[0]
             except (OSError, ValueError): capture = None
-        try: nf = notes_file(path); notes = read_note(nf)[0] if os.path.isfile(nf) else ""
+        try: nf = notes_file(path); notes = read_note(nf)[0] if os.path.isfile(nf) and not os.path.islink(nf) else ""
         except OSError: notes = ""
         done = definition_of_done(path)
     return {"name": name, "kind": k, "title": title_of(board or notes, name), "status": field(board, "status"),
@@ -2681,7 +2704,9 @@ class H(BaseHTTPRequestHandler):
                 if not self._this_machine(): raise ValueError("The notes folder can only be set up from the machine running the server.")
                 return self._send(200, setup_notes(req))
             if path == "/api/undo": return self._send(200, undo(self._this_machine()))
-            if path == "/api/migrate-board-data": return self._send(200, migrate_board_data())
+            if path == "/api/migrate-board-data":
+                if not self._this_machine(): raise ValueError("Board data can only be moved from the machine running the server (it rewrites every project's NOTES.md).")
+                return self._send(200, migrate_board_data())
             if path == "/api/done": return self._send(200, set_done(req.get("name", ""), req.get("text", ""), req.get("expected", ""), req.get("kind")))
             if path == "/api/open":
                 if not self._this_machine(): raise ValueError("Open only works from the machine running the server.")

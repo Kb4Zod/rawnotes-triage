@@ -516,13 +516,15 @@ through the server, with no paths, so an agent in a worktree can read what `NOTE
 A folder with no record (promoted before 2.15) is read from the old fields in its `NOTES.md`, exactly as before. The
 first board action that writes to it (ship, kill, +7 days, next round, close out, a done-means edit) moves them into a
 record in the same undoable step, and so does **Move it to RawNotes** on Pulse, or `rawtriage migrate-board-data`
-(`POST /api/migrate-board-data`), for every such folder at once as one undo step. What moves: the board fields (and the
-capture's own `date`/`type`/`kept`/`keeps`/`restored` header when the file was Promote's copy), `## Rounds`, `## Moved`,
-`## Outcome`, Promote's dated line and the `pushed` lines under `## Plan`, and any section still exactly as in the
-original note in `done/` (the unedited copy; the record links the original instead). Everything else stays. The app
-never commits in a project's repo: commit each trimmed `NOTES.md` yourself. The old data is still in that repo's git
-history; the report says so and names the repos that are public on GitHub (asked through `gh`; rewriting history is up
-to you).
+(`POST /api/migrate-board-data`; this machine only), for every such folder at once as one undo step. What moves: the
+board fields (and the capture's own `date`/`type`/`kept`/`keeps`/`restored` header when the file was Promote's copy),
+`## Rounds`, `## Moved`, the `**Killed <date>:**` reasons under `## Outcome` (the rest of that section is yours and
+stays), Promote's dated line and the `pushed` lines under `## Plan`, and any section still exactly as in the original
+note in `done/` (the unedited copy; the record links the original instead). Everything else stays. The app never
+commits in a project's repo: commit each trimmed `NOTES.md` yourself. The old data is still in that repo's git history;
+the report says so, names the repos that are public on GitHub (asked through `gh`; rewriting history is up to you), and
+lists each `NOTES.md` that still has sections besides the plan (your own text, or a copy of the original it couldn't
+match), so you read those before committing. A symlinked folder, `NOTES.md` or record is skipped and listed.
 
 **Symlinked project folders** are listed read-only with a note. Every write
 must land on a real path inside `RawNotes/` or the projects folders with no

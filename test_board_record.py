@@ -51,8 +51,18 @@ class SplitLegacy(unittest.TestCase):
 
     def test_has_legacy(self):
         for text, want in ((LEGACY, True), ("# P\n\n## Plan\n\n- definition of done: x\n", False), ("# P\n\nNo header.\n", False),
-                           ("# P\n\n## Moved\n\n- x\n", True), ("# P\n\n## Plan\n\n- pushed a → b (2026-10-01): why\n", True)):
+                           ("# P\n\n## Moved\n\n- x\n", True), ("# P\n\n## Plan\n\n- pushed a → b (2026-10-01): why\n", True),
+                           ("# P\n\n## Outcome\n\nMy own conclusions.\n", False), ("# P\n\n## Outcome\n\n**Killed 2026-10-01:** no.\n", True)):
             self.assertEqual(server.has_legacy(text), want, text)
+
+    def test_only_the_kill_reason_leaves_outcome(self):
+        text = "# P\n\n- status: dead\n\n## Outcome\n\nMy own conclusions.\n\n**Killed 2026-10-01:** no time\nand no money.\n\nMore of mine.\n"
+        notes, _, sections, _ = server.split_legacy(text)
+        self.assertEqual(sections["Outcome"], "**Killed 2026-10-01:** no time\nand no money.")
+        self.assertEqual(notes, "# P\n\n## Outcome\n\nMy own conclusions.\n\nMore of mine.\n")
+        notes, _, sections, _ = server.split_legacy("# P\n\n## Outcome\n\n**Killed 2026-10-01:** no.\n\n## Plan\n\n- x\n")
+        self.assertEqual((notes, sections["Outcome"]), ("# P\n\n## Plan\n\n- x\n", "**Killed 2026-10-01:** no."))
+        self.assertNotIn("Outcome", server.split_legacy("# P\n\n- status: x\n\n## Outcome\n\nMine.\n")[2])
 
     def test_record_text_and_capture_link_round_trip(self):
         rec = server.record_text("T", [("status", "promoted")], {"Outcome": "x", "Capture": server.capture_line("T", "done/2026-10-01-a b.md")})
@@ -114,13 +124,33 @@ class BoardActionsLeaveTheProjectAlone(Base):
         self.assertIn("## Rounds", self.record("active", "a")); self.assertNotIn("Rounds", open(os.path.join(proj, "NOTES.md")).read())
         self.post("/api/undo", {}); self.assertEqual(self.tree(proj), before)
 
-    def test_a_move_refuses_when_the_records_name_is_taken(self):
+    def test_a_move_takes_a_suffix_when_a_record_by_its_name_is_left_over(self):
         """A board record left behind under the target's name (its folder deleted by hand) is never overwritten."""
         self.promote(); os.makedirs(os.path.join(self.notes, "projects", "archive"))
         with open(os.path.join(self.notes, "projects", "archive", "a.md"), "w") as fh: fh.write("# stale\n")
         self.assertEqual(self.post("/api/project/close", {"name": "a", "outcome": "archive"})["moved_to"], "archive/a-2")
         self.assertEqual(self.record("archive", "a"), "# stale\n")
         self.assertIn("## Moved", self.record("archive", "a-2"))
+
+
+class Records(Base):
+    def test_a_new_record_takes_the_title_from_notes_md(self):
+        self.project("hand", notes="# A Nice Title\n\nJust text.\n")
+        self.post("/api/project/status", {"name": "hand", "kind": "active", "action": "kill", "note": "Not needed."})
+        self.assertTrue(self.record("archive", "hand_abandoned").startswith("# A Nice Title\n"))
+        self.assertEqual(open(os.path.join(self.tmp, "archive", "hand_abandoned", "NOTES.md")).read(), "# A Nice Title\n\nJust text.\n")
+
+    def test_a_record_stands_for_notes_md_only_and_other_promoted_files_still_show(self):
+        proj = self.promote()
+        with open(os.path.join(proj, "PLAN.md"), "w") as fh: fh.write("# Side plan\n\n- status: promoted\n- due: 2099-01-01\n")
+        self.assertEqual(sorted(f["path"] for f in self.get("/api/notes")["inflight"]), ["active/a/NOTES.md", "active/a/PLAN.md"])
+
+    def test_a_symlinked_folder_is_not_read_through_its_record(self):
+        real = os.path.join(self.tmp, "elsewhere", "linked"); os.makedirs(real)
+        os.makedirs(os.path.join(self.tmp, "active")); os.symlink(real, os.path.join(self.tmp, "active", "linked"))
+        os.makedirs(os.path.join(self.notes, "projects", "active"))
+        with open(os.path.join(self.notes, "projects", "active", "linked.md"), "w") as fh: fh.write("# L\n\n- status: promoted\n- due: 2099-01-01\n")
+        self.assertEqual(self.get("/api/notes")["inflight"], [])
 
 
 class Legacy(Base):
@@ -144,6 +174,7 @@ class Legacy(Base):
         self.assertEqual(notes, "# Demo\n\n## Notes\n\nMy own notes, edited since.\n\n## Plan\n\n- definition of done: It ships.\n- first step: draw it\n")
         self.assertEqual([field(rec, k) for k in ("status", "promoted", "extensions", "github", "date")], ["promoted", "2026-10-01", "2", "private", "2026-10-01"])
         self.assertEqual(server.capture_of(rec), "done/2026-10-01-demo.md")  # found from the original's Outcome line
+        self.assertNotIn("Can it ship?", notes)  # the unedited copy of the original is dropped
         self.assertEqual(rec.split("## Extensions\n\n", 1)[1].count("- pushed "), 2)
         self.assertEqual(len(server._undo), 1)
         self.post("/api/undo", {}); self.assertEqual(self.snapshot(), before)
@@ -185,6 +216,8 @@ class BulkMigration(Base):
         self.assertNotIn("Can it ship?", open(os.path.join(self.demo, "NOTES.md")).read())
         self.assertEqual(open(os.path.join(self.kit, "NOTES.md")).read(), "# Kit\n\n- status: maintained\n")
         self.assertEqual(self.get("/api/stats")["legacy_board"], [])
+        self.assertEqual([m["kept"] for m in r["migrated"]], [["Notes"], []])  # demo's edited ## Notes stays, and is named
+        self.assertIn("Read these NOTES.md before you commit", r["msg"]); self.assertIn("active/demo (Notes)", r["msg"])
         self.assertEqual(self.post("/api/migrate-board-data", {})["migrated"], [])  # again: nothing left, no undo step
         self.assertEqual(server._undo[-1]["label"], "move board data out of 2 projects")
         self.post("/api/undo", {}); self.assertEqual(self.snapshot(), before)
@@ -195,6 +228,31 @@ class BulkMigration(Base):
         with mock.patch.object(server, "repo_public", lambda repo: repo == "me/demo"):
             r = self.post("/api/migrate-board-data", {})
         self.assertEqual(r["public"], ["me/demo"]); self.assertIn("Public on GitHub", r["msg"]); self.assertIn("me/demo", r["msg"])
+
+    def test_a_symlinked_record_is_skipped_not_fatal(self):
+        os.makedirs(os.path.join(self.notes, "projects", "maintained")); outside = os.path.join(self.tmp, "outside.md")
+        with open(outside, "w") as fh: fh.write("x\n")
+        os.symlink(outside, os.path.join(self.notes, "projects", "maintained", "old.md"))
+        r = self.post("/api/migrate-board-data", {})
+        self.assertEqual(([m["path"] for m in r["migrated"]], [x["path"] for x in r["skipped"]]), (["active/demo"], ["maintained/old"]))
+        self.assertEqual(open(outside).read(), "x\n")
+
+    def test_another_projects_move_line_never_links_its_original(self):
+        with open(os.path.join(self.notes, "done", "2026-10-01-other.md"), "w") as fh:
+            fh.write(CAPTURE.replace("active/demo/", "active/other/"))
+        self.project("mine", "archive", "# Mine\n\n- status: shipped\n\n## Moved\n\n- 2026-10-02: moved from `active/other/` to `archive/mine/`.\n")
+        self.post("/api/migrate-board-data", {})
+        self.assertIsNone(server.capture_of(self.record("archive", "mine")))
+
+    def test_only_this_machine_may_migrate(self):
+        import urllib.error, urllib.request
+        p = mock.patch.object(server, "BIND_HOST", "0.0.0.0"); p.start(); self.addCleanup(p.stop)
+        before = self.snapshot()
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}/api/migrate-board-data", method="POST", data=b"{}",
+                                     headers={"Host": f"192.168.1.5:{self.port}", "Content-Type": "application/json"})
+        with self.assertRaises(urllib.error.HTTPError) as e: urllib.request.urlopen(req)
+        self.assertEqual(e.exception.code, 400); self.assertIn("machine running the server", json.loads(e.exception.read())["error"])
+        self.assertEqual(self.snapshot(), before)
 
     def test_repo_public_never_guesses(self):
         p = mock.patch.object(server, "github_status", return_value={"state": "signed_in"}); p.start(); self.addCleanup(p.stop)
