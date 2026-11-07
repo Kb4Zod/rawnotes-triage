@@ -145,6 +145,7 @@ DIRECT = {
 }
 for _f in STATE_FUNCS: DIRECT.setdefault(_f, (3, None))
 # Kind-3 calls that need a decision per test: "converted" (the test still runs) or "ported" (a Rust test replaces it).
+# A test already ported by an R row needs no entry (test_github_push.NotOnGithubFlag's two: R rows at :111 and :124).
 KIND3 = {
     "test_browser.GithubPanel.test_status_and_token_dialog":
         ("converted", "forget_github(): under the switch the server is a fresh process (restarted after the fake gh is scripted)"),
@@ -152,10 +153,6 @@ KIND3 = {
         ("ported", "builds the undo entry with server.mutation() in this process (two folders in one step, no route makes one)"),
     "test_engine.UndoContainment.test_rollback_does_not_write_through_a_link_and_leaves_an_unfinished_entry_that_finishes_later":
         ("ported", "builds the unfinished entry with server.mutation() in this process, swapping a folder mid-transaction"),
-    "test_github_push.NotOnGithubFlag.test_an_inherited_git_dir_does_not_redirect_the_git_facts":
-        ("ported", "every assertion is on server.git_out/github_state/work_commits under this process's patched environment"),
-    "test_github_push.NotOnGithubFlag.test_an_inherited_git_dir_does_not_reach_gh_or_the_project_panel":
-        ("ported", "asserts server.gh_env() of this process (and its route check needs the inherited GIT_DIR in the server's own environment, which the Rust test sets)"),
 }
 # Tests PR 2 split in two (patch-map.md). While the Day 0 table has only the original, --against checks each half against
 # the owner and due the map gives; once the table has the halves' rows, they are compared like any other row.

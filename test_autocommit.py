@@ -66,7 +66,7 @@ class AutoCommit(GitFixture):
         self.assertEqual(self.subject(), "triage: kill “Alpha”")
         self.assertEqual(self.changed(), ["A\tdone/2026-10-01-alpha.md", "D\t2026-10-01-alpha.md"])
         body = git(self.notes, "log", "-1", "--format=%b")
-        self.assertIn("done/2026-10-01-alpha.md", body); self.assertIn(f"via rawnotes-triage {self.served_version()}", body)
+        self.assertIn("done/2026-10-01-alpha.md", body); self.assertIn(f"via rawnotes-triage {self.expected_version()}", body)
         self.assertEqual(self.status(), [" M other.md", "?? 2026-10-09-new-capture.md", "M  staged.md"])
 
     def test_batch_merge_restore_and_undo_each_make_one_commit(self):
@@ -214,8 +214,10 @@ class AutoCommit(GitFixture):
         server.AUTOCOMMIT = False; self.serve_with(args=["--no-commit"])  # under TRIAGE_SERVER: started with --no-commit
         r = self.post("/api/action", {"file": "2026-10-01-alpha.md", "action": "kill"})
         self.assertEqual(r["commit"], {"ok": True, "skipped": "auto-commit is off"}); self.assertEqual(self.count(), n)
-        server.AUTOCOMMIT = True; server.save_config(autocommit=False)
-        self.serve_with(args=[], restart=True)  # under TRIAGE_SERVER: a new server without --no-commit (config.json says off)
+        server.AUTOCOMMIT = True
+        self.serve_with(args=[], restart=True)  # under TRIAGE_SERVER: a new server without --no-commit
+        self.get("/api/notes")  # it is running before config.json changes, so the change reaches a running server
+        server.save_config(autocommit=False)
         r = self.post("/api/action", {"file": "2026-10-02-beta.md", "action": "kill"})
         self.assertEqual(r["commit"]["skipped"], "auto-commit is off"); self.assertEqual(self.count(), n)
         server.save_config(autocommit=True)

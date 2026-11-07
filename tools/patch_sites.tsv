@@ -4,11 +4,11 @@ test_autocommit.py	29	GitFixture.setUp	server.AUTOCOMMIT = (restore)	assign	1	S 
 test_autocommit.py	207	AutoCommit.test_a_refusing_hook_is_named_with_home_as_tilde	os.environ (patch.dict)	patch	1	S the server's environment: must be set before the test's first request (the server starts then)	03	2	new (02 walk)	converted: serve_with(env HOME) before the first request
 test_autocommit.py	214	AutoCommit.test_no_commit_flag_and_config_turn_it_off	server.AUTOCOMMIT =	assign	1	S `--no-commit` / config `autocommit`	03	2	patch-map	converted: started with --no-commit, then a new server without it (config.json autocommit false); no undo crosses the restart
 test_autocommit.py	217	AutoCommit.test_no_commit_flag_and_config_turn_it_off	server.AUTOCOMMIT =	assign	2	S `--no-commit` / config `autocommit`	03	2	patch-map	converted: started with --no-commit, then a new server without it (config.json autocommit false); no undo crosses the restart
-test_autocommit.py	240	SymlinkedNotesPath.test_a_change_is_committed_when_the_notes_path_goes_through_a_symlink	server.NOTES =	assign	1	S `--notes`	03	2	patch-map	converted: serve_with(notes=<path through the link>)
-test_autocommit.py	240	SymlinkedNotesPath.test_a_change_is_committed_when_the_notes_path_goes_through_a_symlink	server.PROJECTS =	assign	1	S `--notes` (projects root is its parent)	03	2	patch-map	converted: serve_with(notes=<path through the link>)
-test_autocommit.py	279	CommitToast.test_hook_failure_warning_is_shown	server.autocommit	patch	1	S failing `pre-commit` hook in the fixture repo	03	2	patch-map	converted: under the switch the notes folder is a repo whose pre-commit hook exits 1
+test_autocommit.py	242	SymlinkedNotesPath.test_a_change_is_committed_when_the_notes_path_goes_through_a_symlink	server.NOTES =	assign	1	S `--notes`	03	2	patch-map	converted: serve_with(notes=<path through the link>)
+test_autocommit.py	242	SymlinkedNotesPath.test_a_change_is_committed_when_the_notes_path_goes_through_a_symlink	server.PROJECTS =	assign	1	S `--notes` (projects root is its parent)	03	2	patch-map	converted: serve_with(notes=<path through the link>)
+test_autocommit.py	281	CommitToast.test_hook_failure_warning_is_shown	server.autocommit	patch	1	S failing `pre-commit` hook in the fixture repo	03	2	patch-map	converted: under the switch the notes folder is a repo whose pre-commit hook exits 1
 test_board_record.py	318	BulkMigration.test_the_report_names_public_repos	server.repo_public	patch	1	F fake `gh`	07	2	patch-map	converted: fake gh answers api user (me) and api repos/me/demo (private false)
-test_board_record.py	350	BulkMigration.test_only_this_machine_may_migrate	server.BIND_HOST	patch	1	S `--host`	07	2	patch-map	converted: serve_with(host=0.0.0.0)
+test_board_record.py	350	BulkMigration.test_only_this_machine_may_migrate	server.BIND_HOST	patch	1	S `--host`	07	2	patch-map	"converted: serve_with(host=0.0.0.0); serve_with(host=""0.0.0.0"") binds every interface for the test's lifetime (a free port, no auth: the test's own temp tree only)"
 test_board_record.py	360	BulkMigration.test_repo_public_never_guesses	server.github_status	patch	1	R (F→R, PR 2: every assertion is on server.repo_public() called directly; no route reaches it)	07	-	patch-map	F→R; 
 test_board_record.py	361	BulkMigration.test_repo_public_never_guesses	server.gh_rest	patch	1	R (F→R, PR 2: every assertion is on server.repo_public() called directly; no route reaches it)	07	-	patch-map	F→R; 
 test_board_record.py	362	BulkMigration.test_repo_public_never_guesses	server.gh_rest	patch	2	R (F→R, PR 2: every assertion is on server.repo_public() called directly; no route reaches it)	07	-	patch-map	F→R; 
@@ -23,13 +23,13 @@ test_browser.py	71	BrowserCase.no_real_github	target.<dynamic>	patch	1	F fake gh
 test_browser.py	72	BrowserCase.no_real_github	server._activity	state	1	S a fresh process (the reset is moot)	12	2	patch-map 2nd	converted: github_off() scripts the fake gh with the same graphql answers and fails every other call; the _activity reset is a fresh process
 test_browser.py	139	GithubPanel.test_status_and_token_dialog	server._gh	patch	1	F fake `gh` on PATH (scripted answers, argv/env logged)	12	2	patch-map	converted: fake gh answers api user by GH_TOKEN (tokenuser / gh auth login); saved_token read from the fixture's config folder
 test_browser.py	140	GithubPanel.test_status_and_token_dialog	server.shutil.which	patch	1	F fake `gh` on PATH	12	2	patch-map	converted: fake gh answers api user by GH_TOKEN (tokenuser / gh auth login); saved_token read from the fixture's config folder
-test_browser.py	259	Flows.test_expired_note_has_a_chip_a_badge_and_no_keep	server.LIMIT_DEFAULTS (patch.dict)	patch	1	S fixture `config.json` limits	12	2	patch-map	converted: a new server, then set_limits (config.json) before the page reloads
-test_browser.py	336	Flows.test_the_close_out_form_warns_when_the_move_cannot_be_undone	server.TREE_LIMIT	patch	1	H `RAWTRIAGE_TEST_TREE_LIMIT` (new)	12	2	patch-map	converted: a new server with RAWTRIAGE_TEST_TREE_LIMIT=0
-test_browser.py	381	Flows.test_a_blocked_close_out_cannot_be_sent_and_kill_shows_why	server.DEPS	patch	1	H `RAWTRIAGE_TEST_DEPS_HOME`/`_PROC`/`_CRONTAB`	12	2	patch-map	converted: a new server with deps_env(sources)
-test_browser.py	396	Flows.test_a_failed_dependency_lookup_shows_why_and_leaves_the_form_usable	server.project_deps	patch	1	H `RAWTRIAGE_TEST_DEPS_FAIL` (new)	12	2	patch-map	converted: a new server with RAWTRIAGE_TEST_DEPS_FAIL='deps exploded' (only GET /api/project/deps uses project_deps, so the close still runs)
-test_browser.py	448	Flows.test_the_drawer_shows_what_points_at_the_folder	server.DEPS	patch	1	H `RAWTRIAGE_TEST_DEPS_HOME`/`_PROC`/`_CRONTAB`	12	2	patch-map	converted: a new server with deps_env(sources)
-test_browser.py	473	Flows.test_server_text_on_a_card_is_shown_as_text_not_markup	server.inflight	patch	1	H `RAWTRIAGE_TEST_INFLIGHT_DUE` (new; wired by 06): sets the named fixture project's `due` after metadata extraction, so the exact hostile string reaches the page (a record's `due:` field keeps only its first word, `notemeta.field`, so a fixture record would lose `<img id=pwn`)	12	2	patch-map	converted: a new server with RAWTRIAGE_TEST_INFLIGHT_DUE=demo=<the hostile string, exactly>
-test_browser.py	500	Flows.test_open_folder_button_sends_a_project_not_a_path	server.open_path	patch	1	H `RAWTRIAGE_TEST_OPENER` (new)	12	2	patch-map	converted: the paths the test opener (tools/shim/record-open) was handed
+test_browser.py	260	Flows.test_expired_note_has_a_chip_a_badge_and_no_keep	server.LIMIT_DEFAULTS (patch.dict)	patch	1	S fixture `config.json` limits	12	2	patch-map	converted: a new server, then set_limits (config.json) before the page reloads
+test_browser.py	337	Flows.test_the_close_out_form_warns_when_the_move_cannot_be_undone	server.TREE_LIMIT	patch	1	H `RAWTRIAGE_TEST_TREE_LIMIT` (new)	12	2	patch-map	converted: a new server with RAWTRIAGE_TEST_TREE_LIMIT=0
+test_browser.py	382	Flows.test_a_blocked_close_out_cannot_be_sent_and_kill_shows_why	server.DEPS	patch	1	H `RAWTRIAGE_TEST_DEPS_HOME`/`_PROC`/`_CRONTAB`	12	2	patch-map	converted: a new server with deps_env(sources)
+test_browser.py	397	Flows.test_a_failed_dependency_lookup_shows_why_and_leaves_the_form_usable	server.project_deps	patch	1	H `RAWTRIAGE_TEST_DEPS_FAIL` (new)	12	2	patch-map	converted: a new server with RAWTRIAGE_TEST_DEPS_FAIL='deps exploded' (only GET /api/project/deps uses project_deps, so the close still runs)
+test_browser.py	449	Flows.test_the_drawer_shows_what_points_at_the_folder	server.DEPS	patch	1	H `RAWTRIAGE_TEST_DEPS_HOME`/`_PROC`/`_CRONTAB`	12	2	patch-map	converted: a new server with deps_env(sources)
+test_browser.py	474	Flows.test_server_text_on_a_card_is_shown_as_text_not_markup	server.inflight	patch	1	H `RAWTRIAGE_TEST_INFLIGHT_DUE` (new; wired by 06): sets the named fixture project's `due` after metadata extraction, so the exact hostile string reaches the page (a record's `due:` field keeps only its first word, `notemeta.field`, so a fixture record would lose `<img id=pwn`)	12	2	patch-map	converted: a new server with RAWTRIAGE_TEST_INFLIGHT_DUE=demo=<the hostile string, exactly>
+test_browser.py	501	Flows.test_open_folder_button_sends_a_project_not_a_path	server.open_path	patch	1	H `RAWTRIAGE_TEST_OPENER` (new)	12	2	patch-map	converted: the paths the test opener (tools/shim/record-open) was handed
 test_cli.py	61	Reading.test_list_shows_the_real_expired_flag_and_the_summary	server.LIMIT_DEFAULTS (patch.dict)	patch	1	S fixture `config.json` limits	10	2	patch-map	converted: set_limits (config.json) before the server starts
 test_cli.py	151	NewNote.test_new_answers_with_home_as_tilde_and_the_cli_prints_the_full_path	os.environ (patch.dict)	patch	1	S the server's environment: must be set before the test's first request (the server starts then)	10	2	new (02 walk)	converted: serve_with(env HOME) before the first request
 test_cli.py	186	Deciding.setUp	server.log =	assign	1	S `--log` (temp file)	10	2	patch-map	converted by testkit: the child's --log, which server.LOG_PATH names
@@ -47,17 +47,17 @@ test_closeout.py	315	Faults.test_a_failure_after_the_move_moves_it_back	server.T
 test_closeout.py	325	Faults.test_a_rollback_that_cannot_move_back_leaves_an_unfinished_undo_that_finishes	os.rename	patch	1	R	08	-	patch-map 2nd	already R by Tx.movedir
 test_closeout.py	325	Faults.test_a_rollback_that_cannot_move_back_leaves_an_unfinished_undo_that_finishes	server.Tx.movedir	patch	1	R	08	-	patch-map	
 test_closeout.py	342	Faults.test_an_undo_that_fails_half_way_moves_the_folder_forward_again	server.safefs.atomic_write	patch	1	R	08	-	patch-map	
-test_closeout.py	350	Faults.test_a_folder_too_big_to_check_still_moves_but_its_undo_refuses	server.TREE_LIMIT	patch	1	H `RAWTRIAGE_TEST_TREE_LIMIT` (new)	08	2	patch-map	converted: RAWTRIAGE_TEST_TREE_LIMIT=1 for the whole test (the undo refuses either way)
+test_closeout.py	350	Faults.test_a_folder_too_big_to_check_still_moves_but_its_undo_refuses	server.TREE_LIMIT	patch	1	H `RAWTRIAGE_TEST_TREE_LIMIT` (new)	08	2	patch-map	converted: RAWTRIAGE_TEST_TREE_LIMIT=1 for the whole test (the undo refuses either way); under the switch the limit is the server's for the whole test, so it applies to the undo too (in-process only the close sees it; the undo refuses either way, from the state recorded at close)
 test_closeout.py	358	Faults.test_the_deps_answer_warns_before_a_move_that_undo_cannot_check	server.TREE_LIMIT	patch	1	H `RAWTRIAGE_TEST_TREE_LIMIT` (new)	08	2	patch-map	converted: a new server with RAWTRIAGE_TEST_TREE_LIMIT=1 for the second GET
-test_closeout.py	386	OffThisMachine.setUp	server.BIND_HOST	patch	1	S `--host`	08	2	patch-map	converted: serve_with(host=0.0.0.0, env=deps_env(sources))
+test_closeout.py	386	OffThisMachine.setUp	server.BIND_HOST	patch	1	S `--host`	08	2	patch-map	"converted: serve_with(host=0.0.0.0, env=deps_env(sources)); serve_with(host=""0.0.0.0"") binds every interface for the test's lifetime (a free port, no auth: the test's own temp tree only)"
 test_closeout.py	388	OffThisMachine.setUp	server.DEPS	patch	1	H `RAWTRIAGE_TEST_DEPS_HOME`/`_PROC`/`_CRONTAB`	08	2	patch-map	converted: serve_with(host=0.0.0.0, env=deps_env(sources))
 test_closeout.py	411	OffThisMachine.test_a_move_is_refused_off_this_machine_and_nothing_changes	server.DEPS	patch	1	H `RAWTRIAGE_TEST_DEPS_HOME`/`_PROC`/`_CRONTAB`	08	2	patch-map	converted: serve_with(env=deps_env(sources)) before the first request
-test_closeout.py	431	UndoOffThisMachine.setUp	server.BIND_HOST	patch	1	S `--host`	08	2	patch-map	converted: serve_with(host=0.0.0.0)
+test_closeout.py	431	UndoOffThisMachine.setUp	server.BIND_HOST	patch	1	S `--host`	08	2	patch-map	"converted: serve_with(host=0.0.0.0); serve_with(host=""0.0.0.0"") binds every interface for the test's lifetime (a free port, no auth: the test's own temp tree only)"
 test_deps.py	41	Situation.setUp	server.PROJECTS =	assign	1	S `--notes` (projects root is its parent)	21	2	patch-map	converted: --notes <home>/Projects/RawNotes (projects root its parent) and deps_env(sources)
 test_deps.py	63	Situation.setUp	server.DEPS	patch	1	H `RAWTRIAGE_TEST_DEPS_HOME`/`_PROC`/`_CRONTAB`	21	2	patch-map	converted: --notes <home>/Projects/RawNotes (projects root its parent) and deps_env(sources)
 test_deps.py	214	Helpers.test_default_sources_are_this_users_home	os.environ (patch.dict)	patch	1	none needed (pure test, ported)	21	-	new (02 walk)	
 test_engine.py	29	Faults.fail_nth	<dynamic>	patch	1	R (every caller is R)	(callers)	-	patch-map 2nd	
-test_engine.py	37	Faults.test_log_oserror_does_not_fail_or_strand_a_kill	server.log	patch	1	S `--log` under a missing parent folder (fails even as root; not chmod). Assertion-equivalent, not errno-equivalent: the `ENOSPC` itself is covered by a Rust unit test of the log writer	03	2	patch-map	converted: --log under a missing folder outside the snapshot
+test_engine.py	37	Faults.test_log_oserror_does_not_fail_or_strand_a_kill	server.log	patch	1	S `--log` under a missing parent folder (fails even as root; not chmod). Assertion-equivalent, not errno-equivalent: the `ENOSPC` itself is covered by a Rust unit test of the log writer	03	2	patch-map	converted: --log under a missing folder outside the snapshot; under the switch this is the same check as test_unwritable_log_file_does_not_fail_changes (the log can't be opened at all): an OSError raised mid-change by log() itself is not covered for Rust, only by its unit test of the log writer
 test_engine.py	46	Faults.test_unwritable_log_file_does_not_fail_changes	server.LOG_PATH =	assign	1	S `--log` (temp file)	03	2	patch-map	converted: serve_with(log=<path under a missing folder>)
 test_engine.py	46	Faults.test_unwritable_log_file_does_not_fail_changes	server.log =	assign	1	S `--log` (temp file)	03	2	patch-map	converted: serve_with(log=<path under a missing folder>)
 test_engine.py	52	Faults.test_a_rolled_back_change_writes_no_log_lines	server.LOG_PATH =	assign	1	R (as above)	05	-	patch-map	
@@ -81,7 +81,7 @@ test_followups.py	34	DepsOutsideTheLock.test_the_tree_walk_runs_without_holding_
 test_followups.py	37	DepsOutsideTheLock.test_the_tree_walk_runs_without_holding_the_lock	server.tree_too_big	patch	2	R	21	-	patch-map	
 test_followups.py	47	NewNotePath.test_a_notes_folder_named_like_a_memory_key_comes_back_whole	os.environ (patch.dict)	patch	1	S the server's environment: must be set before the test's first request (the server starts then)	05	2	new (02 walk)	converted: serve_with(notes=odd, env HOME)
 test_followups.py	47	NewNotePath.test_a_notes_folder_named_like_a_memory_key_comes_back_whole	server.NOTES	patch	1	S `--notes`	05	2	patch-map	converted: serve_with(notes=odd, env HOME)
-test_followups.py	63	OffThisMachinePaths.setUp	server.BIND_HOST	patch	1	S `--host`	06/21/08	2	patch-map	converted: serve_with(host=0.0.0.0, env=deps_env(...))
+test_followups.py	63	OffThisMachinePaths.setUp	server.BIND_HOST	patch	1	S `--host`	06/21/08	2	patch-map	"converted: serve_with(host=0.0.0.0, env=deps_env(...)); serve_with(host=""0.0.0.0"") binds every interface for the test's lifetime (a free port, no auth: the test's own temp tree only)"
 test_followups.py	64	OffThisMachinePaths.setUp	server.DEPS	patch	1	H `RAWTRIAGE_TEST_DEPS_HOME`/`_PROC`/`_CRONTAB`	06/21/08	2	patch-map	converted: serve_with(host=0.0.0.0, env=deps_env(...))
 test_github.py	37	GithubSignIn.stub_gh	server._gh	patch	1	F fake `gh` on PATH (scripted answers, argv/env logged)	09	2	patch-map	converted: fake gh answers api user by GH_TOKEN; calls from its log; GH_TOKEN/GITHUB_TOKEN unset for the server
 test_github.py	38	GithubSignIn.stub_gh	server.shutil.which	patch	1	F/S fake `gh` on PATH, or PATH without it	09	2	patch-map	converted: fake gh answers api user by GH_TOKEN; calls from its log; GH_TOKEN/GITHUB_TOKEN unset for the server
@@ -110,7 +110,7 @@ test_github_push.py	253	CloseOutGate.test_a_git_check_that_fails_refuses_rather_
 test_github_push.py	305	CloseOutGate.test_the_gate_off_lets_everything_through	server.SHIP_NEEDS_GITHUB	patch	1	H `RAWTRIAGE_TEST_SHIP_NEEDS_GITHUB`	08	2	patch-map	converted: a new server with RAWTRIAGE_TEST_SHIP_NEEDS_GITHUB='' (no undo after)
 test_github_push.py	407	CreateRepo.test_the_sign_in_check_runs_without_the_lock.status	server._lock	state	1	R (already R by github_status)	09	-	new (02 walk)	
 test_github_push.py	408	CreateRepo.test_the_sign_in_check_runs_without_the_lock	server.github_status	patch	1	R (asserts `server._lock._readers == 0` at the call; promote setup, so due 08)	09	-	patch-map	
-test_github_push.py	413	CreateRepo.test_refuses_off_this_machine	server.BIND_HOST	patch	1	S `--host`	09	2	patch-map	converted: a new server on --host 0.0.0.0
+test_github_push.py	413	CreateRepo.test_refuses_off_this_machine	server.BIND_HOST	patch	1	S `--host`	09	2	patch-map	"converted: a new server on --host 0.0.0.0; serve_with(host=""0.0.0.0"") binds every interface for the test's lifetime (a free port, no auth: the test's own temp tree only)"
 test_github_push.py	465	CreateRepo.test_refuses_when_gh_is_missing	server.shutil.which	patch	1	S fixture PATH without `gh`	09	2	patch-map	converted: a new server with PATH without gh (path_without)
 test_limits.py	21	InboxLimits.setUp	os.environ (patch.dict)	patch	1	S RAWTRIAGE_TODAY, set before the server starts (was the server.today patch)	03	1	new (02 walk)	
 test_limits.py	134	ConfigReadOncePerListing.test_a_listing_reads_config_json_once_not_once_per_note	server.read_config	patch	1	R	01	-	patch-map	
@@ -150,7 +150,7 @@ test_runtime.py	223	GithubActivity.test_concurrent_callers_share_one_fetch_and_n
 test_runtime.py	231	GithubActivity.test_a_failed_fetch_wakes_waiters_with_the_error	server.gh_graphql	patch	1	"R (calls `github_activity()` directly, asserts `_activity[""busy""] is None`)"	09	-	patch-map	
 test_runtime.py	235	GithubActivity.test_a_failed_fetch_wakes_waiters_with_the_error	server._activity	state	1	R (already R by gh_graphql)	09	-	new (02 walk)	
 test_safety.py	114	OpenEndpoint.setUp	server.open_path	patch	1	H `RAWTRIAGE_TEST_OPENER` (new)	06	2	patch-map	converted: the paths the test opener was handed (opened_paths)
-test_safety.py	138	OpenEndpoint.test_refuses_a_rebound_host_name_on_an_all_interfaces_bind	server.BIND_HOST	patch	1	S `--host`	01	2	patch-map	converted: serve_with(host=0.0.0.0)
+test_safety.py	138	OpenEndpoint.test_refuses_a_rebound_host_name_on_an_all_interfaces_bind	server.BIND_HOST	patch	1	S `--host`	01	2	patch-map	"converted: serve_with(host=0.0.0.0); serve_with(host=""0.0.0.0"") binds every interface for the test's lifetime (a free port, no auth: the test's own temp tree only)"
 test_safety.py	155	OpenEndpoint.test_the_launcher_command_is_one_absolute_operand_without_a_shell	subprocess.Popen	patch	1	R	06	-	patch-map 2nd	direct open_argv/REAL_OPEN test
 test_safety.py	167	OpenEndpoint.test_an_opener_that_fails_at_once_is_reported_not_swallowed	server.open_argv	patch	1	H `RAWTRIAGE_TEST_OPENER` (new; opener that fails at once)	06	2	patch-map	converted: RAWTRIAGE_TEST_OPENER is the failing stub; the route's error must carry its status and stderr (what the direct half asserted)
 test_safety.py	170	OpenEndpoint.test_an_opener_that_fails_at_once_is_reported_not_swallowed	server.open_path	patch	1	H `RAWTRIAGE_TEST_OPENER` (new)	06	2	patch-map	converted: RAWTRIAGE_TEST_OPENER is the failing stub; the route's error must carry its status and stderr (what the direct half asserted)
@@ -199,37 +199,38 @@ test_server.py	941	ServiceTestCase.test_under_the_service_the_opener_gets_its_ow
 test_server.py	942	ServiceTestCase.test_under_the_service_the_opener_gets_its_own_scope	server.shutil.which	patch	1	R	11	-	patch-map	
 test_server.py	944	ServiceTestCase.test_under_the_service_the_opener_gets_its_own_scope	server.service_owns	patch	2	R	11	-	patch-map	
 test_setup.py	19	FirstRun.setUp	server.NOTES_SOURCE	patch	1	S start without `--notes` (config / default source)	05	2	patch-map	converted: started without --notes, HOME a fresh folder, so the default place (relax_limits off: no config.json written)
-test_setup.py	52	FirstRun.test_tilde_and_trailing_slash	os.environ (patch.dict)	patch	1	S the server's environment: must be set before the test's first request (the server starts then)	05	2	new (02 walk)	converted: serve_with(env HOME) before the first request
-test_setup.py	93	FirstRun.test_only_this_machine_may_set_up	server.BIND_HOST	patch	1	R (S→R, PR 2: drives server.H in-process with a spoofed LAN peer; ported since PR 1's ledger)	05	-	patch-map	S→R; 
+test_setup.py	54	FirstRun.test_tilde_and_trailing_slash	os.environ (patch.dict)	patch	1	S the server's environment: must be set before the test's first request (the server starts then)	05	2	new (02 walk)	converted: serve_with(env HOME) before the first request
+test_setup.py	98	FirstRun.test_only_this_machine_may_set_up	server.BIND_HOST	patch	1	R (S→R, PR 2: drives server.H in-process with a spoofed LAN peer; ported since PR 1's ledger)	05	-	patch-map	S→R; 
 testkit.py	49	<module>	os.environ['RAWTRIAGE_CONFIG_DIR'] =	env	1	S RAWTRIAGE_CONFIG_DIR (the session's; each fixture passes its own)	02	1	new (02 walk)	
 testkit.py	49	<module>	server.CONFIG_DIR =	assign	1	S `RAWTRIAGE_CONFIG_DIR`	02	1	patch-map	
 testkit.py	56	<module>	server.DEPS =	assign	1	H `RAWTRIAGE_TEST_DEPS_*`	02	1	patch-map	
 testkit.py	57	<module>	server.SYNC_APPS =	assign	1	H `RAWTRIAGE_TEST_SYNC_APPS`	02	1	patch-map	
-testkit.py	119	undo_list	server._undo	state	1	H RAWTRIAGE_TEST_UNDO_DUMP (undo_list's in-process half)	02	1	new (02 walk)	
-testkit.py	279	Switchable.switch_to_child	os.environ (patch.dict)	patch	1	S RAWTRIAGE_TODAY, fixed when the fixture starts	02	1	new (02 walk)	
-testkit.py	282	Switchable.switch_to_child	server.LOG_PATH	patch	1	S --log (the child's log, outside the fixture's tree)	02	1	new (02 walk)	
-testkit.py	308	Switchable.serve_with	server.LOG_PATH =	assign	1	S --log (serve_with's own --log, which server.LOG_PATH then names; switch_to_child's patch puts it back)	02	2	new (PR 2)	
-testkit.py	323	Switchable.served_version	server.VERSION	identity	1	S /api/version of the server under test (served_version: in-process server.VERSION, under the switch read once from the port)	02	2	new (PR 2)	used by test_server.ApiTestCase.test_version_endpoint_and_running_server, test_server.DecisionTestCase.test_page_is_the_one_loaded_at_startup, test_server.DecisionTestCase.test_the_app_window_path_serves_the_same_page, test_autocommit.AutoCommit.test_kill_commits_only_the_move_and_leaves_other_work_alone (commit body), test_safety.Restart.test_this_server_is_recognised
-testkit.py	331	Switchable.served_page	server.INDEX_HTML	identity	1	S the page the server under test serves (served_page: in-process server.INDEX_HTML, under the switch index.html with its /api/version put in, rule R2)	02	2	new (PR 2)	used by the two page tests of test_server.DecisionTestCase
-testkit.py	401	Switchable.clear_undo	server._undo	state	1	S a fresh process (clear_undo's in-process half)	02	1	new (02 walk)	
-testkit.py	415	isolate_git	os.environ (patch.dict)	patch	1	S the fixture's environment (fake HOME, isolated git), set before the server starts	02	1	new (02 walk)	
-testkit.py	418	isolate_git	os.environ.pop	env	1	S the fixture's environment, set before the server starts	02	1	new (02 walk)	
-testkit.py	432	Fixture.setUp	server.CONFIG_DIR =	assign	1	S `RAWTRIAGE_CONFIG_DIR`	02	1	patch-map	
-testkit.py	433	Fixture.setUp	os.environ (patch.dict)	patch	1	S RAWTRIAGE_CONFIG_DIR	02	1	new (02 walk)	
-testkit.py	435	Fixture.setUp	server.SHIP_NEEDS_GITHUB	patch	1	H `RAWTRIAGE_TEST_SHIP_NEEDS_GITHUB`	02	1	patch-map	
-testkit.py	437	Fixture.setUp	server.LIMIT_DEFAULTS (patch.dict)	patch	1	S fixture `config.json` limits	02	1	patch-map	under the switch the relaxed limits are the fixture's config.json; a test that creates the config folder, writes its own config.json or expects it absent must merge with it; PR 2: such tests merge through write_config()/read saved_config(), and GithubSignIn and FirstRun (which need the folder empty) set relax_limits = False
-testkit.py	438	Fixture.setUp	server.NOTES =	assign	1	S --notes	02	1	new (02 walk)	
-testkit.py	438	Fixture.setUp	server.PROJECTS =	assign	1	S --notes (projects root is its parent)	02	1	new (02 walk)	
-testkit.py	439	Fixture.setUp	server.log =	assign	1	S `--log` (temp file)	02	1	patch-map	
-testkit.py	440	Fixture.setUp	server.LOG_PATH =	assign	1	S `--log` (temp file)	02	1	patch-map	
-testkit.py	441	Fixture.setUp	server._git_cache	state	1	S a fresh process	02	1	new (02 walk)	
-testkit.py	441	Fixture.setUp	server._undo	state	1	S a fresh process	02	1	new (02 walk)	
-testkit.py	442	Fixture.setUp	server._meta_cache	state	1	S a fresh process	02	1	new (02 walk)	
-testkit.py	442	Fixture.setUp	server._notes_cache	state	1	S a fresh process	02	1	new (02 walk)	
-testkit.py	442	Fixture.setUp	server._proj_cache	state	1	S a fresh process	02	1	new (02 walk)	
-testkit.py	451	Fixture._restore	server.CONFIG_DIR =	assign	1	S RAWTRIAGE_CONFIG_DIR (restore)	02	1	new (02 walk)	
-testkit.py	451	Fixture._restore	server.LOG_PATH =	assign	1	S --log (restore)	02	1	new (02 walk)	
-testkit.py	451	Fixture._restore	server.NOTES =	assign	1	S --notes (restore)	02	1	new (02 walk)	
-testkit.py	451	Fixture._restore	server.PROJECTS =	assign	1	S --notes (restore)	02	1	new (02 walk)	
-testkit.py	451	Fixture._restore	server.log =	assign	1	S --log (restore)	02	1	new (02 walk)	
-testkit.py	453	Fixture._restore	server._undo	state	1	S a fresh process	02	1	new (02 walk)	
+testkit.py	66	<module>	os.environ['PATH'] =	env	1	S the fixture's PATH (the session's no-real-gh stub first; a server under test gets testkit's fake gh ahead of it)	02	2	new (PR 2)	isolation: no test reaches the runner's real gh
+testkit.py	138	undo_list	server._undo	state	1	H RAWTRIAGE_TEST_UNDO_DUMP (undo_list's in-process half)	02	1	new (02 walk)	
+testkit.py	298	Switchable.switch_to_child	os.environ (patch.dict)	patch	1	S RAWTRIAGE_TODAY, fixed when the fixture starts	02	1	new (02 walk)	
+testkit.py	301	Switchable.switch_to_child	server.LOG_PATH	patch	1	S --log (the child's log, outside the fixture's tree)	02	1	new (02 walk)	
+testkit.py	327	Switchable.serve_with	server.LOG_PATH =	assign	1	S --log (serve_with's own --log, which server.LOG_PATH then names; switch_to_child's patch puts it back)	02	2	new (PR 2)	
+testkit.py	343	Switchable.expected_version	server.VERSION	identity	1	S the version the server under test must report (expected_version: in-process server.VERSION; under the switch TRIAGE_EXPECT_VERSION, else its /api/version, which must look like N.NN[-tag])	02	2	new (PR 2)	used by test_server.ApiTestCase.test_version_endpoint_and_running_server, test_server.DecisionTestCase.test_page_is_the_one_loaded_at_startup, test_server.DecisionTestCase.test_the_app_window_path_serves_the_same_page, test_autocommit.AutoCommit.test_kill_commits_only_the_move_and_leaves_other_work_alone (commit body), test_safety.Restart.test_this_server_is_recognised
+testkit.py	355	Switchable.served_page	server.INDEX_HTML	identity	1	S the page the server under test serves (served_page: in-process server.INDEX_HTML, under the switch index.html with expected_version() put in, rule R2)	02	2	new (PR 2)	used by the two page tests of test_server.DecisionTestCase
+testkit.py	431	Switchable.clear_undo	server._undo	state	1	S a fresh process (clear_undo's in-process half)	02	1	new (02 walk)	
+testkit.py	445	isolate_git	os.environ (patch.dict)	patch	1	S the fixture's environment (fake HOME, isolated git), set before the server starts	02	1	new (02 walk)	
+testkit.py	448	isolate_git	os.environ.pop	env	1	S the fixture's environment, set before the server starts	02	1	new (02 walk)	
+testkit.py	462	Fixture.setUp	server.CONFIG_DIR =	assign	1	S `RAWTRIAGE_CONFIG_DIR`	02	1	patch-map	
+testkit.py	463	Fixture.setUp	os.environ (patch.dict)	patch	1	S RAWTRIAGE_CONFIG_DIR	02	1	new (02 walk)	
+testkit.py	465	Fixture.setUp	server.SHIP_NEEDS_GITHUB	patch	1	H `RAWTRIAGE_TEST_SHIP_NEEDS_GITHUB`	02	1	patch-map	
+testkit.py	467	Fixture.setUp	server.LIMIT_DEFAULTS (patch.dict)	patch	1	S fixture `config.json` limits	02	1	patch-map	under the switch the relaxed limits are the fixture's config.json; a test that creates the config folder, writes its own config.json or expects it absent must merge with it; PR 2: such tests merge through write_config()/read saved_config(), and GithubSignIn and FirstRun (which need the folder empty) set relax_limits = False
+testkit.py	468	Fixture.setUp	server.NOTES =	assign	1	S --notes	02	1	new (02 walk)	
+testkit.py	468	Fixture.setUp	server.PROJECTS =	assign	1	S --notes (projects root is its parent)	02	1	new (02 walk)	
+testkit.py	469	Fixture.setUp	server.log =	assign	1	S `--log` (temp file)	02	1	patch-map	
+testkit.py	470	Fixture.setUp	server.LOG_PATH =	assign	1	S `--log` (temp file)	02	1	patch-map	
+testkit.py	471	Fixture.setUp	server._git_cache	state	1	S a fresh process	02	1	new (02 walk)	
+testkit.py	471	Fixture.setUp	server._undo	state	1	S a fresh process	02	1	new (02 walk)	
+testkit.py	472	Fixture.setUp	server._meta_cache	state	1	S a fresh process	02	1	new (02 walk)	
+testkit.py	472	Fixture.setUp	server._notes_cache	state	1	S a fresh process	02	1	new (02 walk)	
+testkit.py	472	Fixture.setUp	server._proj_cache	state	1	S a fresh process	02	1	new (02 walk)	
+testkit.py	481	Fixture._restore	server.CONFIG_DIR =	assign	1	S RAWTRIAGE_CONFIG_DIR (restore)	02	1	new (02 walk)	
+testkit.py	481	Fixture._restore	server.LOG_PATH =	assign	1	S --log (restore)	02	1	new (02 walk)	
+testkit.py	481	Fixture._restore	server.NOTES =	assign	1	S --notes (restore)	02	1	new (02 walk)	
+testkit.py	481	Fixture._restore	server.PROJECTS =	assign	1	S --notes (restore)	02	1	new (02 walk)	
+testkit.py	481	Fixture._restore	server.log =	assign	1	S --log (restore)	02	1	new (02 walk)	
+testkit.py	483	Fixture._restore	server._undo	state	1	S a fresh process	02	1	new (02 walk)	

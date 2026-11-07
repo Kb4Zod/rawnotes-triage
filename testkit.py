@@ -55,6 +55,23 @@ FAKE_DEPS_HOME = os.path.join(SESSION_DIR, "deps-home"); FAKE_PROC = os.path.joi
 os.makedirs(FAKE_DEPS_HOME); os.makedirs(FAKE_PROC)
 server.DEPS = depcheck.Sources(FAKE_DEPS_HOME, proc=FAKE_PROC, crontab=lambda: "")
 server.SYNC_APPS = os.path.join(SESSION_DIR, "no-sync-apps")  # an absolute path that doesn't exist: never found on PATH
+# Nor does a test ever run the real gh (the runner's own GitHub sign-in): first on PATH for the whole run is a gh that
+# fails at once and notes the call. Tests that want gh put their own stub (or the fake gh) ahead of it, or patch
+# server._gh; one that forgets, or a request still in flight after its test's patch stopped, gets this answer.
+NO_REAL_GH = os.path.join(SESSION_DIR, "no-real-gh"); os.makedirs(NO_REAL_GH)
+STRAY_GH_LOG = os.path.join(SESSION_DIR, "stray-gh-calls")
+with open(os.path.join(NO_REAL_GH, "gh"), "w", encoding="utf-8") as _fh:
+    _fh.write(f'#!/bin/sh\necho "gh $*" >> {shlex.quote(STRAY_GH_LOG)}\necho "the real gh is off in tests" >&2\nexit 1\n')
+os.chmod(os.path.join(NO_REAL_GH, "gh"), 0o755)
+os.environ["PATH"] = NO_REAL_GH + os.pathsep + os.environ.get("PATH", os.defpath)
+
+
+def _report_stray_gh():
+    try:
+        with open(STRAY_GH_LOG, encoding="utf-8") as fh: calls = fh.read().splitlines()
+    except FileNotFoundError: return
+    sys.stderr.write(f"testkit: {len(calls)} gh call(s) reached the session's no-real-gh stub (none reached GitHub): {calls[:5]}\n")
+atexit.register(_report_stray_gh)  # registered after the rmtree of SESSION_DIR, so it runs first
 
 # ---- the switch (spec 8.1 of the Rust port): the same tests against another server or CLI binary ----------------------
 # TRIAGE_SERVER=/path/to/rawtriage-web: Fixture and test_server's ApiTestCase start that binary for each test, as its own
@@ -62,6 +79,8 @@ server.SYNC_APPS = os.path.join(SESSION_DIR, "no-sync-apps")  # an absolute path
 # config dir, fake home and isolated git). TRIAGE_CLI=/path/to/rawtriage: the CLI tests run that binary instead of
 # `python bin/rawtriage`. Unset (the normal run), nothing here changes how a test runs. Under either switch, a test the
 # ledger draft (tools/parity_ledger.py) marks "ported" (it needs a Rust replacement) is skipped, and only those.
+# TRIAGE_EXPECT_VERSION=<version> (optional): the version the binary must report (/api/version, the page, commit bodies);
+# unset, whatever it reports must look like N.NN or N.NN-tag (3.00-dev). In-process the tests expect server.VERSION.
 # What the binary can't be told by a flag it gets from the environment (the test hooks of spec 8.1, read only by a
 # `test-hooks` build):
 #   RAWTRIAGE_TODAY=YYYY-MM-DD             "today", fixed when the fixture starts (the real date unless the run sets it)
@@ -138,7 +157,7 @@ class FakeGh:
         self.answers = []; self._save()
         gh = os.path.join(self.bin, "gh")
         with open(gh, "w", encoding="utf-8") as fh:
-            fh.write(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(FAKE_GH)} {shlex.quote(self.dir)} "$@"\n')
+            fh.write(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} -I -S {shlex.quote(FAKE_GH)} {shlex.quote(self.dir)} "$@"\n')
         os.chmod(gh, 0o755)
 
     def answer(self, argv=None, prefix=None, graphql=None, stdout="", stderr="", exit=0, json_out=None, once=False, env=None):
@@ -317,33 +336,44 @@ class Switchable:
 
     _version = None
 
-    def served_version(self):
-        """The version the server under test reports: server.VERSION in-process; under TRIAGE_SERVER its /api/version,
-        read once (a Rust build says its own, e.g. 3.00-dev)."""
+    def expected_version(self):
+        """The version the server under test must report. In-process server.VERSION. Under TRIAGE_SERVER,
+        TRIAGE_EXPECT_VERSION if set; else what its /api/version says (read once), which must at least look like a
+        version (N.NN, or N.NN-tag such as 3.00-dev), so a server answering "" or junk fails every version check."""
         if self.child is None: return server.VERSION
+        want = os.environ.get("TRIAGE_EXPECT_VERSION")
+        if want: return want
         if self._version is None:
             with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/api/version", timeout=10) as r: self._version = json.loads(r.read())["version"]
+        if not isinstance(self._version, str) or not re.fullmatch(r"\d+\.\d{2}(-[a-z]+)?", self._version):
+            self.fail(f"the server under test reports version {self._version!r}, not N.NN[-tag] (set TRIAGE_EXPECT_VERSION)")
         return self._version
 
     def served_page(self):
-        """The page the server under test should serve: server.INDEX_HTML in-process; under TRIAGE_SERVER index.html with
-        its version put in the same way (the Rust port's normalisation rule R2: only the version differs)."""
+        """The page the server under test must serve: server.INDEX_HTML in-process; under TRIAGE_SERVER index.html with
+        expected_version() put in (the Rust port's normalisation rule R2: only the version differs)."""
         if self.child is None: return server.INDEX_HTML
-        with open(os.path.join(HERE, "index.html"), "rb") as fh: return fh.read().replace(b"__VERSION__", self.served_version().encode())
+        with open(os.path.join(HERE, "index.html"), "rb") as fh: return fh.read().replace(b"__VERSION__", self.expected_version().encode())
 
     def path_without(self, *names):
         """This process's PATH with no `names` on it (e.g. "gh", "git"), for a server started without them: folders that
-        hold one are swapped for a folder of links to their other programs, so python3, git and the rest still run."""
+        hold one are swapped for a folder of links to their other programs (at the first swapped folder's place, so the
+        search order holds), and python3, git and the rest still run. Empty entries are dropped."""
+        return self._path_without(names)[0]
+
+    def _path_without(self, names):
         keep, links = [], tempfile.mkdtemp(prefix="rt-path-"); self.addCleanup(shutil.rmtree, links, ignore_errors=True)
         for d in os.environ.get("PATH", os.defpath).split(os.pathsep):
-            if not d or not any(os.path.lexists(os.path.join(d, n)) for n in names): keep.append(d); continue
+            if not d: continue
+            if not any(os.path.lexists(os.path.join(d, n)) for n in names): keep.append(d); continue
+            if links not in keep: keep.append(links)
             try: entries = os.listdir(d)
             except OSError: continue
             for e in entries:
                 src, dst = os.path.join(d, e), os.path.join(links, e)
                 if e not in names and not os.path.lexists(dst) and os.path.isfile(src) and os.access(src, os.X_OK): os.symlink(src, dst)
         if links not in keep: keep.append(links)
-        return os.pathsep.join(keep)
+        return os.pathsep.join(keep), links
 
     def set_limits(self, **limits):
         """Under TRIAGE_SERVER, the Inbox limits the test patches into server.LIMIT_DEFAULTS, written to the fixture's
@@ -370,7 +400,7 @@ class Switchable:
     def vanishing(self, name):
         """Under TRIAGE_SERVER, a PATH on which `name` (e.g. "git") is found only through a link that the returned
         function removes: a server started with it loses the program mid-test, keeping its undo list."""
-        path = self.path_without(name); links = path.split(os.pathsep)[-1]
+        path, links = self._path_without((name,))
         real = shutil.which(name); link = os.path.join(links, name); os.symlink(real, link)
         return path, lambda: os.remove(link)
 

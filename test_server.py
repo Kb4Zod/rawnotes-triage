@@ -108,9 +108,9 @@ class ApiTestCase(Switchable, unittest.TestCase):
 
     def test_version_endpoint_and_running_server(self):
         info = self.get("/api/version")
-        self.assertEqual(info["version"], self.served_version())
+        self.assertEqual(info["version"], self.expected_version())
         self.assertEqual(info["pid"], self.server_pid())
-        self.assertEqual(server.running_server(self.port)["version"], self.served_version())
+        self.assertEqual(server.running_server(self.port)["version"], self.expected_version())
 
     def test_running_server_none_when_port_free(self):
         import socket
@@ -157,8 +157,8 @@ class ApiTestCase(Switchable, unittest.TestCase):
             r = results[min(len(calls), len(results)) - 1]
             if isinstance(r, Exception): raise r
             return r
-        old_gh, old_cache = server.gh_graphql, dict(server._activity)
-        server.gh_graphql = fake; server._activity.update(at=0.0, data=None)
+        old_gh, old_cache = server.gh_graphql, dict(server._activity, busy=None)  # never put back a fetch still in flight
+        server.gh_graphql = fake; server._activity.update(at=0.0, data=None, busy=None, last=None)  # as GithubActivity.setUp does
         def restore(): server.gh_graphql = old_gh; server._activity.update(old_cache)
         self.addCleanup(restore)
         return calls
@@ -861,7 +861,7 @@ class DecisionTestCase(DecisionBase):
 
     def test_page_is_the_one_loaded_at_startup(self):
         with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/") as r: page = r.read().decode()
-        self.assertIn(f"const VERSION='{self.served_version()}'", page)
+        self.assertIn(f"const VERSION='{self.expected_version()}'", page)
         self.assertEqual(page.encode(), self.served_page())
 
     def test_fonts_are_served_and_nothing_else_under_static(self):

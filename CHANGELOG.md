@@ -22,10 +22,16 @@ server and CLI under `TRIAGE_SERVER` / `TRIAGE_CLI` (the Rust port's spec 8.1, i
   `test_a_failed_restore_rolls_back` and `test_a_failed_project_write_rolls_back`, with the same assertions.
 - **test-only: a few direct calls became routes**: `test_runtime`'s snapshot reader uses `GET /api/notes`,
   `test_limits` reads `limits` and `summary` from it, `test_setup` reads the folder from `GET /api/setup`.
-- **test-only: the version checks ask the server under test.** `served_version()` (its `/api/version`, read once) and
+- **test-only: the version checks ask the server under test.** `expected_version()` and
   `served_page()` (`index.html` with that version put in) replace `server.VERSION` / `server.INDEX_HTML` in the
   version, page, commit-body and running-server tests, so another build's own version passes; in-process they are the
   same values as before.
+- **test-only: `TRIAGE_EXPECT_VERSION`** names the version a switched server must report; unset, what it reports must
+  look like N.NN or N.NN-tag. `served_version()` is now `expected_version()`.
+- **test-only: the real `gh` is off for the whole run.** A stub first on PATH fails every call and the run reports how
+  many reached it. Until now two `test_server` project-detail tests ran the runner's own `gh pr list` against GitHub.
+  `ApiTestCase.stub_gh` also clears a leftover in-flight activity fetch (busy/last), which made the activity tests
+  flaky under load.
 - **test-only: `tools/parity_ledger.py`** classifies every direct `server.<f>()` call in a test that still runs
   (kind 1 or kind 3, converted or ported), checks that no running test has a patch row left to convert, and compares a
   split test's halves with the map's owner and due. `tools/patch_sites.tsv` records each row's conversion.

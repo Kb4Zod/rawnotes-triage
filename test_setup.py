@@ -48,10 +48,15 @@ class FirstRun(Fixture):
         with open(os.path.join(target, "_template.md")) as fh: self.assertEqual(fh.read(), "my own\n")
 
     def test_tilde_and_trailing_slash(self):
-        self.serve_with(env={"HOME": self.tmp})  # under TRIAGE_SERVER: the server's HOME, from its start
+        # under TRIAGE_SERVER: that HOME from its start, and (as in-process) tmp/RawNotes as its first folder, so its
+        # default place is not already the answer
+        self.serve_with(env={"HOME": self.tmp}, notes=os.path.join(self.tmp, "RawNotes"))
         with mock.patch.dict(os.environ, {"HOME": self.tmp}):
             r = self.post("/api/setup", {"path": "~/Projects/RawNotes/"})
-        self.assertEqual(r["notes_dir"], os.path.join(self.tmp, "Projects", "RawNotes"))
+        want = os.path.join(self.tmp, "Projects", "RawNotes")
+        self.assertEqual(r["notes_dir"], want)
+        self.assertTrue(os.path.isdir(os.path.join(want, "done")))
+        self.assertEqual(self.saved_config(), {"notes": want})
 
     def test_bad_paths_are_refused_and_nothing_is_saved(self):
         afile = os.path.join(self.tmp, "afile"); open(afile, "w").close()
