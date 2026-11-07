@@ -66,7 +66,7 @@ class AutoCommit(GitFixture):
         self.assertEqual(self.subject(), "triage: kill “Alpha”")
         self.assertEqual(self.changed(), ["A\tdone/2026-10-01-alpha.md", "D\t2026-10-01-alpha.md"])
         body = git(self.notes, "log", "-1", "--format=%b")
-        self.assertIn("done/2026-10-01-alpha.md", body); self.assertIn(f"via rawnotes-triage {server.VERSION}", body)
+        self.assertIn("done/2026-10-01-alpha.md", body); self.assertIn(f"via rawnotes-triage {self.served_version()}", body)
         self.assertEqual(self.status(), [" M other.md", "?? 2026-10-09-new-capture.md", "M  staged.md"])
 
     def test_batch_merge_restore_and_undo_each_make_one_commit(self):

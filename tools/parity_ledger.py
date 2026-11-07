@@ -157,10 +157,13 @@ KIND3 = {
     "test_github_push.NotOnGithubFlag.test_an_inherited_git_dir_does_not_reach_gh_or_the_project_panel":
         ("ported", "asserts server.gh_env() of this process (and its route check needs the inherited GIT_DIR in the server's own environment, which the Rust test sets)"),
 }
-# Tests PR 2 split in two (patch-map.md): the Day 0 table has the original; each half's owner and due as the map gives them.
+# Tests PR 2 split in two (patch-map.md). While the Day 0 table has only the original, --against checks each half against
+# the owner and due the map gives; once the table has the halves' rows, they are compared like any other row.
 SPLITS = {"test_engine.Faults.test_restore_and_project_writes_roll_back_too": {
     "test_engine.Faults.test_a_failed_restore_rolls_back": ("05", "05"),
     "test_engine.Faults.test_a_failed_project_write_rolls_back": ("07", "08")}}
+# What this copy of server.py says it is: the binary under test has its own version (and so its own page).
+IDENTITY_READS = {"VERSION", "INDEX_HTML"}
 # Python functions that make a request to the port they are given (a route call when that port is the fixture's).
 FUNC_ROUTES = {"running_server": [("GET", "/api/version")]}
 
@@ -309,6 +312,9 @@ def find_sites(mod, data_names):
                   and child.value.id == "server" and child.attr.startswith("_") and child.attr in data_names
                   and id(child) not in stored):  # `server._viewer["login"] = ...` is the assignment's row, not a read
                 sites[id(child)] = Site(mod.file, child.lineno, here, f"server.{child.attr}", "state", False)
+            elif (isinstance(child, ast.Attribute) and isinstance(child.ctx, ast.Load) and isinstance(child.value, ast.Name)
+                  and child.value.id == "server" and child.attr in IDENTITY_READS and id(child) not in stored):
+                sites[id(child)] = Site(mod.file, child.lineno, here, f"server.{child.attr}", "identity", False)
             walk(child, sc)
     walk(mod.tree, [])
     return sites
@@ -933,6 +939,10 @@ def against(L, path):
     out, bad, split = [], 0, []
     for orig, halves in SPLITS.items():  # the table has the original; the halves are checked against the map's owner/due
         ko = tuple(orig.split(".", 2))
+        if all(tuple(h.split(".", 2)) in table for h in halves):  # the table has the halves' own rows: compared like any other
+            if ko in table and ko not in mine:
+                table.pop(ko); split.append(f"  split: {orig} is in the table beside its halves (not counted)")
+            continue
         if ko not in table or ko in mine: continue
         for h, want in halves.items():
             kh = tuple(h.split(".", 2)); got = mine.get(kh)

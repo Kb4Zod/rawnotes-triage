@@ -108,9 +108,9 @@ class ApiTestCase(Switchable, unittest.TestCase):
 
     def test_version_endpoint_and_running_server(self):
         info = self.get("/api/version")
-        self.assertEqual(info["version"], server.VERSION)
+        self.assertEqual(info["version"], self.served_version())
         self.assertEqual(info["pid"], self.server_pid())
-        self.assertEqual(server.running_server(self.port)["version"], server.VERSION)
+        self.assertEqual(server.running_server(self.port)["version"], self.served_version())
 
     def test_running_server_none_when_port_free(self):
         import socket
@@ -861,8 +861,8 @@ class DecisionTestCase(DecisionBase):
 
     def test_page_is_the_one_loaded_at_startup(self):
         with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/") as r: page = r.read().decode()
-        self.assertIn(f"const VERSION='{server.VERSION}'", page)
-        self.assertEqual(page.encode(), server.INDEX_HTML)
+        self.assertIn(f"const VERSION='{self.served_version()}'", page)
+        self.assertEqual(page.encode(), self.served_page())
 
     def test_fonts_are_served_and_nothing_else_under_static(self):
         with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/static/fonts/Lato-400.woff2") as r:
@@ -871,7 +871,7 @@ class DecisionTestCase(DecisionBase):
             with self.assertRaises(urllib.error.HTTPError): urllib.request.urlopen(f"http://127.0.0.1:{self.port}{bad}")
 
     def test_the_app_window_path_serves_the_same_page(self):
-        with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/triage") as r: self.assertEqual(r.read(), server.INDEX_HTML)
+        with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/triage") as r: self.assertEqual(r.read(), self.served_page())
         for bad in ("/triage/", "/triagex", "/triage/api/notes"):
             with self.assertRaises(urllib.error.HTTPError): urllib.request.urlopen(f"http://127.0.0.1:{self.port}{bad}")
 

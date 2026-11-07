@@ -15,8 +15,10 @@ test_board_record.py	362	BulkMigration.test_repo_public_never_guesses	server.gh_
 test_board_record.py	363	BulkMigration.test_repo_public_never_guesses	server.gh_rest	patch	3	R (F→R, PR 2: every assertion is on server.repo_public() called directly; no route reaches it)	07	-	patch-map	F→R; 
 test_board_record.py	364	BulkMigration.test_repo_public_never_guesses	server.github_status	patch	2	R (F→R, PR 2: every assertion is on server.repo_public() called directly; no route reaches it)	07	-	patch-map	F→R; 
 test_board_record.py	365	BulkMigration.test_repo_public_never_guesses	server.gh_rest	patch	4	R (F→R, PR 2: every assertion is on server.repo_public() called directly; no route reaches it)	07	-	patch-map	F→R; 
+test_browser.py	42	BrowserCase.setUp	server.INDEX_HTML	identity	1	N/A under the switch (the TRIAGE_INDEX swap, in-process only; setUpClass refuses it with TRIAGE_SERVER)	12	-	new (PR 2)	
 test_browser.py	42	BrowserCase.setUp	server.INDEX_HTML = (restore)	assign	1	N/A under the switch (restores line 41)	12	-	new (02 walk)	
 test_browser.py	43	BrowserCase.setUp	server.INDEX_HTML =	assign	1	N/A under the switch: `TRIAGE_INDEX` reruns only in-process (page is embedded in Rust)	12	-	patch-map	
+test_browser.py	43	BrowserCase.setUp	server.VERSION	identity	1	N/A under the switch (as above: the version put into a TRIAGE_INDEX page)	12	-	new (PR 2)	
 test_browser.py	71	BrowserCase.no_real_github	target.<dynamic>	patch	1	F fake gh with the same answers	12	2	patch-map 2nd	converted: github_off() scripts the fake gh with the same graphql answers and fails every other call; the _activity reset is a fresh process; loop variable: server.gh_graphql, server._gh
 test_browser.py	72	BrowserCase.no_real_github	server._activity	state	1	S a fresh process (the reset is moot)	12	2	patch-map 2nd	converted: github_off() scripts the fake gh with the same graphql answers and fails every other call; the _activity reset is a fresh process
 test_browser.py	139	GithubPanel.test_status_and_token_dialog	server._gh	patch	1	F fake `gh` on PATH (scripted answers, argv/env logged)	12	2	patch-map	converted: fake gh answers api user by GH_TOKEN (tokenuser / gh auth login); saved_token read from the fixture's config folder
@@ -144,6 +146,7 @@ test_runtime.py	194	GithubActivity.test_hitting_the_repo_page_cap_is_reported_no
 test_runtime.py	202	GithubActivity.test_history_cut_at_the_page_cap_names_the_repo	server.HISTORY_PAGES	patch	1	R	09	-	patch-map	
 test_runtime.py	219	GithubActivity.test_concurrent_callers_share_one_fetch_and_nobody_holds_a_lock_while_waiting	server.gh_graphql	patch	1	R (calls `github_activity()` directly, acquires `_activity_lock`)	09	-	patch-map	
 test_runtime.py	222	GithubActivity.test_concurrent_callers_share_one_fetch_and_nobody_holds_a_lock_while_waiting	server._activity_lock	state	1	R (already R by gh_graphql)	09	-	new (02 walk)	
+test_runtime.py	223	GithubActivity.test_concurrent_callers_share_one_fetch_and_nobody_holds_a_lock_while_waiting	server.VERSION	identity	1	none needed (the test is R by gh_graphql)	09	-	new (PR 2)	
 test_runtime.py	231	GithubActivity.test_a_failed_fetch_wakes_waiters_with_the_error	server.gh_graphql	patch	1	"R (calls `github_activity()` directly, asserts `_activity[""busy""] is None`)"	09	-	patch-map	
 test_runtime.py	235	GithubActivity.test_a_failed_fetch_wakes_waiters_with_the_error	server._activity	state	1	R (already R by gh_graphql)	09	-	new (02 walk)	
 test_safety.py	114	OpenEndpoint.setUp	server.open_path	patch	1	H `RAWTRIAGE_TEST_OPENER` (new)	06	2	patch-map	converted: the paths the test opener was handed (opened_paths)
@@ -206,25 +209,27 @@ testkit.py	119	undo_list	server._undo	state	1	H RAWTRIAGE_TEST_UNDO_DUMP (undo_l
 testkit.py	279	Switchable.switch_to_child	os.environ (patch.dict)	patch	1	S RAWTRIAGE_TODAY, fixed when the fixture starts	02	1	new (02 walk)	
 testkit.py	282	Switchable.switch_to_child	server.LOG_PATH	patch	1	S --log (the child's log, outside the fixture's tree)	02	1	new (02 walk)	
 testkit.py	308	Switchable.serve_with	server.LOG_PATH =	assign	1	S --log (serve_with's own --log, which server.LOG_PATH then names; switch_to_child's patch puts it back)	02	2	new (PR 2)	
-testkit.py	385	Switchable.clear_undo	server._undo	state	1	S a fresh process (clear_undo's in-process half)	02	1	new (02 walk)	
-testkit.py	399	isolate_git	os.environ (patch.dict)	patch	1	S the fixture's environment (fake HOME, isolated git), set before the server starts	02	1	new (02 walk)	
-testkit.py	402	isolate_git	os.environ.pop	env	1	S the fixture's environment, set before the server starts	02	1	new (02 walk)	
-testkit.py	416	Fixture.setUp	server.CONFIG_DIR =	assign	1	S `RAWTRIAGE_CONFIG_DIR`	02	1	patch-map	
-testkit.py	417	Fixture.setUp	os.environ (patch.dict)	patch	1	S RAWTRIAGE_CONFIG_DIR	02	1	new (02 walk)	
-testkit.py	419	Fixture.setUp	server.SHIP_NEEDS_GITHUB	patch	1	H `RAWTRIAGE_TEST_SHIP_NEEDS_GITHUB`	02	1	patch-map	
-testkit.py	421	Fixture.setUp	server.LIMIT_DEFAULTS (patch.dict)	patch	1	S fixture `config.json` limits	02	1	patch-map	under the switch the relaxed limits are the fixture's config.json; a test that creates the config folder, writes its own config.json or expects it absent must merge with it; PR 2: such tests merge through write_config()/read saved_config(), and GithubSignIn and FirstRun (which need the folder empty) set relax_limits = False
-testkit.py	422	Fixture.setUp	server.NOTES =	assign	1	S --notes	02	1	new (02 walk)	
-testkit.py	422	Fixture.setUp	server.PROJECTS =	assign	1	S --notes (projects root is its parent)	02	1	new (02 walk)	
-testkit.py	423	Fixture.setUp	server.log =	assign	1	S `--log` (temp file)	02	1	patch-map	
-testkit.py	424	Fixture.setUp	server.LOG_PATH =	assign	1	S `--log` (temp file)	02	1	patch-map	
-testkit.py	425	Fixture.setUp	server._git_cache	state	1	S a fresh process	02	1	new (02 walk)	
-testkit.py	425	Fixture.setUp	server._undo	state	1	S a fresh process	02	1	new (02 walk)	
-testkit.py	426	Fixture.setUp	server._meta_cache	state	1	S a fresh process	02	1	new (02 walk)	
-testkit.py	426	Fixture.setUp	server._notes_cache	state	1	S a fresh process	02	1	new (02 walk)	
-testkit.py	426	Fixture.setUp	server._proj_cache	state	1	S a fresh process	02	1	new (02 walk)	
-testkit.py	435	Fixture._restore	server.CONFIG_DIR =	assign	1	S RAWTRIAGE_CONFIG_DIR (restore)	02	1	new (02 walk)	
-testkit.py	435	Fixture._restore	server.LOG_PATH =	assign	1	S --log (restore)	02	1	new (02 walk)	
-testkit.py	435	Fixture._restore	server.NOTES =	assign	1	S --notes (restore)	02	1	new (02 walk)	
-testkit.py	435	Fixture._restore	server.PROJECTS =	assign	1	S --notes (restore)	02	1	new (02 walk)	
-testkit.py	435	Fixture._restore	server.log =	assign	1	S --log (restore)	02	1	new (02 walk)	
-testkit.py	437	Fixture._restore	server._undo	state	1	S a fresh process	02	1	new (02 walk)	
+testkit.py	323	Switchable.served_version	server.VERSION	identity	1	S /api/version of the server under test (served_version: in-process server.VERSION, under the switch read once from the port)	02	2	new (PR 2)	used by test_server.ApiTestCase.test_version_endpoint_and_running_server, test_server.DecisionTestCase.test_page_is_the_one_loaded_at_startup, test_server.DecisionTestCase.test_the_app_window_path_serves_the_same_page, test_autocommit.AutoCommit.test_kill_commits_only_the_move_and_leaves_other_work_alone (commit body), test_safety.Restart.test_this_server_is_recognised
+testkit.py	331	Switchable.served_page	server.INDEX_HTML	identity	1	S the page the server under test serves (served_page: in-process server.INDEX_HTML, under the switch index.html with its /api/version put in, rule R2)	02	2	new (PR 2)	used by the two page tests of test_server.DecisionTestCase
+testkit.py	401	Switchable.clear_undo	server._undo	state	1	S a fresh process (clear_undo's in-process half)	02	1	new (02 walk)	
+testkit.py	415	isolate_git	os.environ (patch.dict)	patch	1	S the fixture's environment (fake HOME, isolated git), set before the server starts	02	1	new (02 walk)	
+testkit.py	418	isolate_git	os.environ.pop	env	1	S the fixture's environment, set before the server starts	02	1	new (02 walk)	
+testkit.py	432	Fixture.setUp	server.CONFIG_DIR =	assign	1	S `RAWTRIAGE_CONFIG_DIR`	02	1	patch-map	
+testkit.py	433	Fixture.setUp	os.environ (patch.dict)	patch	1	S RAWTRIAGE_CONFIG_DIR	02	1	new (02 walk)	
+testkit.py	435	Fixture.setUp	server.SHIP_NEEDS_GITHUB	patch	1	H `RAWTRIAGE_TEST_SHIP_NEEDS_GITHUB`	02	1	patch-map	
+testkit.py	437	Fixture.setUp	server.LIMIT_DEFAULTS (patch.dict)	patch	1	S fixture `config.json` limits	02	1	patch-map	under the switch the relaxed limits are the fixture's config.json; a test that creates the config folder, writes its own config.json or expects it absent must merge with it; PR 2: such tests merge through write_config()/read saved_config(), and GithubSignIn and FirstRun (which need the folder empty) set relax_limits = False
+testkit.py	438	Fixture.setUp	server.NOTES =	assign	1	S --notes	02	1	new (02 walk)	
+testkit.py	438	Fixture.setUp	server.PROJECTS =	assign	1	S --notes (projects root is its parent)	02	1	new (02 walk)	
+testkit.py	439	Fixture.setUp	server.log =	assign	1	S `--log` (temp file)	02	1	patch-map	
+testkit.py	440	Fixture.setUp	server.LOG_PATH =	assign	1	S `--log` (temp file)	02	1	patch-map	
+testkit.py	441	Fixture.setUp	server._git_cache	state	1	S a fresh process	02	1	new (02 walk)	
+testkit.py	441	Fixture.setUp	server._undo	state	1	S a fresh process	02	1	new (02 walk)	
+testkit.py	442	Fixture.setUp	server._meta_cache	state	1	S a fresh process	02	1	new (02 walk)	
+testkit.py	442	Fixture.setUp	server._notes_cache	state	1	S a fresh process	02	1	new (02 walk)	
+testkit.py	442	Fixture.setUp	server._proj_cache	state	1	S a fresh process	02	1	new (02 walk)	
+testkit.py	451	Fixture._restore	server.CONFIG_DIR =	assign	1	S RAWTRIAGE_CONFIG_DIR (restore)	02	1	new (02 walk)	
+testkit.py	451	Fixture._restore	server.LOG_PATH =	assign	1	S --log (restore)	02	1	new (02 walk)	
+testkit.py	451	Fixture._restore	server.NOTES =	assign	1	S --notes (restore)	02	1	new (02 walk)	
+testkit.py	451	Fixture._restore	server.PROJECTS =	assign	1	S --notes (restore)	02	1	new (02 walk)	
+testkit.py	451	Fixture._restore	server.log =	assign	1	S --log (restore)	02	1	new (02 walk)	
+testkit.py	453	Fixture._restore	server._undo	state	1	S a fresh process	02	1	new (02 walk)	

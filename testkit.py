@@ -315,6 +315,22 @@ class Switchable:
         with open(crontab, "w", encoding="utf-8") as fh: fh.write(sources.crontab() or "")
         return {"RAWTRIAGE_TEST_DEPS_HOME": sources.home, "RAWTRIAGE_TEST_PROC": sources.proc, "RAWTRIAGE_TEST_CRONTAB": crontab}
 
+    _version = None
+
+    def served_version(self):
+        """The version the server under test reports: server.VERSION in-process; under TRIAGE_SERVER its /api/version,
+        read once (a Rust build says its own, e.g. 3.00-dev)."""
+        if self.child is None: return server.VERSION
+        if self._version is None:
+            with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/api/version", timeout=10) as r: self._version = json.loads(r.read())["version"]
+        return self._version
+
+    def served_page(self):
+        """The page the server under test should serve: server.INDEX_HTML in-process; under TRIAGE_SERVER index.html with
+        its version put in the same way (the Rust port's normalisation rule R2: only the version differs)."""
+        if self.child is None: return server.INDEX_HTML
+        with open(os.path.join(HERE, "index.html"), "rb") as fh: return fh.read().replace(b"__VERSION__", self.served_version().encode())
+
     def path_without(self, *names):
         """This process's PATH with no `names` on it (e.g. "gh", "git"), for a server started without them: folders that
         hold one are swapped for a folder of links to their other programs, so python3, git and the rest still run."""
