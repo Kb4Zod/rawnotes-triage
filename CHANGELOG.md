@@ -4,6 +4,36 @@ The version shows in the page heading ("RawNotes Triage version X.XX") and
 in the startup line. Bump `VERSION` in `server.py` and add an entry here
 with every change. Versions 1.00-1.03 were numbered after the fact from git history.
 
+## 2.15 — 2026-11-06
+Board data out of project repos (spec and tickets in `.scratch/private-board-data/`; Hugh approved the recommended
+answers to D1–D8 on 2026-11-06).
+- **A project's board data lives in RawNotes, not in its `NOTES.md` (01–03).** `NOTES.md` is tracked in the project's
+  own repo, which may go public (or be shared) later, history and all. Status, promoted/shipped/closed dates, the
+  ship-by date, extension counts and reasons, the kill reason, `## Rounds`, `## Moved` and `github: private` now go to a
+  board record, `RawNotes/projects/<kind>/<folder>.md`: the same `- key: value` header, plus `## Capture`,
+  `## Extensions`, `## Rounds`, `## Moved` and `## Outcome`. It is written through the same undoable changes (lock,
+  Undo, the RawNotes auto-commit); a close-out move renames it with the folder, and undo renames it back. Mark shipped,
+  Kill, +7 days and close out leave the project's working tree byte-identical; Next round writes only the new done
+  means (the plan) into the project. A folder that was never promoted gets a record on Mark shipped or Kill, and no
+  longer gets a `NOTES.md`. In `learning/` and `templates/` a folder is on the board if it has a record, or a legacy
+  `promoted:` line. A move picks a `-2` suffix when a record by the target's name is left over, rather than overwrite it.
+- **Promote writes only the plan to `NOTES.md` (04).** The title and `## Plan` (done means, first step, the check-in;
+  no dates). The original note stays only in RawNotes `done/`, linked from the record; no copy goes into the project,
+  so the first commit of the new repo holds no board field and none of the capture. The skeleton `AGENTS.md` still gets
+  the ship-by date, and now says `NOTES.md` holds the plan and how to read the original.
+- **Old projects keep working, and migrate (05).** A folder with no record is read from the fields in its `NOTES.md`,
+  as before. The first board action that writes to it (a done-means edit too) moves them into a record in the same
+  undo step. `rawtriage migrate-board-data` (`POST /api/migrate-board-data`) and **Move it to RawNotes** on Pulse (shown
+  while `/api/stats`' `legacy_board` lists any) do it for every project folder at once, `maintained/` and `archive/`
+  included, as one undo step, and report what moved from each, that each trimmed `NOTES.md` is yours to commit (the app
+  never commits in a project's repo), that the old data stays in git history, and which repos are public on GitHub.
+  Sections still exactly as in the original note (Promote's copy) are dropped too, and the record links the original;
+  anything you wrote stays.
+- **`rawtriage brief <name> [--kind K]` (06).** `GET /api/brief?name=&kind=` returns a project's original note and its
+  plan, with no paths, so an agent in a worktree can read what `NOTES.md` no longer copies.
+- Docs: README (**Board records**), the user guide, the `rawnotes` skill's triage steps, and the close-out toast's
+  heading (`## Moved` is in the board record now).
+
 ## 2.14 — 2026-11-06
 - **`## Moved` in a moved project's `NOTES.md` names no absolute path.** That `NOTES.md` is tracked in the project's
   own repo, which may be public, and its close-out to-dos used to carry the full commands (the memory-folder `mv`, with

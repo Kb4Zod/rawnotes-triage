@@ -1,6 +1,6 @@
 # Read path: record first, legacy NOTES.md fallback
 
-Status: open
+Status: done
 Type: task
 Blocked by: 01
 Spec: ../spec.md (D4, D5, D7)

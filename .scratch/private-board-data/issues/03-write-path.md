@@ -1,6 +1,6 @@
 # Write path: board actions write the record, not the project
 
-Status: open
+Status: done
 Type: task
 Blocked by: 01, 02
 Spec: ../spec.md (D2, D6)

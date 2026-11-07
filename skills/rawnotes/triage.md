@@ -57,7 +57,7 @@ Your job is to make decisions happen, not to do more research. Every decision go
    project folder: your own session and shell count as processes working there and block the move (the `rawtriage`
    command itself doesn't); run it from the notes folder or anywhere else. Never move a project folder yourself, never on a timer, only when the
    user decides. After a move, the command prints what is left to do by hand (also written under `## Moved` in the
-   project's NOTES.md): the `mv` of its Claude Code agent memory folder (under `.claude/projects` in the home folder), and updating any T3 Code project
+   project's board record): the `mv` of its Claude Code agent memory folder (under `.claude/projects` in the home folder), and updating any T3 Code project
    that points at the old folder. Offer to do those (with T3's own project tools for T3), with the user's OK.
 9. **GitHub before close out (`active` and `templates` only).** Closing out to **maintained** is refused until the
    folder's work is on GitHub: a GitHub origin that has been pushed to, with no local branch ahead of it ("Push it
@@ -68,3 +68,10 @@ Your job is to make decisions happen, not to do more research. Every decision go
    (`git branch -D -- <branch>`); show the user those commands, don't run them unasked. When refused for no GitHub repo, tell the user and offer `rawtriage project github <name>` (creates a **private** repo and
    pushes `main`; only on the server's own machine; it never makes anything public, that is the user's `gopublic`).
    Run it only when they say yes, then retry the close out.
+10. **Board data stays out of project repos.** A project's status, dates, pushes, rounds, moves and kill reason live in
+   its board record in the notes folder (`projects/<kind>/<name>.md`), never in the project's `NOTES.md`, which its
+   repo tracks and could publish. Never write them into `NOTES.md` or a project file by hand; every change goes through
+   `rawtriage project …`. `NOTES.md` holds the plan; `rawtriage brief <name>` prints a project's original note and plan
+   (use it instead of looking for the note). If `NOTES.md` files still hold board data from before (Pulse lists them),
+   offer `rawtriage migrate-board-data` and run it only when the user says yes; then tell them each trimmed `NOTES.md` is
+   theirs to commit, that the old data stays in each repo's git history, and which repos the report says are public.

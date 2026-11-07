@@ -174,6 +174,8 @@ rawtriage project close <name> --outcome next --done "done means" (--due-days N 
 rawtriage project close <name> --outcome maintained|archive     # the folder moves; refused while anything blocks it
 rawtriage project deps <name> [--to maintained|archive|abandoned]   # what points at the folder (read-only)
 rawtriage project github <name> [--kind ...]       # first push: private GitHub repo, then push main (this machine only)
+rawtriage brief <name> [--kind ...]                # a project's original note and plan (for agents; no paths)
+rawtriage migrate-board-data                       # move board data out of every project's NOTES.md (one undo step)
 ```
 
 - `<file>` is a name in the Inbox, an absolute path, or any part of a name that matches one note (`rawtriage kill dns-slow --reason ...`).
@@ -270,7 +272,7 @@ ticks all members and shows the batch form. Untick what should stay.
 
 | Button (key) | What happens |
 |--------------|--------------|
-| Promote (P)   | Creates `../<dest>/<slug>/` (`active`, `experiments`, `learning` or `templates`) from the skeleton in `starter/skeletons/<dest>/` (see **Project skeleton** below), with the note as its `NOTES.md`. Stamps `status: promoted`, `promoted: <today>` and a `## Plan` block with your **done means** (required for every destination). Active / Learning / Template also get `due:` (3, 7, 14 or 30 days, or an exact date; default 7). **Experiments are open-ended:** no `due:`, and any old one is removed. The capture is marked promoted, gets the destination under `## Outcome`, and moves to `done/`. |
+| Promote (P)   | Creates `../<dest>/<slug>/` (`active`, `experiments`, `learning` or `templates`) from the skeleton in `starter/skeletons/<dest>/` (see **Project skeleton** below). Its `NOTES.md` gets the title and a `## Plan` block with your **done means** (required for every destination), a first step and the check-in, and nothing else: no dates, no copy of the note. `status: promoted`, `promoted: <today>`, `github: private` and a link to the original note go to the project's **board record** in RawNotes (see **Board records** below). Active / Learning / Template also get `due:` there (3, 7, 14 or 30 days, or an exact date; default 7). **Experiments are open-ended:** no `due:`. The capture is marked promoted, gets the destination under `## Outcome`, and moves to `done/`, where it stays. |
 | Reference (R) | Copies the note to `../reference/<slug>.md` with YAML frontmatter (created, promoted, status, type, source, optional why, tag `reference`) so Obsidian shows it as properties. Capture marked promoted and moved to `done/`. Pick an **Index section** (an existing `###` heading, a new one, or Don't index) and a one-line summary, and the same undoable step adds `- [Title](slug.md): summary` to `## Index` in `reference/README.md` and records `section:` in the note. Nothing outside `## Index` is touched; with no README or no `## Index` the note is still filed and you get a warning. Reference notes the index doesn't link are listed on the Archive page with **Add to index** (`GET /api/reference/unindexed`, `POST /api/reference/index`). |
 | Keep (C)      | Sets `open` or `cooking` (the form defaults to the note's current one), stamps `kept:` / `keeps:` in the header and optionally adds a dated `next step` line under `## Notes`. Stays in the Inbox. Refused once the note is expired (see Inbox limits). |
 | Kill (X)      | `status: dead`, your reason (optional; "no longer useful." if blank) under `## Outcome`, moved to `done/`. |
@@ -281,8 +283,9 @@ overwritten. The API also accepts the 1.x names `durable` (Reference) and
 
 **Project skeleton.** A project folder made by Promote gets `README.md` (title,
 then `- **Status:**`, `- **Stack:**`, `- **Run it:**`, `- **Repo:**` lines and
-`## Why it exists` with the done means), `NOTES.md` (the promoted note, plus
-`- github: private` in its header), `AGENTS.md` (the `.scratch/` issue-tracker
+`## Why it exists` with the done means), `NOTES.md` (the plan: done means,
+first step, check-in), `AGENTS.md` (read `NOTES.md` first; `rawtriage brief
+<slug>` for the original note; the `.scratch/` issue-tracker
 convention and a **First build round** checklist with the exact `gh repo create
 <slug> --private …` and `ALLOW_PUSH_MAIN=1 git push -u origin main` commands),
 `CLAUDE.md` (`@AGENTS.md`), `.gitignore`, and an empty `.scratch/` (active),
@@ -368,9 +371,10 @@ folders:
   skipped), whether or not it was promoted through this app. A linked git
   worktree (its `.git` is a `gitdir:` file, i.e. a branch checkout) is not a
   project: it is left off the board, and the project routes refuse it;
-- every folder directly under `learning/` and `templates/` whose `NOTES.md`
-  has a `promoted:` line (made by Promote). Hand-made folders there, such as a
-  study folder or a template kit, stay off the board;
+- every folder directly under `learning/` and `templates/` that has a board
+  record, or (promoted before 2.15) whose `NOTES.md` has a `promoted:` line.
+  Hand-made folders there, such as a study folder or a template kit, stay off
+  the board;
 - every `.md` file directly in, or one level below, `active/`, `experiments/`,
   `learning/`, `templates/` and `maintained/` whose header has a `due:` line
   (first 4,000 bytes are read), plus experiment files with a `promoted:` line
@@ -430,14 +434,15 @@ summarised. Buttons: **Mark shipped** (`status: shipped` + `shipped:` date),
 **+7 days** (pushes `due:` from today or the current due date, whichever is
 later; not offered for experiments or undated folders; asks why, at least 10
 characters, and records `- extensions: N` plus a `- pushed <old> → <new>
-(<date>): <reason>` line under `## Plan`; after two pushes (`max_extensions` in
+(<date>): <reason>` line under `## Extensions` in the board record (`## Plan` of an old flat file); after two pushes (`max_extensions` in
 `config.json`) the button reads "No more extensions", and an overdue project
 with none left shows a **Decide** badge: ship it or kill it), **Browse repo**
 when the project has a GitHub origin, otherwise **Open folder** (launches
 `xdg-open` on the server's machine; only for a browser on that machine, and
 hidden on the phone layout), and **Kill** (asks why; the reason goes under
-`## Outcome`). Shipping or killing a folder that has no dated file writes into its `NOTES.md`,
-creating it if needed. Shipping or killing also writes `- closed: <date>`. On a project folder, Mark shipped and Kill
+`## Outcome` of the board record). Shipping or killing a folder writes its board record, made if needed (a folder
+never promoted, like a hand-made `active/` one, gets one too); nothing is written into the folder.
+Shipping or killing also writes `- closed: <date>`. On a project folder, Mark shipped and Kill
 are a **close out** (below): the folder may move.
 The **Closed** column shows only projects closed in the last 7 days
 (`closed_window_days` in `config.json`), counting folders and dated files that
@@ -466,9 +471,10 @@ next to `rawnotes-triage`) is not a hit. The app never moves memory folders or e
 **Close out.** Mark shipped on a project folder asks *What happens to it now?*, with a suggestion preselected:
 
 - **Next round** (stays where it is): a new done means and ship-by (required; experiments may stay open-ended). The
-  header goes back to `status: promoted` with today's `promoted:`, the new `due:`, `extensions: 0`, and no `closed:` or
+  board record goes back to `status: promoted` with today's `promoted:`, the new `due:`, `extensions: 0`, and no `closed:` or
   `shipped:`; the finished round is written under `## Rounds` (`- <promoted> → shipped <date> (ship by <due>, pushed
-  N×). Done means: <old>`), and the new done means replaces the old one where it was found. Use it for something still
+  N×). Done means: <old>`) in the record, and the new done means replaces the old one where it was found in the
+  project (`NOTES.md`'s `## Plan` if nowhere): the only thing a board action writes into a folder. Use it for something still
   being built (rawnotes-triage itself).
 - **Maintained**: `status: shipped`, `shipped:`, `closed:`, then the folder moves to `maintained/<name>`. Suggested when
   the folder has a GitHub origin.
@@ -479,10 +485,10 @@ next to `rawnotes-triage`) is not a hit. The app never moves memory folders or e
 A folder already marked shipped (or `done` by hand) before close out existed, and still in its project folder, shows
 **Close out…** instead, with the same three choices. A taken name gets `-2`, `-3`…. A move runs the dependency check (**What points here**) inside the change: any blocker
 refuses it with the list and each fix (HTTP 400 with `blockers` and `todos`), and nothing changes. To-dos don't stop
-it: they are written under `## Moved` in the moved `NOTES.md` (`- <date>: moved from <old>/ to <new>/. Left to do by
-hand:` and one line per to-do, with no absolute path, since that file is in the project's repo) and shown in the
-toast with the exact commands. The status edit and the move are one undo step: **Undo**
-moves the folder back and restores `NOTES.md`, but refuses (changing nothing, and saying the `mv` to do it by hand) if
+it: they are written under `## Moved` in the board record, which is renamed with the folder (`- <date>: moved from
+<old>/ to <new>/. Left to do by hand:` and one line per to-do, with no absolute path) and shown in the
+toast with the exact commands. The status edit, the move and the record's rename are one undo step: **Undo**
+moves the folder back and renames the record back, but refuses (changing nothing, and saying the `mv` to do it by hand) if
 anything in the moved folder was added, removed or edited since (git's own `.git` contents don't count), the old name
 is taken again, or the folder became a symlink. A folder too big to check that way (over 200,000 files and folders,
 `.git` aside) or partly unreadable still moves, but its undo will refuse: the close-out form, `rawtriage project deps`
@@ -493,6 +499,30 @@ says `ran`, `failed` or `not installed`). Moves happen only when you choose one,
 project (an old flat `<slug>.md`) is still just marked shipped in place. API: `POST /api/project/close {name, kind,
 outcome: next|maintained|archive, done?, due?|due_days?}` (or `action: "kill", note`); `/api/project/status` with
 `shipped` or `kill` on a folder does the same and needs `outcome` for `shipped`.
+
+**Board records.** Since 2.15 a project folder's board data lives in RawNotes, not in the folder: a project's
+`NOTES.md` is tracked in its own git repo, and any repo can go public (or be shared) later, history and all. The
+record is `RawNotes/projects/<kind>/<folder>.md` (`kind` is `active`, `experiments`, `learning`, `templates`,
+`maintained` or `archive`): the same `- key: value` header as a note (`status`, `promoted`, `due`, `extensions`,
+`shipped`, `closed`, `github`) and the sections the app writes: `## Capture` (a link to the original note in
+`done/`), `## Extensions`, `## Rounds`, `## Moved` and `## Outcome` (the kill reason). It is written only through the
+same undoable changes as everything else, so the lock, **Undo** and the RawNotes auto-commit cover it; a close-out move
+renames it with the folder. `NOTES.md` keeps the plan and anything you write there; the skeleton's `AGENTS.md` still
+gets the ship-by date (it is no more private than the plan).
+
+`rawtriage brief <name> [--kind K]` (`GET /api/brief?name=&kind=`) prints a project's original note and its plan
+through the server, with no paths, so an agent in a worktree can read what `NOTES.md` no longer copies.
+
+A folder with no record (promoted before 2.15) is read from the old fields in its `NOTES.md`, exactly as before. The
+first board action that writes to it (ship, kill, +7 days, next round, close out, a done-means edit) moves them into a
+record in the same undoable step, and so does **Move it to RawNotes** on Pulse, or `rawtriage migrate-board-data`
+(`POST /api/migrate-board-data`), for every such folder at once as one undo step. What moves: the board fields (and the
+capture's own `date`/`type`/`kept`/`keeps`/`restored` header when the file was Promote's copy), `## Rounds`, `## Moved`,
+`## Outcome`, Promote's dated line and the `pushed` lines under `## Plan`, and any section still exactly as in the
+original note in `done/` (the unedited copy; the record links the original instead). Everything else stays. The app
+never commits in a project's repo: commit each trimmed `NOTES.md` yourself. The old data is still in that repo's git
+history; the report says so and names the repos that are public on GitHub (asked through `gh`; rewriting history is up
+to you).
 
 **Symlinked project folders** are listed read-only with a note. Every write
 must land on a real path inside `RawNotes/` or the projects folders with no
@@ -540,6 +570,8 @@ Project inspection is otherwise read-only: no fetch, checkout or repository edit
 - **Median wait** of the notes in the Inbox, against the 7-day goal.
 - **Where the commits went:** the ten repos you committed to most in the
   last 30 days; click one to browse it.
+- **Board data in project repos** (only while there is some): the project folders whose `NOTES.md` still holds board
+  data from before 2.15, with **Move it to RawNotes** (see **Board records**; `legacy_board` in `/api/stats`).
 
 ## Repo viewer
 

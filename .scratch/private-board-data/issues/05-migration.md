@@ -1,6 +1,6 @@
 # Migration: on first write, and in bulk with a report
 
-Status: open
+Status: done
 Type: task
 Blocked by: 02, 03
 Spec: ../spec.md (D5)

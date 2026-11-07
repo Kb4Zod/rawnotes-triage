@@ -1,6 +1,6 @@
 # `rawtriage brief <slug>`
 
-Status: open
+Status: done
 Type: task
 Blocked by: 04
 Spec: ../spec.md (D3)

@@ -1,6 +1,6 @@
 # Record store: per-project board record in RawNotes
 
-Status: open
+Status: done
 Type: task
 Spec: ../spec.md (D1)
 

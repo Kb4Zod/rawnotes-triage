@@ -1,6 +1,6 @@
 # Promote: trimmed NOTES.md, capture only in RawNotes, record created
 
-Status: open
+Status: done
 Type: task
 Blocked by: 01
 Spec: ../spec.md (D2, D3)
