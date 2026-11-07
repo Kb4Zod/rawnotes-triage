@@ -38,6 +38,15 @@ def hooks():
     if "RAWTRIAGE_TEST_SHIP_NEEDS_GITHUB" in env:
         server.SHIP_NEEDS_GITHUB = tuple(k for k in env["RAWTRIAGE_TEST_SHIP_NEEDS_GITHUB"].split(",") if k)
     if env.get("RAWTRIAGE_TEST_TREE_LIMIT"): server.TREE_LIMIT = int(env["RAWTRIAGE_TEST_TREE_LIMIT"])
+    if env.get("RAWTRIAGE_TEST_DEPS_FAIL"):  # the dependency lookup (GET /api/project/deps) fails with this message
+        def project_deps(*a, **k): raise ValueError(env["RAWTRIAGE_TEST_DEPS_FAIL"])
+        server.project_deps = project_deps
+    if env.get("RAWTRIAGE_TEST_INFLIGHT_DUE"):  # <project>=<text>: that project's due in inflight, after metadata extraction
+        project, _, due = env["RAWTRIAGE_TEST_INFLIGHT_DUE"].partition("=")
+        real_inflight = server.inflight
+
+        def inflight(*a, **k): return [{**f, "due": due} if f.get("project") == project else f for f in real_inflight(*a, **k)]
+        server.inflight = inflight
     if env.get("RAWTRIAGE_TEST_OPENER"):
         opener, real_argv = shlex.split(env["RAWTRIAGE_TEST_OPENER"]), server.open_argv
 

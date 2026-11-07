@@ -7,17 +7,27 @@ import unittest
 from unittest import mock
 
 import server
-from testkit import Fixture
+from testkit import Fixture, LiveList
 
 TOKEN = "ghp_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8"
 
 
 class GithubSignIn(Fixture):
+    relax_limits = False  # no notes here; under TRIAGE_SERVER the config folder stays as each test leaves it
+
     def write_token(self):
         with open(server.token_path(), "w") as fh: fh.write(TOKEN)
 
     def stub_gh(self, answers):
-        """Replace the gh process: answers maps the token in use ('' for none) to a login or an Exception."""
+        """Replace the gh process: answers maps the token in use ('' for none) to a login or an Exception. Under
+        TRIAGE_SERVER the fake gh answers `gh api user` the same way, by the GH_TOKEN it is run with; the calls come
+        from its log, as (argv, token)."""
+        if self.fake_gh is not None:
+            for token, r in answers.items():
+                if isinstance(r, Exception): self.fake_gh.answer(["api", "user"], env={"GH_TOKEN": token}, stderr=str(r), exit=1)
+                else: self.fake_gh.answer(["api", "user"], env={"GH_TOKEN": token}, json_out={"login": r})
+            self.serve_with(env={"GH_TOKEN": None, "GITHUB_TOKEN": None})
+            return LiveList(lambda: [(tuple(c["argv"]), c["env"].get("GH_TOKEN", "")) for c in self.fake_gh.calls()])
         calls = []
         def fake(args, timeout=25, token=None):
             token = token or server.saved_token(); calls.append((tuple(args), token))
@@ -42,6 +52,14 @@ class GithubSignIn(Fixture):
     def test_gh_missing_and_unreachable(self):
         self.stub_gh({"": RuntimeError("GitHub took too long to answer")})
         self.assertEqual(self.get("/api/github?refresh=1")["state"], "unavailable")
+        if self.fake_gh is not None:  # a server started with no gh on its PATH, then one whose gh answers "[]"
+            self.serve_with(env={"PATH": self.path_without("gh")}, restart=True)
+            self.assertEqual(self.get("/api/github?refresh=1")["state"], "no_gh")
+            os.makedirs(self.config_dir(), exist_ok=True); self.write_token()  # a saved token can still be removed
+            self.assertEqual(self.get("/api/github?refresh=1")["source"], "token")
+            self.fake_gh.reset().answer(["api", "user"], stdout="[]"); self.serve_with(reset=("PATH",), restart=True)
+            self.assertEqual(self.get("/api/github?refresh=1")["state"], "unavailable")
+            return
         with mock.patch.object(server.shutil, "which", lambda n: None):
             self.assertEqual(self.get("/api/github?refresh=1")["state"], "no_gh")
             os.makedirs(server.CONFIG_DIR, exist_ok=True); self.write_token()  # a saved token can still be removed
@@ -120,6 +138,7 @@ class GithubSignIn(Fixture):
         def full(msg): raise OSError(28, "No space left on device")
         p = mock.patch.object(server, "log", full); p.start(); self.addCleanup(p.stop)
         p = mock.patch.object(server, "_log_warned", [1]); p.start(); self.addCleanup(p.stop)  # no stderr warning
+        self.serve_with(log=os.path.join(self.tmp, "no-such-folder", "triage.log"))  # under TRIAGE_SERVER: a log it can't open
         self.assertEqual(self.post("/api/github/token", {"token": TOKEN})["login"], "tokenuser")
         self.assertEqual(self.post("/api/github/token/remove", {})["login"], "me")
 

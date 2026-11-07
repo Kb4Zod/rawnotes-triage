@@ -313,6 +313,8 @@ class BulkMigration(Base):
     def test_the_report_names_public_repos(self):
         subprocess.run(["git", "init", "-q", "-b", "main", self.demo], check=True)
         subprocess.run(["git", "-C", self.demo, "remote", "add", "origin", "https://github.com/me/demo.git"], check=True)
+        if self.fake_gh is not None:  # under TRIAGE_SERVER: signed in as me, and me/demo is public
+            self.fake_gh.answer(["api", "user"], json_out={"login": "me"}).answer(["api", "repos/me/demo"], json_out={"private": False})
         with mock.patch.object(server, "repo_public", lambda repo: repo == "me/demo"):
             r = self.post("/api/migrate-board-data", {})
         self.assertEqual(r["public"], ["me/demo"]); self.assertIn("Public on GitHub", r["msg"]); self.assertIn("me/demo", r["msg"])
@@ -346,6 +348,7 @@ class BulkMigration(Base):
     def test_only_this_machine_may_migrate(self):
         import urllib.error, urllib.request
         p = mock.patch.object(server, "BIND_HOST", "0.0.0.0"); p.start(); self.addCleanup(p.stop)
+        self.serve_with(host="0.0.0.0")  # under TRIAGE_SERVER: --host 0.0.0.0
         before = self.snapshot()
         req = urllib.request.Request(f"http://127.0.0.1:{self.port}/api/migrate-board-data", method="POST", data=b"{}",
                                      headers={"Host": f"192.168.1.5:{self.port}", "Content-Type": "application/json"})

@@ -43,6 +43,7 @@ class NewNotePath(Fixture):
         """tilde() also rewrites the key spelling (-home-me-…), which mangled a path that happens to contain it."""
         odd = os.path.join(self.tmp, "Notes" + depcheck.claude_key(self.tmp) + "-x"); os.makedirs(odd)
         with open(os.path.join(odd, "_template.md"), "w") as fh: fh.write("# <topic>\n\n- date: YYYY-MM-DD\n- status: open\n- type: research\n")
+        self.serve_with(notes=odd, env={"HOME": self.tmp})  # under TRIAGE_SERVER: --notes there, and that HOME from its start
         with mock.patch.object(server, "NOTES", odd), mock.patch.dict(os.environ, {"HOME": self.tmp}):
             r = self.post("/api/new", {"slug": "keyed"})
             self.assertTrue(r["path"].startswith("~/"), r["path"])
@@ -61,6 +62,7 @@ class OffThisMachinePaths(Fixture):
         super().setUp()
         p = mock.patch.object(server, "BIND_HOST", "0.0.0.0"); p.start(); self.addCleanup(p.stop)
         p = mock.patch.object(server, "DEPS", depcheck.Sources(self.tmp, proc=os.path.join(self.tmp, "proc"), crontab=lambda: "")); p.start(); self.addCleanup(p.stop)
+        self.serve_with(host="0.0.0.0", env=self.deps_env(server.DEPS))  # under TRIAGE_SERVER: --host 0.0.0.0, these deps sources
         self.note("2026-10-01-x.md", body=f"Kept as written: {self.tmp}/elsewhere")
         self.project("demo", notes="# Demo\n\n- status: promoted\n")
 

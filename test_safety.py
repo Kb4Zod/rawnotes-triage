@@ -3,6 +3,7 @@
 import http.server
 import json
 import os
+import shlex
 import signal
 import subprocess
 import sys
@@ -111,6 +112,7 @@ class OpenEndpoint(Fixture):
         super().setUp()
         self.opened = []
         p = mock.patch.object(server, "open_path", side_effect=self.opened.append); p.start(); self.addCleanup(p.stop)
+        if self.child is not None: self.opened = self.opened_paths()  # under TRIAGE_SERVER: what its test opener was handed
         self.project("demo", notes="# D\n\n- status: promoted\n- due: 2026-12-01\n")
         self.project("spike", kind="experiments")
 
@@ -132,6 +134,7 @@ class OpenEndpoint(Fixture):
     def test_refuses_a_rebound_host_name_on_an_all_interfaces_bind(self):
         """--host 0.0.0.0: a DNS name rebound to 127.0.0.1 reaches the server from this machine's own address, but its
         Host is not localhost, so it is not a browser on this machine (the same _this_machine() check as the other routes)."""
+        self.serve_with(host="0.0.0.0")  # under TRIAGE_SERVER: --host 0.0.0.0
         with mock.patch.object(server, "BIND_HOST", "0.0.0.0"):
             req = urllib.request.Request(f"http://127.0.0.1:{self.port}/api/open", method="POST", data=json.dumps({"name": "demo", "kind": "active"}).encode(),
                                          headers={"Content-Type": "application/json", "Host": f"rebound.example:{self.port}"})
@@ -156,6 +159,11 @@ class OpenEndpoint(Fixture):
 
     def test_an_opener_that_fails_at_once_is_reported_not_swallowed(self):
         stub = os.path.join(self.tmp, "failing-opener"); fh = open(stub, "w"); fh.write("#!/bin/sh\necho 'no handler' >&2\nexit 3\n"); fh.close(); os.chmod(stub, 0o755)
+        if self.child is not None:  # under TRIAGE_SERVER: that opener is the server's (its test hook); the route reports what it said
+            self.serve_with(env={"RAWTRIAGE_TEST_OPENER": shlex.quote(stub)})
+            err = self.post("/api/open", {"name": "demo", "kind": "active"}, ok=False)["error"]
+            self.assertIn("couldn't launch xdg-open", err); self.assertIn("status 3", err); self.assertIn("no handler", err)
+            return
         with mock.patch.object(server, "open_argv", return_value=[stub, "/tmp"]):
             with self.assertRaises(OSError) as cm: REAL_OPEN("/tmp")
         self.assertIn("status 3", str(cm.exception)); self.assertIn("no handler", str(cm.exception))

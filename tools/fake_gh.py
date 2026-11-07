@@ -3,7 +3,8 @@
 
 <state dir>/answers.json is {"answers": [{argv | prefix | graphql, stdout, stderr, exit, once}]}. The first answer
 that matches and isn't used up wins: `argv` is the whole argument list, `prefix` its start, `graphql` a substring of
-the query of `gh api graphql ... -f query=<query>`. An answer with "once": true is used up after one call, so answers
+the query of `gh api graphql ... -f query=<query>`; `env`, if given, {name: value} the call's environment must also have
+(null: unset or empty). An answer with "once": true is used up after one call, so answers
 given in order for the same call are a sequence. Every call is appended to <state dir>/calls.jsonl as
 {"argv", "env", "cwd", "answered"} (answered: the index of the answer used, or null). A call nothing answers exits 1."""
 import fcntl
@@ -21,7 +22,12 @@ def graphql_query(argv):
     return None
 
 
+def env_matches(answer):
+    return all((os.environ.get(k) or None) == (v or None) for k, v in (answer.get("env") or {}).items())
+
+
 def matches(answer, argv):
+    if not env_matches(answer): return False
     if answer.get("argv") is not None: return argv == answer["argv"]
     if answer.get("prefix") is not None: return argv[:len(answer["prefix"])] == answer["prefix"]
     if answer.get("graphql") is not None:

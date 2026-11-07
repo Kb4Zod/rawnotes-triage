@@ -15,7 +15,7 @@ from testkit import Fixture
 from http.server import ThreadingHTTPServer
 
 import server
-from testkit import SERVER_BIN, Switchable, isolate_git, undo_list
+from testkit import SERVER_BIN, LiveList, Switchable, isolate_git, undo_list
 
 
 class ApiTestCase(Switchable, unittest.TestCase):
@@ -95,6 +95,7 @@ class ApiTestCase(Switchable, unittest.TestCase):
         os.makedirs(other_notes)
         os.makedirs(os.path.join(other_root, "active", "proj"))
         server.NOTES, server.PROJECTS = other_notes, other_root
+        self.serve_with(notes=other_notes)  # under TRIAGE_SERVER: --notes there (the projects root is its parent)
 
         detail = self.get("/api/project?name=proj")
         self.assertEqual(detail["abs_path"], os.path.join(other_root, "active", "proj"))
@@ -142,6 +143,14 @@ class ApiTestCase(Switchable, unittest.TestCase):
         self.assertEqual(note["abs_path"], os.path.join(self.notes, name))
 
     def stub_gh(self, *results):
+        """gh_graphql answers results in turn (the last repeats; an Exception is raised). Under TRIAGE_SERVER the fake gh
+        answers `gh api graphql` the same way, and the calls are the queries in its log."""
+        if self.fake_gh is not None:
+            for i, r in enumerate(results):
+                once = i < len(results) - 1
+                if isinstance(r, Exception): self.fake_gh.answer(graphql="", stderr=str(r), exit=1, once=once)
+                else: self.fake_gh.answer(graphql="", json_out={"data": r}, once=once)
+            return LiveList(self.fake_gh.queries)
         calls = []
         def fake(query):
             calls.append(query)
@@ -367,7 +376,15 @@ class ApiTestCase(Switchable, unittest.TestCase):
         self.assertEqual(self.post_done("spike", "Wrong folder")[0], 400)  # no kind -> active -> unknown
 
     def stub_rest(self, answers):
-        """Replace the GitHub layer: answers maps a REST path to its JSON (or an Exception to raise)."""
+        """Replace the GitHub layer: answers maps a REST path to its JSON (or an Exception to raise). Under TRIAGE_SERVER
+        the fake gh answers `gh api <path>` the same way and `gh api user` as "me"; the calls are the REST paths it was
+        asked for (the sign-in lookup, which in-process is pre-seeded, is not one)."""
+        if self.fake_gh is not None:
+            self.fake_gh.answer(["api", "user"], json_out={"login": "me"})
+            for path, r in answers.items():
+                if isinstance(r, Exception): self.fake_gh.answer(["api", path], stderr=str(r), exit=1)
+                else: self.fake_gh.answer(["api", path], json_out=r)
+            return LiveList(lambda: [c["argv"][1] for c in self.fake_gh.calls() if c["argv"][:1] == ["api"] and c["argv"] != ["api", "user"]])
         calls = []
         def fake(path):
             calls.append(path)
@@ -773,6 +790,7 @@ class DecisionTestCase(DecisionBase):
 
     def test_stats_counts_captures_and_decisions_by_week(self):
         server.LOG_PATH = os.path.join(self.tmp, "triage.log"); self.addCleanup(setattr, server, "LOG_PATH", self.old_log_path)
+        self.serve_with(log=server.LOG_PATH)  # under TRIAGE_SERVER: --log there
         today = server.today().isoformat()
         self.note(f"{today}-a.md"); self.note(f"{today}-b.md")
         with open(server.LOG_PATH, "w") as fh: fh.write(f"{today}T10:00:00 kill x.md -> y\n{today}T10:00:01 keep z.md status=open\n")

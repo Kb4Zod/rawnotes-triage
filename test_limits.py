@@ -96,7 +96,7 @@ class InboxLimits(Fixture):
         os.makedirs(server.CONFIG_DIR, exist_ok=True)
         with open(os.path.join(server.CONFIG_DIR, "config.json"), "w") as fh:
             json.dump({"stale_open_days": 3, "inbox_limit_days": 10, "max_keeps": 1, "stale_cooking_days": "bad"}, fh)
-        self.assertEqual(server.limits(), {"stale_open_days": 3, "stale_cooking_days": 7, "inbox_limit_days": 10, "max_keeps": 1})
+        self.assertEqual(self.get("/api/notes")["limits"], {"stale_open_days": 3, "stale_cooking_days": 7, "inbox_limit_days": 10, "max_keeps": 1})
         self.assertTrue(self.row(self.make(4, slug="s"))["stale"])
         self.assertTrue(self.row(self.make(11, slug="e"))["expired"])
         self.assertEqual(self.get("/api/notes")["limits"]["inbox_limit_days"], 10)
@@ -116,7 +116,7 @@ class InboxLimits(Fixture):
 
     def test_summary_line_and_pulse_count(self):
         self.make(1, slug="a"); self.make(40, "cooking", slug="b"); self.make(20, slug="c")
-        self.assertEqual(server.inbox_summary(), "2 open, 1 cooking (2 stale, 1 expired)")
+        self.assertEqual(self.get("/api/notes")["summary"], "2 open, 1 cooking (2 stale, 1 expired)")
         s = self.get("/api/stats"); self.assertEqual((s["expired"], s["stale"]), (1, 2))
 
     def test_limit_header_lines_are_not_shown_in_the_reader_body(self):

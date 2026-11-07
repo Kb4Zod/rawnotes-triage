@@ -23,6 +23,7 @@ class Worktrees(Fixture):
         super().setUp()
         self.opened = []
         p = mock.patch.object(server, "open_path", side_effect=self.opened.append); p.start(); self.addCleanup(p.stop)
+        if self.child is not None: self.opened = self.opened_paths()  # under TRIAGE_SERVER: what its test opener was handed
         self.project("plain")
         os.makedirs(os.path.join(self.project("repo"), ".git"))
         wt = self.project("repo-feature")
@@ -219,6 +220,7 @@ class PromoteSkeleton(PromoteBase):
 
     def test_a_warning_is_logged_but_pulse_counts_one_decision(self):
         server.log = self.saved[2]; server.LOG_PATH = os.path.join(self.tmp, "triage.log")
+        self.serve_with(log=server.LOG_PATH)  # under TRIAGE_SERVER: --log there
         self.set_email("me@example.com"); self.promote()
         lines = open(server.LOG_PATH).read().splitlines()
         self.assertNotIn("me@example.com", "\n".join(lines))
@@ -238,6 +240,8 @@ class PromoteSkeleton(PromoteBase):
                                  {"GIT_CONFIG_PARAMETERS": "'user.email'='leak@example.com'"})):
             name = f"2026-10-0{i + 1}-{'abc'[i]}.md"
             if i: self.note(name, title="x")
+            self.serve_with(env=env, reset=("GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL", "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0",
+                                            "GIT_CONFIG_VALUE_0", "GIT_CONFIG_PARAMETERS"), restart=True)  # under TRIAGE_SERVER: started with them
             with mock.patch.dict(os.environ, env): r = self.promote(name)
             self.assertNotIn("warning", r, env)
             self.assertEqual(self.git(os.path.join(self.tmp, "active", "abc"[i]), "log", "--format=%ae %ce"), f"{TEST_EMAIL} {TEST_EMAIL}")
@@ -254,8 +258,7 @@ class PromoteSkeleton(PromoteBase):
                 self.assertEqual(set(env) & set(bad), set()); self.assertIn("GIT_CONFIG_GLOBAL", env); self.assertIn("GIT_CONFIG_GLOBAL_KEEP", env)
 
     def test_the_suffix_is_configurable(self):
-        os.makedirs(server.CONFIG_DIR, exist_ok=True)
-        with open(server.config_path(), "w") as fh: json.dump({"noreply_suffix": "@corp.example"}, fh)
+        self.write_config(noreply_suffix="@corp.example")  # merged: under TRIAGE_SERVER, Fixture's relaxed limits stay
         self.assertIn("@corp.example", self.promote()["warning"])  # the fixture's GitHub noreply no longer passes
         self.set_email("me@corp.example"); r = self.promote("2026-10-02-b.md")
         self.assertNotIn("warning", r); self.assertEqual(self.git(os.path.join(self.tmp, "active", "b"), "log", "--format=%ae"), "me@corp.example")
@@ -273,6 +276,7 @@ class PromoteSkeleton(PromoteBase):
 
     def test_no_git_still_promotes_with_a_warning(self):
         real = shutil.which
+        self.serve_with(env={"PATH": self.path_without("git")})  # under TRIAGE_SERVER: a server with no git on its PATH
         with mock.patch.object(server.shutil, "which", lambda name, *a, **k: None if name == "git" else real(name, *a, **k)):
             r = self.promote()
         proj = os.path.join(self.tmp, "active", "a")
@@ -316,7 +320,10 @@ class PromoteSkeleton(PromoteBase):
         self.assertIn("changed since", self.post("/api/undo", {}, ok=False)["error"]); self.assertEqual(self.snapshot(), mid)
 
     def test_undo_refuses_when_git_is_gone_and_changes_nothing(self):
+        if self.child is not None:  # under TRIAGE_SERVER: git is on the server's PATH through one link, removed after the promote
+            path, remove_git = self.vanishing("git"); self.serve_with(env={"PATH": path})
         self.promote(); mid = self.snapshot(); real = shutil.which
+        if self.child is not None: remove_git()
         with mock.patch.object(server.shutil, "which", lambda name, *a, **k: None if name == "git" else real(name, *a, **k)):
             self.assertIn("git is not installed", self.post("/api/undo", {}, ok=False)["error"])
         self.assertEqual(self.snapshot(), mid)
@@ -425,6 +432,7 @@ class PromoteSkeleton(PromoteBase):
 
     def test_git_never_follows_an_inherited_git_dir(self):
         other = os.path.join(self.tmp, "other"); os.makedirs(other); subprocess.run(["git", "init", "-q", other], check=True)
+        self.serve_with(env={"GIT_DIR": os.path.join(other, ".git"), "GIT_WORK_TREE": other})  # under TRIAGE_SERVER: started with them
         with mock.patch.dict(os.environ, {"GIT_DIR": os.path.join(other, ".git"), "GIT_WORK_TREE": other}): self.promote()
         self.assertEqual(self.git(os.path.join(self.tmp, "active", "a"), "log", "--format=%s"), "Start a (promoted from RawNotes)")
         self.assertEqual(self.git(other, "rev-parse", "-q", "--verify", "HEAD"), "")

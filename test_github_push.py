@@ -47,6 +47,8 @@ class GithubCase(Fixture):
         p = mock.patch.dict(os.environ, {"PATH": self.stub + os.pathsep + os.environ["PATH"], "STUB_LOG": self.log, "STUB_DIR": self.stub})
         p.start(); self.addCleanup(p.stop)
         for var in ("GH_TOKEN", "GITHUB_TOKEN", "ALLOW_PUSH_MAIN"): os.environ.pop(var, None)
+        # under TRIAGE_SERVER: the same gate through its hook, and this stub gh first on the PATH (not testkit's fake gh)
+        self.serve_with(env={"RAWTRIAGE_TEST_SHIP_NEEDS_GITHUB": ",".join(GATED), "PATH": os.environ["PATH"]})
         self.remote = os.path.join(self.tmp, "github-me-%s.git")  # per-repo bare repos: "GitHub"
 
     def gh_calls(self): return open(self.log).read().splitlines()
@@ -118,6 +120,7 @@ class NotOnGithubFlag(GithubCase):
         path = self.promoted(); other = os.path.join(self.tmp, "other"); os.makedirs(other)
         run(other, "init", "-q", "-b", "elsewhere"); run(other, "commit", "-q", "--allow-empty", "-m", "not this project")
         drop = {"GIT_DIR": os.path.join(other, ".git"), "GIT_WORK_TREE": other, "GIT_INDEX_FILE": os.path.join(other, "idx")}
+        self.serve_with(env=drop, restart=True)  # under TRIAGE_SERVER: a server started with them (the test is ported: gh_env)
         with mock.patch.dict(os.environ, drop):
             self.assertFalse(set(server.gh_env()) & set(drop))
             d = self.get("/api/project?name=demo&kind=active")
@@ -299,6 +302,7 @@ class CloseOutGate(GithubCase):
 
     def test_the_gate_off_lets_everything_through(self):
         path = self.promoted(); self.work(path)
+        self.serve_with(env={"RAWTRIAGE_TEST_SHIP_NEEDS_GITHUB": ""}, restart=True)  # under TRIAGE_SERVER: a server with the gate off
         with mock.patch.object(server, "SHIP_NEEDS_GITHUB", ()):
             self.assertEqual(self.close(outcome="maintained")["moved_to"], "maintained/demo")
 
@@ -408,6 +412,7 @@ class CreateRepo(GithubCase):
     def test_refuses_off_this_machine(self):
         self.promoted(); self.bare("demo")
         p = mock.patch.object(server, "BIND_HOST", "0.0.0.0"); p.start(); self.addCleanup(p.stop)  # a phone on the LAN: its Host name is accepted, but it isn't this machine
+        self.serve_with(host="0.0.0.0", restart=True)  # under TRIAGE_SERVER: a server on --host 0.0.0.0
         req = urllib.request.Request(f"http://127.0.0.1:{self.port}/api/project/github", method="POST", data=json.dumps({"name": "demo", "kind": "active"}).encode(),
                                      headers={"Content-Type": "application/json", "Host": f"192.168.1.5:{self.port}"})
         with self.assertRaises(urllib.error.HTTPError) as cm: urllib.request.urlopen(req)
@@ -457,6 +462,7 @@ class CreateRepo(GithubCase):
 
     def test_refuses_when_gh_is_missing(self):
         self.promoted()
+        self.serve_with(env={"PATH": self.path_without("gh")}, restart=True)  # under TRIAGE_SERVER: a server with no gh on its PATH
         with mock.patch.object(server.shutil, "which", lambda n: None if n == "gh" else "/usr/bin/" + n):
             self.refused(contains="gh")
 

@@ -10,7 +10,7 @@ import unittest
 from unittest import mock
 
 import server
-from testkit import Fixture, undo_list
+from testkit import SERVER_BIN, Fixture, undo_list
 
 try: from test_browser import BrowserCase, cdp
 except ImportError: BrowserCase = cdp = None
@@ -27,6 +27,7 @@ class GitFixture(Fixture):
     def setUp(self):
         super().setUp()
         saved = server.AUTOCOMMIT; server.AUTOCOMMIT = True; self.addCleanup(setattr, server, "AUTOCOMMIT", saved)
+        self.serve_with(args=[])  # under TRIAGE_SERVER: started without --no-commit, so auto-commit is on
 
     def init_repo(self, email="me@users.noreply.github.com"):
         self.hooks = os.path.join(self.tmp, "hooks"); os.makedirs(self.hooks)
@@ -202,6 +203,7 @@ class AutoCommit(GitFixture):
         hook = os.path.join(self.hooks, "pre-commit")
         with open(hook, "w") as fh: fh.write(f"#!/bin/sh\necho 'leak in {self.tmp}/keys/id' >&2\nexit 1\n")
         os.chmod(hook, 0o755)
+        self.serve_with(env={"HOME": self.tmp})  # under TRIAGE_SERVER: the server's own HOME, from its start
         with mock.patch.dict(os.environ, {"HOME": self.tmp}):
             err = self.post("/api/action", {"file": "2026-10-01-alpha.md", "action": "kill"})["commit"]["error"]
         self.assertIn("(~/hooks/pre-commit)", err); self.assertIn("leak in ~/keys/id", err)
@@ -209,10 +211,11 @@ class AutoCommit(GitFixture):
 
     def test_no_commit_flag_and_config_turn_it_off(self):
         n = self.count()
-        server.AUTOCOMMIT = False
+        server.AUTOCOMMIT = False; self.serve_with(args=["--no-commit"])  # under TRIAGE_SERVER: started with --no-commit
         r = self.post("/api/action", {"file": "2026-10-01-alpha.md", "action": "kill"})
         self.assertEqual(r["commit"], {"ok": True, "skipped": "auto-commit is off"}); self.assertEqual(self.count(), n)
         server.AUTOCOMMIT = True; server.save_config(autocommit=False)
+        self.serve_with(args=[], restart=True)  # under TRIAGE_SERVER: a new server without --no-commit (config.json says off)
         r = self.post("/api/action", {"file": "2026-10-02-beta.md", "action": "kill"})
         self.assertEqual(r["commit"]["skipped"], "auto-commit is off"); self.assertEqual(self.count(), n)
         server.save_config(autocommit=True)
@@ -235,6 +238,7 @@ class SymlinkedNotesPath(GitFixture):
         real = os.path.join(self.tmp, "real"); os.makedirs(real); os.rename(self.notes, os.path.join(real, "RawNotes"))
         link = os.path.join(self.tmp, "link"); os.symlink(real, link)
         self.notes = server.NOTES = os.path.join(link, "RawNotes"); server.PROJECTS = link
+        self.serve_with(notes=self.notes)  # under TRIAGE_SERVER: --notes through the link (the projects root is its parent)
         self.init_repo(); self.note("2026-10-01-alpha.md", "Alpha"); self.snapshot_commit(); n = self.count()
         r = self.post("/api/action", {"file": "2026-10-01-alpha.md", "action": "kill", "note": "dupe"})
         self.assertIn("commit", r); self.assertTrue(r["commit"]["ok"], r); self.assertTrue(r["commit"].get("sha"), r)
@@ -265,6 +269,13 @@ if BrowserCase is not None:
             self.page.click("#tUndo"); self.page.wait("document.querySelector('#toast.show') && !document.querySelector('#toast .cwarn')")  # said once per page load
 
         def test_hook_failure_warning_is_shown(self):
+            if SERVER_BIN:  # the server under test commits for real: a notes repo whose pre-commit hook refuses
+                hooks = os.path.join(self.tmp, "hooks"); os.makedirs(hooks)
+                git(self.notes, "init", "-q", "-b", "main"); git(self.notes, "config", "core.hooksPath", hooks)
+                git(self.notes, "add", "-A"); git(self.notes, "-c", "user.email=s@x", "commit", "-q", "-m", "start")
+                hook = os.path.join(hooks, "pre-commit")
+                with open(hook, "w") as fh: fh.write("#!/bin/sh\necho refused >&2\nexit 1\n")
+                os.chmod(hook, 0o755)
             with mock.patch.object(server, "autocommit", lambda label, ops: {"ok": False, "error": "the pre-commit hook (x) refused the commit"}):
                 self.page.click("#list .item[data-f='2026-10-15-recent.md']"); self.page.key("x"); self.page.wait("document.querySelector('#form.kill')")
                 self.page.key("Enter"); self.page.wait("document.querySelector('#toast.show .cwarn')")

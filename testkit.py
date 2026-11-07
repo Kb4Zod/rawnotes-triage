@@ -73,9 +73,16 @@ server.SYNC_APPS = os.path.join(SESSION_DIR, "no-sync-apps")  # an absolute path
 #   RAWTRIAGE_TEST_SHIP_NEEDS_GITHUB=<kinds>  comma-separated kinds whose Ship needs GitHub ("" = none)
 #   RAWTRIAGE_TEST_OPENER=<command>        run instead of the platform opener (shell words, so quote a path with spaces),
 #                                          the path to open as its last argument
+#   RAWTRIAGE_TEST_TREE_LIMIT=<n>          the entry count over which a folder is too big for undo to check (TREE_LIMIT)
+#   RAWTRIAGE_TEST_DEPS_FAIL=<message>     the dependency lookup (GET /api/project/deps) fails with that message
+#   RAWTRIAGE_TEST_INFLIGHT_DUE=<project>=<text>  that project's `due` in the board listing, after metadata extraction
+#                                          (so a test's hostile string reaches the page whole)
 # and the fixture's PATH starts with a fake `gh` (FakeGh) that answers nothing until a test scripts it, so no test can
 # reach the real GitHub; GH_TOKEN and GITHUB_TOKEN are not passed on. tools/shim/ has stand-ins for the two binaries
 # that run this repo's own server.py and bin/rawtriage as separate processes, to exercise the switch without Rust.
+# A test that patches the server in-process says the same to the binary through Switchable.serve_with() (its
+# environment, --host, --notes, --log, flags; before the first request, or restart=True for a new process), deps_env(),
+# path_without(), set_limits() and fake_gh; each does nothing in-process (tools/patch_sites.tsv says which test does what).
 HERE = os.path.dirname(os.path.abspath(__file__))
 def _binary(var):
     path = os.environ.get(var) or None  # a path with a slash is made absolute: tests run commands from other folders
@@ -133,18 +140,30 @@ class FakeGh:
             fh.write(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(FAKE_GH)} {shlex.quote(self.dir)} "$@"\n')
         os.chmod(gh, 0o755)
 
-    def answer(self, argv=None, prefix=None, graphql=None, stdout="", stderr="", exit=0, json_out=None, once=False):
+    def answer(self, argv=None, prefix=None, graphql=None, stdout="", stderr="", exit=0, json_out=None, once=False, env=None):
         """Answer a call whose argv is `argv` exactly, starts with `prefix`, or is `gh api graphql` with a query
         containing `graphql` (a substring of the -f query=... argument). json_out: stdout as JSON. once: used for one
-        call only, so answers for the same call given in order are a sequence (the last one that isn't `once` repeats)."""
-        self.answers.append({"argv": argv, "prefix": prefix, "graphql": graphql, "exit": exit, "once": once, "stderr": stderr,
+        call only, so answers for the same call given in order are a sequence (the last one that isn't `once` repeats).
+        env: {name: value} the call's environment must have as well (None: unset or empty), e.g. the GH_TOKEN in use."""
+        self.answers.append({"argv": argv, "prefix": prefix, "graphql": graphql, "env": env, "exit": exit, "once": once, "stderr": stderr,
                              "stdout": json.dumps(json_out) if json_out is not None else stdout})
         self._save(); return self
+
+    def reset(self):
+        """Forget every answer (the calls stay logged)."""
+        self.answers = []; self._save()
+        try: os.remove(os.path.join(self.dir, "used.json"))
+        except FileNotFoundError: pass
+        return self
 
     def _save(self):
         tmp = self.answers_file + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh: json.dump({"answers": self.answers}, fh)
         os.replace(tmp, self.answers_file)
+
+    def queries(self):
+        """The query of every `gh api graphql` call so far, oldest first."""
+        return [q for q in (_tool("fake_gh").graphql_query(c["argv"]) for c in self.calls()) if q is not None]
 
     def calls(self):
         """Every call so far, oldest first: {"argv", "env", "cwd", "answered"}."""
@@ -153,12 +172,23 @@ class FakeGh:
         except FileNotFoundError: return []
 
 
+class LiveList:
+    """A list read again on every use (len, index, ==, iteration): a fake gh's calls as a test's stub would collect them."""
+    def __init__(self, read): self.read = read
+    def __len__(self): return len(self.read())
+    def __getitem__(self, i): return self.read()[i]
+    def __iter__(self): return iter(self.read())
+    def __eq__(self, other): return self.read() == other
+    def __repr__(self): return repr(self.read())
+
+
 class ChildServer:
     """TRIAGE_SERVER, run for one test. Started on first use of the test's port (so whatever setUp still changes in the
     environment, after the fixture's own setUp, reaches it), stopped by the test's cleanup. Its log, undo dump, output
     and fake gh live in a folder of their own outside the fixture's tree (snapshots compare that tree)."""
     def __init__(self, case, notes, config_dir, relax_limits=False):
         self.case, self.notes, self.config_dir = case, notes, config_dir
+        self.host, self.args, self.extra_env = "127.0.0.1", [], {}  # Switchable.serve_with changes them before a start
         self.side = tempfile.mkdtemp(prefix="rt-child-"); case.addCleanup(shutil.rmtree, self.side, ignore_errors=True)
         self.log = os.path.join(self.side, "triage.log"); self.dump = os.path.join(self.side, "undo.json")
         self.output = os.path.join(self.side, "server-output.txt")
@@ -178,6 +208,9 @@ class ChildServer:
             "RAWTRIAGE_TEST_SYNC_APPS": server.SYNC_APPS, "RAWTRIAGE_TEST_SHIP_NEEDS_GITHUB": "",
             "RAWTRIAGE_TEST_OPENER": shlex.quote(os.path.join(HERE, "tools", "shim", "record-open")), "RAWTRIAGE_TEST_OPENED": opener,
             "PATH": self.gh.bin + os.pathsep + env.get("PATH", os.defpath)})
+        for k, v in self.extra_env.items():  # serve_with: None removes a variable
+            if v is None: env.pop(k, None)
+            else: env[k] = v
         return env
 
     def start(self):
@@ -185,8 +218,9 @@ class ChildServer:
         for attempt in range(3):
             port = free_port()
             with open(self.output, "ab") as out:
-                self.proc = subprocess.Popen([SERVER_BIN, "--port", str(port), "--host", "127.0.0.1", "--no-browser",
-                                              "--notes", self.notes, "--log", self.log], cwd=self.side, env=self.env(),
+                self.proc = subprocess.Popen([SERVER_BIN, "--port", str(port), "--host", self.host, "--no-browser",
+                                              *(["--notes", self.notes] if self.notes is not None else []), "--log", self.log,
+                                              *self.args], cwd=self.side, env=self.env(),
                                              stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT)
             deadline = time.monotonic() + 30
             while time.monotonic() < deadline and self.proc.poll() is None:
@@ -248,6 +282,98 @@ class Switchable:
     def server_pid(self):
         """The process serving this test: this one in-process, the child under TRIAGE_SERVER."""
         return os.getpid() if self.child is None else (self.port and self.child.proc.pid)
+
+    _KEEP = object()
+
+    def serve_with(self, env=None, host=None, notes=_KEEP, args=None, log=None, restart=False, reset=()):
+        """Under TRIAGE_SERVER, how this test's server is started: env, variables for it (the test hooks; None removes
+        one); host, its --host; notes, its --notes (None: started without it); args, more flags (--no-commit). The
+        server starts on the test's first request, so this comes before it, or passes restart=True: a new process,
+        so an empty undo list and cold caches. reset: names of variables to give back the fixture's own value.
+        In-process it does nothing; the test patches server.* as before. log: its --log (default: a file
+        beside the child's own output, which server.LOG_PATH names)."""
+        if self.child is None: return
+        if self.child.proc is not None:
+            if not restart: raise RuntimeError("serve_with() after the server started: pass restart=True (a new process)")
+            self.clear_undo()
+        for k in reset: self.child.extra_env.pop(k, None)
+        self.child.extra_env.update(env or {})
+        if host is not None: self.child.host = host
+        if notes is not self._KEEP: self.child.notes = notes
+        if args is not None: self.child.args = list(args)
+        if log is not None: self.child.log = log
+
+    def deps_env(self, sources):
+        """The test hooks that give a server under TRIAGE_SERVER the dependency check's sources (a depcheck.Sources):
+        RAWTRIAGE_TEST_DEPS_HOME, _PROC and _CRONTAB (the crontab function's text, written to a file now)."""
+        crontab = os.path.join(tempfile.mkdtemp(prefix="rt-crontab-"), "crontab")
+        self.addCleanup(shutil.rmtree, os.path.dirname(crontab), ignore_errors=True)
+        with open(crontab, "w", encoding="utf-8") as fh: fh.write(sources.crontab() or "")
+        return {"RAWTRIAGE_TEST_DEPS_HOME": sources.home, "RAWTRIAGE_TEST_PROC": sources.proc, "RAWTRIAGE_TEST_CRONTAB": crontab}
+
+    def path_without(self, *names):
+        """This process's PATH with no `names` on it (e.g. "gh", "git"), for a server started without them: folders that
+        hold one are swapped for a folder of links to their other programs, so python3, git and the rest still run."""
+        keep, links = [], tempfile.mkdtemp(prefix="rt-path-"); self.addCleanup(shutil.rmtree, links, ignore_errors=True)
+        for d in os.environ.get("PATH", os.defpath).split(os.pathsep):
+            if not d or not any(os.path.lexists(os.path.join(d, n)) for n in names): keep.append(d); continue
+            try: entries = os.listdir(d)
+            except OSError: continue
+            for e in entries:
+                src, dst = os.path.join(d, e), os.path.join(links, e)
+                if e not in names and not os.path.lexists(dst) and os.path.isfile(src) and os.access(src, os.X_OK): os.symlink(src, dst)
+        if links not in keep: keep.append(links)
+        return os.pathsep.join(keep)
+
+    def set_limits(self, **limits):
+        """Under TRIAGE_SERVER, the Inbox limits the test patches into server.LIMIT_DEFAULTS, written to the fixture's
+        config.json (merged with what is there) before the server starts. In-process it does nothing."""
+        if self.child is None: return
+        if self.child.proc is not None: raise RuntimeError("set_limits() after the server started: serve_with(restart=True) first")
+        path = os.path.join(self.child.config_dir, "config.json")
+        try:
+            with open(path, encoding="utf-8") as fh: conf = json.load(fh)
+        except FileNotFoundError: conf = {}
+        conf.update(limits); os.makedirs(self.child.config_dir, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh: json.dump(conf, fh)
+
+    def opened_paths(self):
+        """Under TRIAGE_SERVER, the paths the server handed to its opener (RAWTRIAGE_TEST_OPENER, tools/shim/record-open),
+        oldest first, as LiveList: what in-process tests collect by patching server.open_path."""
+        def read():
+            try:
+                with open(os.path.join(self.child.side, "opened"), encoding="utf-8") as fh: return fh.read().splitlines()
+            except FileNotFoundError: return []
+        return LiveList(read)
+
+    def vanishing(self, name):
+        """Under TRIAGE_SERVER, a PATH on which `name` (e.g. "git") is found only through a link that the returned
+        function removes: a server started with it loses the program mid-test, keeping its undo list."""
+        path = self.path_without(name); links = path.split(os.pathsep)[-1]
+        real = shutil.which(name); link = os.path.join(links, name); os.symlink(real, link)
+        return path, lambda: os.remove(link)
+
+    def write_config(self, **values):
+        """Merge values into the fixture's config.json (in-process the file starts absent, so this is a plain write; under
+        TRIAGE_SERVER it keeps the relaxed limits Fixture wrote there)."""
+        conf = self.saved_config() or {}; conf.update(values)
+        os.makedirs(self.config_dir(), exist_ok=True)
+        with open(os.path.join(self.config_dir(), "config.json"), "w", encoding="utf-8") as fh: json.dump(conf, fh)
+
+    def saved_config(self):
+        """The fixture's config.json as the server under test left it (None if there is none)."""
+        try:
+            with open(os.path.join(self.config_dir(), "config.json"), encoding="utf-8") as fh: return json.load(fh)
+        except FileNotFoundError: return None
+
+    @property
+    def fake_gh(self):
+        """Under TRIAGE_SERVER, the FakeGh on the server's PATH (None in-process, where the tests patch server._gh)."""
+        return self.child.gh if self.child is not None else None
+
+    def config_dir(self):
+        """The config folder the server under test reads (token, config.json)."""
+        return self.child.config_dir if self.child is not None else server.CONFIG_DIR
 
     def clear_undo(self):
         """Empty the server's undo list: in-process server._undo.clear(); under TRIAGE_SERVER a fresh process."""
