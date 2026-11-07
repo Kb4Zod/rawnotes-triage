@@ -2327,7 +2327,9 @@ def legacy_board():
     with _lock.read(): return [f"{k}/{n}" for k, n, _ in legacy_projects()]
 
 def repo_public(repo):
-    """Is GitHub repo `owner/name` public? None when GitHub can't say (no gh, signed out, offline, not visible)."""
+    """Is GitHub repo `owner/name` public? None when GitHub can't say (no gh, signed out, offline, not visible). The
+    sign-in is checked first (cached), so a signed-out gh doesn't cost a timeout per repo."""
+    if github_status()["state"] != "signed_in": return None
     try: d = gh_rest(f"repos/{repo}")
     except (RuntimeError, ValueError): return None
     return (not d["private"]) if isinstance(d, dict) and isinstance(d.get("private"), bool) else None

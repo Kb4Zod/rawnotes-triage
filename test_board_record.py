@@ -197,9 +197,13 @@ class BulkMigration(Base):
         self.assertEqual(r["public"], ["me/demo"]); self.assertIn("Public on GitHub", r["msg"]); self.assertIn("me/demo", r["msg"])
 
     def test_repo_public_never_guesses(self):
+        p = mock.patch.object(server, "github_status", return_value={"state": "signed_in"}); p.start(); self.addCleanup(p.stop)
         with mock.patch.object(server, "gh_rest", side_effect=RuntimeError("offline")): self.assertIsNone(server.repo_public("me/x"))
         with mock.patch.object(server, "gh_rest", return_value={"private": False}): self.assertTrue(server.repo_public("me/x"))
         with mock.patch.object(server, "gh_rest", return_value={}): self.assertIsNone(server.repo_public("me/x"))
+        with mock.patch.object(server, "github_status", return_value={"state": "signed_out"}), \
+             mock.patch.object(server, "gh_rest", side_effect=AssertionError("asked GitHub while signed out")):
+            self.assertIsNone(server.repo_public("me/x"))
 
 
 class Brief(Base):
