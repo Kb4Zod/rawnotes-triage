@@ -455,7 +455,7 @@ function md(src,min=2){ // small markdown renderer: headings, lists, code, bold/
 
 /* ---------- toast + undo ---------- */
 let toastTimer,toastClear;
-function toast(msg,{undo=false,bad=false,list=null,listHead='Left to do by hand (also under ## Moved in its NOTES.md):'}={}){
+function toast(msg,{undo=false,bad=false,list=null,listHead='Left to do by hand (copy these now: ## Moved in its NOTES.md lists them without paths):'}={}){
   const t=$('#toast');t.className=bad?'bad':'';clearTimeout(toastClear);
   const warn=bad?'':commitWarn;commitWarn=null;
   t.innerHTML=`<span>${bad?'':I.check} ${esc(msg)}${list&&list.length?`<span class="tlist">${esc(listHead)}${list.map(x=>`<span class="mono">${esc(x)}</span>`).join('')}</span>`:''}${warn?`<span class="cwarn">⚠ ${esc(warn)}</span>`:''}</span>${undo?`<button type="button" id="tUndo">${I.undo}Undo ${kbh('Z')}</button>`:''}`;

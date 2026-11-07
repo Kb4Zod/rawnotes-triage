@@ -77,7 +77,7 @@ class Outcomes(CloseBase):
         new_mem = os.path.join(self.sources.claude_projects, depcheck.claude_key(os.path.join(self.tmp, "archive", "demo")))
         moved = text.split("## Moved", 1)[1]
         self.assertIn(f"- {t}: moved from `active/demo/` to `archive/demo/`. Left to do by hand:", moved)
-        self.assertIn("keyed by the old path: move it in `~/.claude/projects/` to the new folder's key", moved)
+        self.assertIn("keyed by the old path: move it in `~/.claude/projects/` to the key of its new path", moved)
         self.assertIn("  - Point the T3 Code project for this folder at its new place", moved)
         self.assertEqual([x["kind"] for x in r["todos"]], ["agent-memory", "t3"])
         self.assertEqual(r["todos"][0]["fix"], f"mv {mem} {new_mem}")  # the toast keeps the exact commands

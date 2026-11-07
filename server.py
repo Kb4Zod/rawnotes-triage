@@ -2041,8 +2041,8 @@ def _next_round(tx, path, kind, name, target, done, due):
 
 MOVED_TODO = {  # what ## Moved says for each to-do: no absolute path (NOTES.md is tracked in the project's own repo,
     # which may be public); the exact commands go only to the toast and the panel, which stay on this machine
-    "agent-memory": "move it in `~/.claude/projects/` to the new folder's key (its full path with every `/` as `-`); "
-                    "the close-out toast showed the exact `mv`",
+    "agent-memory": "move it in `~/.claude/projects/` to the key of its new path (the full path with every `/` as "
+                    "`-`), or merge the two by hand if that one exists already; the close-out toast showed the exact command",
     "t3": "Point the T3 Code project for this folder at its new place",
     "worktree": "run `git worktree prune` in the moved folder",
 }
