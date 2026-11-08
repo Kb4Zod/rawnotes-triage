@@ -4,6 +4,38 @@ The version shows in the page heading ("RawNotes Triage version X.XX") and
 in the startup line. Bump `VERSION` in `server.py` and add an entry here
 with every change. Versions 1.00-1.03 were numbered after the fact from git history.
 
+## Test-only, after 2.17 — 2026-11-07
+Test-only (no change to the app, so the version stays 2.17): the conversions that let the suite run against another
+server and CLI under `TRIAGE_SERVER` / `TRIAGE_CLI` (the Rust port's spec 8.1, its `patch-map.md`).
+- **test-only: every in-process patch of the server has its switch form.** `testkit` gains `serve_with()` (the
+  server's environment, `--host`, `--notes` or none, `--log`, extra flags such as `--no-commit`; before it starts, or
+  as a new process), `deps_env()`, `path_without()` (a PATH without `gh` or `git`), `vanishing()` (a program that goes
+  away mid-test), `set_limits()`, `write_config()` / `saved_config()` (config.json merged, not replaced),
+  `opened_paths()` and `fake_gh`; the fake `gh` can match on the environment (the `GH_TOKEN` in use) and be reset.
+  Tests that patched `_gh`, `gh_rest`, `gh_graphql`, `DEPS`, `TREE_LIMIT`, `SYNC_APPS`, `SHIP_NEEDS_GITHUB`,
+  `open_path`, `BIND_HOST`, `NOTES`, `AUTOCOMMIT`, `LIMIT_DEFAULTS`, `log` or `shutil.which` also say it through those.
+  In-process each test runs as before.
+- **test-only: the browser tests** (`test_browser.py`) script the fake `gh`, read the token and config files instead
+  of `server.saved_token()` / `server.NOTES`, and use the new hooks `RAWTRIAGE_TEST_TREE_LIMIT`, `_DEPS_FAIL` and
+  `_INFLIGHT_DUE` (the hostile `due` string exactly); `TRIAGE_INDEX` with `TRIAGE_SERVER` is refused (in-process only).
+- **test-only: `test_engine.Faults.test_restore_and_project_writes_roll_back_too` is two tests**,
+  `test_a_failed_restore_rolls_back` and `test_a_failed_project_write_rolls_back`, with the same assertions.
+- **test-only: a few direct calls became routes**: `test_runtime`'s snapshot reader uses `GET /api/notes`,
+  `test_limits` reads `limits` and `summary` from it, `test_setup` reads the folder from `GET /api/setup`.
+- **test-only: the version checks ask the server under test.** `expected_version()` and
+  `served_page()` (`index.html` with that version put in) replace `server.VERSION` / `server.INDEX_HTML` in the
+  version, page, commit-body and running-server tests, so another build's own version passes; in-process they are the
+  same values as before.
+- **test-only: `TRIAGE_EXPECT_VERSION`** names the version a switched server must report; unset, what it reports must
+  look like N.NN or N.NN-tag. `served_version()` is now `expected_version()`.
+- **test-only: the real `gh` is off for the whole run.** A stub first on PATH fails every call and the run reports how
+  many reached it. Until now two `test_server` project-detail tests ran the runner's own `gh pr list` against GitHub.
+  `ApiTestCase.stub_gh` also clears a leftover in-flight activity fetch (busy/last), which made the activity tests
+  flaky under load.
+- **test-only: `tools/parity_ledger.py`** classifies every direct `server.<f>()` call in a test that still runs
+  (kind 1 or kind 3, converted or ported), checks that no running test has a patch row left to convert, and compares a
+  split test's halves with the map's owner and due. `tools/patch_sites.tsv` records each row's conversion.
+
 ## 2.17 — 2026-11-07
 Test-only: the suite can drive another server and CLI (the Rust port's switch; its spec section 8.1). Nothing the app
 does changes, except that `RAWTRIAGE_TODAY` can fix the date.

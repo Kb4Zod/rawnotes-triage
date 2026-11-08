@@ -24,6 +24,7 @@ class CloseBase(Fixture):
         self.home = os.path.join(self.tmp, "home"); os.makedirs(self.home)
         self.sources = depcheck.Sources(self.home, proc=os.path.join(self.tmp, "proc"), crontab=lambda: "")
         p = mock.patch.object(server, "DEPS", self.sources); p.start(); self.addCleanup(p.stop)
+        self.serve_with(env=self.deps_env(self.sources))  # under TRIAGE_SERVER: the same sources, through the deps hooks
         self.demo = self.project("demo", notes=NOTES)
         with open(os.path.join(self.demo, "app.py"), "w") as fh: fh.write("print(1)\n")
 
@@ -272,6 +273,7 @@ class SyncApps(CloseBase):
         with open(p, "w") as fh: fh.write(f"#!/bin/sh\necho run >> {self.marker}\necho synced; exit {code}\n")
         os.chmod(p, 0o755)
         m = mock.patch.object(server, "SYNC_APPS", "sync-apps"); m.start(); self.addCleanup(m.stop)
+        self.serve_with(env={"RAWTRIAGE_TEST_SYNC_APPS": "sync-apps"})  # under TRIAGE_SERVER: the hook names it the same way
         m = mock.patch.dict(os.environ, {"PATH": bindir + os.pathsep + "/usr/bin:/bin"}); m.start(); self.addCleanup(m.stop)
 
     def runs(self):
@@ -344,6 +346,7 @@ class Faults(CloseBase):
         self.post("/api/undo", {}); self.assertEqual(self.snapshot(), self.before)
 
     def test_a_folder_too_big_to_check_still_moves_but_its_undo_refuses(self):
+        self.serve_with(env={"RAWTRIAGE_TEST_TREE_LIMIT": "1"})  # under TRIAGE_SERVER: for the whole test (undo refuses either way)
         with mock.patch.object(server, "TREE_LIMIT", 1): self.close()
         mid = self.snapshot()
         r = self.post("/api/undo", {}, ok=False); self.assertIn("too big", r["error"]); self.assertIn("mv ", r["error"])
@@ -351,6 +354,7 @@ class Faults(CloseBase):
 
     def test_the_deps_answer_warns_before_a_move_that_undo_cannot_check(self):
         self.assertNotIn("undo_warning", self.get("/api/project/deps?name=demo&kind=active"))
+        self.serve_with(env={"RAWTRIAGE_TEST_TREE_LIMIT": "1"}, restart=True)  # under TRIAGE_SERVER: a server with the limit
         with mock.patch.object(server, "TREE_LIMIT", 1):
             d = self.get("/api/project/deps?name=demo&kind=active")
         self.assertIn("can't be undone", d["undo_warning"]); self.assertIn("mv ", d["undo_warning"])
@@ -382,6 +386,7 @@ class OffThisMachine(CloseBase):
         p = mock.patch.object(server, "BIND_HOST", "0.0.0.0"); p.start(); self.addCleanup(p.stop)
         self.sources = depcheck.Sources(self.tmp, proc=os.path.join(self.tmp, "proc"), crontab=lambda: f"0 * * * * {self.demo}/app.py --secret-flag\n")
         p = mock.patch.object(server, "DEPS", self.sources); p.start(); self.addCleanup(p.stop)
+        self.serve_with(env=self.deps_env(self.sources), host="0.0.0.0")  # under TRIAGE_SERVER: these sources, --host 0.0.0.0
         pid = os.path.join(self.tmp, "proc", "4242"); os.makedirs(pid)
         with open(os.path.join(pid, "cmdline"), "wb") as fh: fh.write(f"python3\0{self.demo}/app.py\0--token=hunter2\0".encode())
 
@@ -402,6 +407,7 @@ class OffThisMachine(CloseBase):
 
     def test_a_move_is_refused_off_this_machine_and_nothing_changes(self):
         self.sources = depcheck.Sources(self.home, proc=os.path.join(self.tmp, "noproc"), crontab=lambda: "")
+        self.serve_with(env=self.deps_env(self.sources))  # under TRIAGE_SERVER: no blockers, through the deps hooks
         with mock.patch.object(server, "DEPS", self.sources):
             before = self.snapshot(); n = len(undo_list())
             for path, body in (("/api/project/close", {"name": "demo", "kind": "active", "outcome": "archive"}),
@@ -423,6 +429,7 @@ class UndoOffThisMachine(CloseBase):
     def setUp(self):
         super().setUp()
         p = mock.patch.object(server, "BIND_HOST", "0.0.0.0"); p.start(); self.addCleanup(p.stop)
+        self.serve_with(host="0.0.0.0")  # under TRIAGE_SERVER: --host 0.0.0.0
 
     def refused_remotely(self):
         before = self.snapshot(); n = len(undo_list())

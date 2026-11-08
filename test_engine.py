@@ -2,6 +2,8 @@
 """v2.05: transactional recovery. Fault injection through monkeypatched os calls and the log; every case checks
 the files byte for byte (and the undo list) against what the user had before."""
 import os
+import shutil
+import tempfile
 import threading
 import unittest
 from unittest import mock
@@ -29,6 +31,9 @@ class Faults(Fixture):
 
     # ---- 1: logging can't take a change down
     def test_log_oserror_does_not_fail_or_strand_a_kill(self):
+        if self.child is not None:  # under TRIAGE_SERVER: a --log under a missing folder (outside the snapshot), so every write fails
+            away = tempfile.mkdtemp(prefix="rt-nolog-"); self.addCleanup(shutil.rmtree, away, ignore_errors=True)
+            self.serve_with(log=os.path.join(away, "missing", "triage.log"))
         with mock.patch.object(server, "log", side_effect=OSError(28, "No space left on device")):
             r = self.post("/api/action", {"file": "2026-10-01-a.md", "action": "kill", "note": "meh"})
         self.assertIn("Killed", r["msg"])
@@ -39,6 +44,7 @@ class Faults(Fixture):
 
     def test_unwritable_log_file_does_not_fail_changes(self):
         server.log = self.saved[2]; server.LOG_PATH = os.path.join(self.tmp, "no", "such", "dir", "triage.log")
+        self.serve_with(log=server.LOG_PATH)  # under TRIAGE_SERVER: --log there
         self.post("/api/action", {"file": "2026-10-01-a.md", "action": "kill"})
         self.assertEqual(len(undo_list()), 1)
 
@@ -106,11 +112,14 @@ class Faults(Fixture):
         self.post("/api/action", {"file": "2026-10-01-a.md", "action": "keep", "note": "next"}, ok=False)
         self.assertEqual((self.snapshot(), self.tmp_leftovers(), undo_list()), (self.before, [], []))
 
-    def test_restore_and_project_writes_roll_back_too(self):
+    # test_restore_and_project_writes_roll_back_too, split in two (Rust port, patch-map): restore half, project-write half
+    def test_a_failed_restore_rolls_back(self):
         self.post("/api/action", {"file": "2026-10-01-a.md", "action": "kill"}); self.clear_undo(); mid = self.snapshot()
         with mock.patch("os.rename", side_effect=OSError(5, "simulated")):
             self.post("/api/restore", {"file": "done/2026-10-01-a.md"}, ok=False)
         self.assertEqual((self.snapshot(), undo_list()), (mid, []))
+
+    def test_a_failed_project_write_rolls_back(self):
         self.post("/api/action", {"file": "2026-10-02-b.md", "action": "promote", "dest": "active", "note": "x", "due_days": 3}); self.clear_undo()
         mid = self.snapshot()
         self.fail_nth("os.replace", 1)

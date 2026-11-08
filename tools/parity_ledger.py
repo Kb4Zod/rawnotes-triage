@@ -23,6 +23,9 @@ CLI, or one that runs a copy of the Python code) or "runs" (against Rust under t
                                                  owner, due, pure columns: the Rust repo's Day 0 test-owners.tsv);
                                                  exit 1 on any difference ("pure" differences are listed, not counted)
     --rev REV                                    walk the files as they are at git revision REV instead
+
+tools/patch_sites.tsv's `pr` column: 1, converted by PR 1 (the switch itself); 2, converted by PR 2 (its note says how);
+-, nothing to convert (an R row, "none needed", N/A); empty, not converted yet (--check fails on one in a running test).
 """
 import ast
 import collections
@@ -119,6 +122,45 @@ STATE_FUNCS = {"mutation", "Tx", "act", "batch", "merge", "restore", "new_note",
                "github_status", "github_activity", "repo_overview", "repo_path", "forget_github", "set_github_token",
                "remove_github_token", "setup_notes", "setup_state", "migrate_board_data", "stats", "reference_index_add",
                "reference_unindexed", "create_github_repo", "note_view", "check_headers", "summarize", "_push_undo"}
+# Every other server function a test that runs under the switch calls directly (spec 8.1's kinds; PR 2's
+# classification): kind 1, it builds an expectation or reads the fixture's own files, so the test still runs; kind 3, it
+# reads or changes the state of the server (or this process's environment, which the server under test doesn't share).
+# A kind-3 call is "converted" here when the call is itself the conversion (a file read or a fixture step on a file
+# the server under test shares), else the test needs an entry in KIND3. --check fails on a direct call in a running
+# test that isn't classified.
+DIRECT = {
+    "today": (1, "the date: RAWTRIAGE_TODAY is fixed in this process too when the fixture starts"),
+    "field": (1, "parses text the test read from the fixture"), "set_field": (1, "edits text the test then writes"),
+    "config_path": (1, "a path in the fixture's config folder"), "token_path": (1, "a path in the fixture's config folder"),
+    "capture_of": (1, "parses a board record the test read"), "pick_capture": (1, "pure, on the arguments given"),
+    "_commit_paths": (1, "pure, on the ops given"), "clean_slug": (1, "pure"), "github_repo_of": (1, "pure"),
+    "_promoted_days": (1, "reads the fixture's record (or NOTES.md) and the date"),
+    "work_commits": (1, "reads the fixture's project repo only (git, with this process's isolated config)"),
+    "inbox_summary": (1, "the expected summary, from the fixture's notes and config.json (the CLI's output is compared to it)"),
+    "running_server": (1, "a request to the port: GET /api/version of the server under test"),
+    "saved_token": (3, "converted: a file read of the token in the fixture's config folder, which the server under test writes"),
+    "save_config": (3, "converted: a fixture step, writing the fixture's config.json, which the server under test reads"),
+    "mutation": (3, None), "forget_github": (3, None), "git_out": (3, None), "github_state": (3, None), "gh_env": (3, None),
+    "git_env": (3, None), "repo_public": (3, None), "list_notes": (3, None), "limits": (3, None),
+}
+for _f in STATE_FUNCS: DIRECT.setdefault(_f, (3, None))
+# Kind-3 calls that need a decision per test: "converted" (the test still runs) or "ported" (a Rust test replaces it).
+# A test already ported by an R row needs no entry (test_github_push.NotOnGithubFlag's two: R rows at :111 and :124).
+KIND3 = {
+    "test_browser.GithubPanel.test_status_and_token_dialog":
+        ("converted", "forget_github(): under the switch the server is a fresh process (restarted after the fake gh is scripted)"),
+    "test_engine.UndoContainment.test_undo_of_the_newest_change_checks_every_step_before_changing_any":
+        ("ported", "builds the undo entry with server.mutation() in this process (two folders in one step, no route makes one)"),
+    "test_engine.UndoContainment.test_rollback_does_not_write_through_a_link_and_leaves_an_unfinished_entry_that_finishes_later":
+        ("ported", "builds the unfinished entry with server.mutation() in this process, swapping a folder mid-transaction"),
+}
+# Tests PR 2 split in two (patch-map.md). While the Day 0 table has only the original, --against checks each half against
+# the owner and due the map gives; once the table has the halves' rows, they are compared like any other row.
+SPLITS = {"test_engine.Faults.test_restore_and_project_writes_roll_back_too": {
+    "test_engine.Faults.test_a_failed_restore_rolls_back": ("05", "05"),
+    "test_engine.Faults.test_a_failed_project_write_rolls_back": ("07", "08")}}
+# What this copy of server.py says it is: the binary under test has its own version (and so its own page).
+IDENTITY_READS = {"VERSION", "INDEX_HTML"}
 # Python functions that make a request to the port they are given (a route call when that port is the fixture's).
 FUNC_ROUTES = {"running_server": [("GET", "/api/version")]}
 
@@ -267,6 +309,9 @@ def find_sites(mod, data_names):
                   and child.value.id == "server" and child.attr.startswith("_") and child.attr in data_names
                   and id(child) not in stored):  # `server._viewer["login"] = ...` is the assignment's row, not a read
                 sites[id(child)] = Site(mod.file, child.lineno, here, f"server.{child.attr}", "state", False)
+            elif (isinstance(child, ast.Attribute) and isinstance(child.ctx, ast.Load) and isinstance(child.value, ast.Name)
+                  and child.value.id == "server" and child.attr in IDENTITY_READS and id(child) not in stored):
+                sites[id(child)] = Site(mod.file, child.lineno, here, f"server.{child.attr}", "identity", False)
             walk(child, sc)
     walk(mod.tree, [])
     return sites
@@ -644,6 +689,7 @@ class Ledger:
         elif "handler" in w.flags and not any(e[5] != "handler" for e in routes):
             outcome, reason = "ported", "sends its requests to server.H in this process (a spoofed peer), not to the port: a Rust test replaces it"
         elif not calls_route: outcome, reason = "ported", "calls no route and no CLI"
+        elif KIND3.get(tid, ("",))[0] == "ported": outcome, reason = "ported", "kind 3: " + KIND3[tid][1]
         else: outcome, reason = "runs", ""
         # due
         due = None
@@ -652,7 +698,7 @@ class Ledger:
                 need = uses | {owner}
                 due = next((c for c in [owner] + DUE_AFTER_OWNER if need <= closure(c)), None)
                 if due is None: unplaced.append(f"no due ticket covers {sorted(need)}")
-        pending = [r for r in rows if r["pr"] != "1" and not r["disposition"].startswith(("R", "none", "N/A"))]
+        pending = [r for r in rows if r["pr"] not in ("1", "2") and not r["disposition"].startswith(("R", "none", "N/A"))]
         if outcome == "runs" and self.relaxed(w, cls) and self.touches_config(w):
             pending.append(self.limits_row)  # the switch's relaxed limits are the fixture's config.json (testkit's row)
         def fmt(ps): return ",".join(dict.fromkeys(p[3] for p in ps))
@@ -661,10 +707,21 @@ class Ledger:
                     fmt([p for p in placed if not p[2]]), fmt([p for p in placed if p[2]]),
                     ",".join(dict.fromkeys(w.helpers)), ",".join(f"{r['file']}:{r['line']}" for r in rows),
                     ",".join(f"{r['file']}:{r['line']}" for r in pending),
-                    ",".join(dict.fromkeys(f for f in w.direct if f in STATE_FUNCS)) if outcome == "runs" else "",
+                    ",".join(f"{f}:{self.direct_kind(tid, f)}" for f in dict.fromkeys(w.direct)) if outcome == "runs" else "",
                     "; ".join(dict.fromkeys(unplaced)))
 
+    @staticmethod
+    def direct_kind(tid, f):
+        """'1', '3 converted', '3 <KIND3 decision>', or '?' (unclassified: --check fails)."""
+        kind, how = DIRECT.get(f, (None, None))
+        if kind is None: return "?"
+        if kind == 1: return "1"
+        if how: return "3 converted"
+        return f"3 {KIND3[tid][0]}" if tid in KIND3 else "3 ?"
+
     def relaxed(self, w, cls):
+        """Fixture's relax_limits (test_server's ApiTestCase has none: it writes no config.json under the switch)."""
+        if not any(c.name == "Fixture" and c.mod.name == "testkit" for c in w.mro(cls)): return False
         for c in w.mro(cls):
             for n in c.node.body:
                 if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "relax_limits" for t in n.targets):
@@ -807,9 +864,11 @@ def summary(L):
                                                                 else (pure[t] - a[2]) for n in d]))
         out.append(f"{t or '?':>6}  {owned[t]:>5}  {due[t]:>3}  {pure[t]:>4}  {ported[t]:>6}   "
                    f"{'%d/%d/%d' % a if a else '-':>29}   {flag}")
-    out.append(f"runs, with patch rows PR 2 converts: {sum(bool(t.pending) for t in L.tests if t.outcome == 'runs')}   "
-               f"runs, with direct calls on server state (kind 3, PR 2): {sum(bool(t.state_calls) for t in L.tests)}   "
-               f"runs, neither: {sum(not t.pending and not t.state_calls for t in L.tests if t.outcome == 'runs')}")
+    k3 = [t for t in L.tests if "3 converted" in t.state_calls]
+    out.append(f"runs, with patch rows not converted: {sum(bool(t.pending) for t in L.tests if t.outcome == 'runs')}   "
+               f"runs, with a kind-3 direct call (converted): {len(k3)}   "
+               f"ported for a kind-3 call: {sum(t.reason.startswith('kind 3') for t in L.tests)}   "
+               f"split by PR 2: {sum(len(h) for h in SPLITS.values())} tests from {len(SPLITS)}")
     un = [t for t in L.tests if t.unplaced]
     out.append(f"unplaceable: {len(un)}")
     for t in un: out.append(f"  {t.id}: {t.unplaced}  (owner {t.owner or '?'}, due {t.due or '?'})")
@@ -818,6 +877,13 @@ def summary(L):
 
 def check(L):
     problems = []
+    ids = {t.id for t in L.tests}
+    for t in L.tests:
+        if t.outcome == "runs" and t.pending: problems.append(f"runs with patch rows not converted: {t.id}: {t.pending}")
+        for c in filter(None, t.state_calls.split(",")):
+            if c.endswith("?"): problems.append(f"direct call not classified (DIRECT / KIND3): {t.id}: {c}")
+    for tid in KIND3:
+        if tid not in ids: problems.append(f"KIND3 names a test the walk doesn't list: {tid}")
     rows, allow = L.match_rows(), load_allow()
     keys = site_keys(L.sites)
     for s, k, r in zip(L.sites, keys, rows):
@@ -867,7 +933,22 @@ FIELDS = ["id", "module", "cls", "name", "outcome", "reason", "owner", "due", "u
 def against(L, path):
     with open(path, encoding="utf-8", newline="") as fh: table = {(r["module"], r["class"], r["test"]): r for r in csv.DictReader(fh, delimiter="\t")}
     mine = {(t.module, t.cls, t.name): t for t in L.tests}
-    out, bad = [], 0
+    out, bad, split = [], 0, []
+    for orig, halves in SPLITS.items():  # the table has the original; the halves are checked against the map's owner/due
+        ko = tuple(orig.split(".", 2))
+        if all(tuple(h.split(".", 2)) in table for h in halves):  # the table has the halves' own rows: compared like any other
+            if ko in table and ko not in mine:
+                table.pop(ko); split.append(f"  split: {orig} is in the table beside its halves (not counted)")
+            continue
+        if ko not in table or ko in mine: continue
+        for h, want in halves.items():
+            kh = tuple(h.split(".", 2)); got = mine.get(kh)
+            if got is None or (got.owner, got.due) != want:
+                bad += 1; out.append(f"split half differs: {h}: map {'/'.join(want)}, ledger {got and got.owner}/{got and got.due}")
+            mine.pop(kh, None)
+        split.append(f"  split (not counted): {orig} (table {table[ko]['owner']}/{table[ko]['due']}) -> "
+                     + ", ".join(f"{h.split('.')[-1]} {'/'.join(w)}" for h, w in halves.items()))
+        table.pop(ko)
     for k in sorted(set(table) | set(mine)):
         a, b = table.get(k), mine.get(k)
         if a is None or b is None:
@@ -877,8 +958,8 @@ def against(L, path):
     notes = [f"  pure differs (not counted): {'.'.join(k)}: table {table[k].get('pure')}, ledger calls a route or the CLI: "
              f"{mine[k].calls_route} ({mine[k].reason or mine[k].outcome})"
              for k in sorted(set(table) & set(mine)) if "pure" in table[k] and (table[k]["pure"] == "yes") != (mine[k].calls_route == "n")]
-    out.append(f"{len(mine)} tests against {len(table)} rows: {bad} owner/due difference(s)")
-    return bad, out + notes
+    out.append(f"{len(L.tests)} tests against {len(table) + len(split)} rows: {bad} owner/due difference(s)")
+    return bad, out + split + notes
 
 
 def main(argv):

@@ -57,6 +57,7 @@ class Reading(CliBase):
 
     def test_list_shows_the_real_expired_flag_and_the_summary(self):
         t = server.today()
+        self.set_limits(inbox_limit_days=30, max_keeps=3)  # under TRIAGE_SERVER: the same limits, in the fixture's config.json
         with mock.patch.dict(server.LIMIT_DEFAULTS, {"inbox_limit_days": 30, "max_keeps": 3}):  # the real defaults
             self.note((t - dt.timedelta(days=31)).isoformat() + "-old.md", "Old")
             self.note(t.isoformat() + "-fresh.md", "Fresh", status="cooking")
@@ -146,6 +147,7 @@ class NewNote(CliBase):
 
     def test_new_answers_with_home_as_tilde_and_the_cli_prints_the_full_path(self):
         self.template()
+        self.serve_with(env={"HOME": self.tmp})  # under TRIAGE_SERVER: the server's HOME, from its start
         with mock.patch.dict(os.environ, {"HOME": self.tmp}):
             r = self.post("/api/new", {"slug": "home-safe"})
             fname = f"{server.today().isoformat()}-home-safe.md"
@@ -298,9 +300,12 @@ class Projects(CliBase):
         self.assertIn("experiments/spike → archive/spike (suggested: archive)", r); self.assertIn("Nothing blocks the move.", r)
         home = os.path.join(self.tmp, "home"); os.makedirs(os.path.join(home, ".local", "bin"))
         with open(os.path.join(home, ".local", "bin", "spike"), "w") as fh: fh.write(f"#!/bin/sh\n{self.tmp}/experiments/spike/run\n")
-        with mock.patch.object(server, "DEPS", depcheck.Sources(home, proc=os.path.join(self.tmp, "proc"), crontab=lambda: "")):
+        blocked = depcheck.Sources(home, proc=os.path.join(self.tmp, "proc"), crontab=lambda: "")
+        hooks = self.deps_env(blocked); self.serve_with(env=hooks, restart=True)  # under TRIAGE_SERVER: a server that sees the blocker
+        with mock.patch.object(server, "DEPS", blocked):
             self.assertIn("BLOCKED: 1 thing(s)", self.ok("project", "deps", "spike", "--to", "abandoned").stdout)
             self.assertIn("Can't move spike", self.refused("project", "ship", "spike", "--outcome", "archive"))
+        self.serve_with(reset=hooks, restart=True)  # and one that doesn't, as before
         r = self.ok("project", "ship", "spike", "--outcome", "archive").stdout
         self.assertIn("→ archive/spike", r); self.assertIn("Left to do by hand", r)
         self.assertTrue(os.path.isdir(os.path.join(self.tmp, "archive", "spike")))
@@ -319,8 +324,7 @@ class Projects(CliBase):
 
     def test_the_extend_hint_says_the_configured_number_of_pushes(self):
         self.assertIn("can be pushed twice", self.refused("project", "extend", "alpha"))
-        os.makedirs(server.CONFIG_DIR, exist_ok=True)
-        with open(server.config_path(), "w") as fh: json.dump({"max_extensions": 3}, fh)
+        self.write_config(max_extensions=3)  # merged: under TRIAGE_SERVER, Fixture's relaxed limits stay
         self.assertIn("can be pushed 3 times", self.refused("project", "extend", "alpha"))
 
 

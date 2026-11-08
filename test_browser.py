@@ -10,7 +10,7 @@ from unittest import mock
 
 import cdp
 import server
-from testkit import Fixture
+from testkit import SERVER_BIN, Fixture
 
 AXE = os.environ.get("AXE_JS")
 RECORD = """(()=>{const f=window.fetch.bind(window);window.__calls=[];window.__holds=[];
@@ -28,6 +28,8 @@ class BrowserCase(Fixture):
 
     @classmethod
     def setUpClass(cls):
+        if SERVER_BIN and os.environ.get("TRIAGE_INDEX"):  # the page is the binary's own: swapping it is in-process only
+            raise RuntimeError("TRIAGE_INDEX swaps the page of the in-process server only; unset it under TRIAGE_SERVER")
         cls.browser = cdp.Browser()
 
     @classmethod
@@ -52,7 +54,10 @@ class BrowserCase(Fixture):
         self.open()
 
     def no_real_github(self):
-        """The page asks for GitHub activity on load. Answer it from here: tests never reach GitHub or use the user's sign-in."""
+        """The page asks for GitHub activity on load. Answer it from here: tests never reach GitHub or use the user's sign-in.
+        Under TRIAGE_SERVER the fake gh gives the same answers (and fails every other call); its process is fresh, so no
+        activity is cached."""
+        if self.fake_gh is not None: return self.github_off()
         today = server.today()
         def fake(query):
             if "repositories(" in query:
@@ -65,6 +70,15 @@ class BrowserCase(Fixture):
             for name, val in repl.items():
                 p = mock.patch.object(target, name, val); p.start(); self.addCleanup(p.stop)
         saved = dict(server._activity); server._activity.update(at=0.0, data=None, busy=None, last=None); self.addCleanup(lambda: server._activity.update(saved))
+
+    def github_off(self):
+        """The fake gh's answers for no_real_github: the activity queries, and "GitHub is off in tests" for anything else."""
+        today = server.today()
+        repo = lambda n: {"id": "ID_" + n, "nameWithOwner": "me/" + n, "isPrivate": n == "beta", "url": "https://github.com/me/" + n, "pushedAt": today.isoformat() + "T00:00:00Z"}
+        node = {"defaultBranchRef": {"target": {"history": {"pageInfo": {"hasNextPage": False}, "nodes": [{"committedDate": f"{(today - server.dt.timedelta(days=d)).isoformat()}T12:00:00Z"} for d in (0, 1, 1, 3)]}}}}
+        self.fake_gh.answer(graphql="repositories(", json_out={"data": {"viewer": {"id": "U1", "login": "me", "repositories": {"pageInfo": {"hasNextPage": False}, "nodes": [repo("alpha"), repo("beta")]}}}})
+        self.fake_gh.answer(graphql="node(id:", json_out={"data": {f"r{i}": node for i in range(2)}})  # alpha and beta: both pushed today
+        self.fake_gh.answer(prefix=[], stderr="GitHub is off in tests", exit=1)
 
     def open(self, route="inbox"):
         self.page.eval("typeof S!=='undefined'&&(S.dods={})")  # an unsaved-edit prompt would (rightly) stop the page from unloading
@@ -110,7 +124,7 @@ class FirstRunDialog(BrowserCase):
         self.page.click("#setupGo")
         self.page.wait("!document.querySelector('#setupForm') && S.notes && document.querySelector('#main h1, #main .empty')")
         self.assertTrue(os.path.isdir(os.path.join(fresh, "done")))
-        self.assertEqual(server.NOTES, fresh)
+        self.assertEqual(self.saved_config()["notes"], fresh)  # what the server saved
         self.assertEqual(self.page.eval("S.notes.notes_dir"), fresh)
 
 
@@ -124,6 +138,10 @@ class GithubPanel(BrowserCase):
             raise RuntimeError("To get started, please run:  gh auth login")
         p = mock.patch.object(server, "_gh", fake_gh); p.start(); self.addCleanup(p.stop)
         p = mock.patch.object(server.shutil, "which", lambda n: "/usr/bin/gh"); p.start(); self.addCleanup(p.stop)
+        if self.fake_gh is not None:  # under TRIAGE_SERVER: the fake gh answers `gh api user` by the token it is run with
+            self.fake_gh.reset().answer(["api", "user"], env={"GH_TOKEN": tok}, json_out={"login": "tokenuser"})
+            self.fake_gh.answer(["api", "user"], stderr="To get started, please run:  gh auth login", exit=1); self.github_off()
+            self.serve_with(restart=True)  # a fresh process: nothing about GitHub cached
         server.forget_github(); self.open()
         self.page.wait("document.querySelector('#ghStatus') && /Not signed in/.test(document.querySelector('#ghStatus').textContent)")
         self.page.click("#ghStatus"); self.page.wait("document.querySelector('#ghTok')")
@@ -131,15 +149,16 @@ class GithubPanel(BrowserCase):
         self.page.eval("document.querySelector('#ghTok').value='nope'"); self.page.click("#ghSave"); self.settle(0.5)
         self.assertIn("does not look like", self.text("#ghErr"))
         self.page.eval(f"document.querySelector('#ghTok').value={json.dumps(tok)}"); self.page.click("#ghSave")
-        self.page.wait("!document.querySelector('#ghTok') && /tokenuser/.test(document.querySelector('#ghStatus').textContent)")
-        self.assertEqual(server.saved_token(), tok)
+        # and the activity reload it starts has landed: cdp clicks by position, and a late re-render moves the rail
+        self.page.wait("!document.querySelector('#ghTok') && /tokenuser/.test(document.querySelector('#ghStatus').textContent) && S.activity", timeout=30)
+        self.assertEqual(self.saved_token(), tok)
         self.page.click("#ghStatus"); self.page.wait("document.querySelector('#ghRemove')")
         self.assertNotIn(tok, self.page.eval("document.body.innerHTML"))
         self.page.click("#ghRemove")
-        self.page.wait("!document.querySelector('#ghRemove') && /Not signed in/.test(document.querySelector('#ghStatus').textContent)")
-        self.assertEqual(server.saved_token(), "")
+        self.page.wait("!document.querySelector('#ghRemove') && /Not signed in/.test(document.querySelector('#ghStatus').textContent) && S.activity", timeout=30)
+        self.assertEqual(self.saved_token(), "")
         # opened from a phone: no token field at all, so a token never crosses the network
-        self.page.eval("window.isLocalPage=()=>false"); self.page.click("#ghStatus"); self.page.wait("document.querySelector('#ghClose')")
+        self.page.eval("window.isLocalPage=()=>false"); self.page.click("#ghStatus"); self.page.wait("document.querySelector('#ghClose')", timeout=30)
         self.assertEqual(self.page.eval("document.querySelectorAll('#ghTok, #ghForm, #ghRemove').length"), 0)
         self.assertEqual(self.active(), "ghClose")
         self.assertIn("machine running the server", self.text("#overlay"))
@@ -237,6 +256,7 @@ class Flows(BrowserCase):
         self.assertEqual((open(demo).read(), self.record("active", "demo")), (before, None))
 
     def test_expired_note_has_a_chip_a_badge_and_no_keep(self):
+        self.serve_with(restart=True); self.set_limits(inbox_limit_days=30)  # under TRIAGE_SERVER: a server with that limit
         with unittest.mock.patch.dict(server.LIMIT_DEFAULTS, {"inbox_limit_days": 30}):
             self.open(); self.page.wait("document.querySelector('[data-st=expired]')")
             self.page.click("[data-st=expired]"); self.settle(0.2)
@@ -313,6 +333,7 @@ class Flows(BrowserCase):
         self.assertIn(f"{os.path.join(self.tmp, 'archive', 'demo')} to {demo}", toast); self.assertNotIn("## Moved", toast)
 
     def test_the_close_out_form_warns_when_the_move_cannot_be_undone(self):
+        self.serve_with(env={"RAWTRIAGE_TEST_TREE_LIMIT": "0"}, restart=True)  # under TRIAGE_SERVER: a server with that limit
         with mock.patch.object(server, "TREE_LIMIT", 0):  # the fixture's demo holds just NOTES.md
             self.open("projects"); self.page.click("[data-pid='active/demo/NOTES.md']"); self.page.wait("document.querySelector('[data-pa=shipped]')")
             self.page.click("[data-pa=shipped]"); self.page.wait("document.querySelector('#cmove').textContent.includes('Moves to archive/demo/')")
@@ -356,7 +377,9 @@ class Flows(BrowserCase):
         import depcheck
         home = os.path.join(self.tmp, "fakehome"); os.makedirs(os.path.join(home, ".local", "bin"))
         with open(os.path.join(home, ".local", "bin", "demo-run"), "w") as fh: fh.write(f"#!/bin/sh\nexec {self.tmp}/active/demo/run\n")
-        with mock.patch.object(server, "DEPS", depcheck.Sources(home, proc=os.path.join(self.tmp, "noproc"), crontab=lambda: "")):
+        sources = depcheck.Sources(home, proc=os.path.join(self.tmp, "noproc"), crontab=lambda: "")
+        self.serve_with(env=self.deps_env(sources), restart=True)  # under TRIAGE_SERVER: a server that sees these sources
+        with mock.patch.object(server, "DEPS", sources):
             self.open("projects"); self.page.click("[data-pid='active/demo/NOTES.md']"); self.page.wait("document.querySelector('#pdeps #blockers')")
             self.page.click("[data-pa=shipped]"); self.page.wait("document.querySelector('#cmove .err')")
             self.assertIn("Blocked", self.text("#cmove")); self.assertTrue(self.page.eval("document.querySelector('#cgo').disabled"))
@@ -370,6 +393,7 @@ class Flows(BrowserCase):
         self.assertFalse(os.path.exists(os.path.join(self.tmp, "archive")))
 
     def test_a_failed_dependency_lookup_shows_why_and_leaves_the_form_usable(self):
+        self.serve_with(env={"RAWTRIAGE_TEST_DEPS_FAIL": "deps exploded"}, restart=True)  # under TRIAGE_SERVER: its lookup fails so
         with mock.patch.object(server, "project_deps", side_effect=ValueError("deps exploded")):
             self.open("projects"); self.page.click("[data-pid='active/demo/NOTES.md']"); self.page.wait("document.querySelector('[data-pa=shipped]')")
             self.page.click("[data-pa=shipped]"); self.page.wait("document.querySelector('#pf.closeout')")
@@ -420,7 +444,9 @@ class Flows(BrowserCase):
         import depcheck
         home = os.path.join(self.tmp, "fakehome"); os.makedirs(os.path.join(home, ".local", "bin"))
         with open(os.path.join(home, ".local", "bin", "demo-run"), "w") as fh: fh.write(f"#!/bin/sh\nexec {self.tmp}/active/demo/run\n")
-        with mock.patch.object(server, "DEPS", depcheck.Sources(home, proc=os.path.join(self.tmp, "noproc"), crontab=lambda: "")):
+        sources = depcheck.Sources(home, proc=os.path.join(self.tmp, "noproc"), crontab=lambda: "")
+        self.serve_with(env=self.deps_env(sources), restart=True)  # under TRIAGE_SERVER: a server that sees these sources
+        with mock.patch.object(server, "DEPS", sources):
             self.open("projects"); self.page.click("[data-pid='active/demo/NOTES.md']")
             self.page.wait("document.querySelector('#pdeps #blockers')")
             text = self.text("#pdeps")
@@ -443,6 +469,8 @@ class Flows(BrowserCase):
     def test_server_text_on_a_card_is_shown_as_text_not_markup(self):
         real = server.inflight
         evil = lambda *a, **k: [{**f, "due": "2026-<img id=pwn src=x onerror=window.__pwn=1>"} if f["project"] == "demo" else f for f in real(*a, **k)]
+        # under TRIAGE_SERVER: the same string as demo's due, through the INFLIGHT_DUE hook (a record's due keeps one word)
+        self.serve_with(env={"RAWTRIAGE_TEST_INFLIGHT_DUE": "demo=2026-<img id=pwn src=x onerror=window.__pwn=1>"}, restart=True)
         with mock.patch.object(server, "inflight", evil):
             self.open("projects"); self.settle(0.3)
             self.assertFalse(self.exists("#pwn")); self.assertFalse(self.page.eval("!!window.__pwn"))
@@ -472,6 +500,7 @@ class Flows(BrowserCase):
         import unittest.mock as um
         with um.patch.object(server, "open_path", side_effect=opened.append):
             self.page.click("#openf"); self.settle(0.5)
+        if self.child is not None: opened = list(self.opened_paths())  # under TRIAGE_SERVER: what its test opener was handed
         self.assertEqual(len(self.calls("POST", "/api/open")), 1)
         self.assertEqual(opened, [os.path.join(self.tmp, "active", "demo")])
 

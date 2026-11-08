@@ -11,10 +11,15 @@ from testkit import Fixture
 
 
 class FirstRun(Fixture):
+    relax_limits = False  # no notes yet; under TRIAGE_SERVER the config folder stays empty until a test writes it
+
     def setUp(self):
         super().setUp()
         shutil.rmtree(self.notes)  # a fresh install: nothing at the default place yet
         p = mock.patch.object(server, "NOTES_SOURCE", "default"); p.start(); self.addCleanup(p.stop)
+        if self.child is not None:  # under TRIAGE_SERVER: started without --notes, so the default place, under its own HOME
+            home = os.path.join(self.tmp, "fresh-home"); self.notes = os.path.join(home, "Projects", "RawNotes")
+            self.serve_with(notes=None, env={"HOME": home})
 
     def config(self):
         with open(server.config_path(), encoding="utf-8") as fh: return json.load(fh)
@@ -32,7 +37,7 @@ class FirstRun(Fixture):
         self.assertTrue(os.path.isdir(os.path.join(target, "done")))
         with open(os.path.join(target, "_template.md"), encoding="utf-8") as fh: self.assertIn("## What's the question / problem?", fh.read())
         self.assertEqual(self.config(), {"notes": target})
-        self.assertEqual((server.NOTES, server.PROJECTS), (target, os.path.dirname(target)))
+        st = self.get("/api/setup"); self.assertEqual((st["notes_dir"], st["projects_dir"]), (target, os.path.dirname(target)))
         self.assertEqual(self.get("/api/notes")["notes_dir"], target)  # the running server switched over
 
     def test_existing_folder_is_adopted_untouched(self):
@@ -43,16 +48,22 @@ class FirstRun(Fixture):
         with open(os.path.join(target, "_template.md")) as fh: self.assertEqual(fh.read(), "my own\n")
 
     def test_tilde_and_trailing_slash(self):
+        # under TRIAGE_SERVER: that HOME from its start, and (as in-process) tmp/RawNotes as its first folder, so its
+        # default place is not already the answer
+        self.serve_with(env={"HOME": self.tmp}, notes=os.path.join(self.tmp, "RawNotes"))
         with mock.patch.dict(os.environ, {"HOME": self.tmp}):
             r = self.post("/api/setup", {"path": "~/Projects/RawNotes/"})
-        self.assertEqual(r["notes_dir"], os.path.join(self.tmp, "Projects", "RawNotes"))
+        want = os.path.join(self.tmp, "Projects", "RawNotes")
+        self.assertEqual(r["notes_dir"], want)
+        self.assertTrue(os.path.isdir(os.path.join(want, "done")))
+        self.assertEqual(self.saved_config(), {"notes": want})
 
     def test_bad_paths_are_refused_and_nothing_is_saved(self):
         afile = os.path.join(self.tmp, "afile"); open(afile, "w").close()
         for bad in ("", "   ", "relative/notes", "/", "/top", "/top/", afile, "/x\0y", 7, None):
             self.post("/api/setup", {"path": bad}, ok=False)
         self.assertFalse(os.path.exists(server.config_path()))
-        self.assertEqual(server.NOTES, self.notes)
+        self.assertEqual(self.get("/api/setup")["notes_dir"], self.notes)
 
     def test_refused_once_set_up(self):
         os.makedirs(self.notes)

@@ -61,6 +61,9 @@ class Situation(Fixture):
         self.crontab = ""
         self.sources = depcheck.Sources(self.home, proc=self.proc, crontab=lambda: self.crontab)
         p = mock.patch.object(server, "DEPS", self.sources); p.start(); self.addCleanup(p.stop)
+        if self.child is not None:  # under TRIAGE_SERVER: the projects root is --notes's parent, so a notes folder in it
+            os.makedirs(os.path.join(projects, "RawNotes"))
+            self.serve_with(env=self.deps_env(self.sources), notes=os.path.join(projects, "RawNotes"))
 
     def test_todays_rawnotes_triage_has_three_blockers_and_two_todos(self):
         dest = os.path.join(server.PROJECTS, "maintained", "rawnotes-triage")

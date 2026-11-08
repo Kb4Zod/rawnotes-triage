@@ -11,7 +11,8 @@ from unittest import mock
 
 import safefs
 import server
-from testkit import Fixture, undo_list
+import urllib.request
+from testkit import Fixture, LiveList, undo_list
 
 
 class ReadsBesideWrites(Fixture):
@@ -34,12 +35,14 @@ class ReadsBesideWrites(Fixture):
         seen, stop = set(), threading.Event()
         def reader():
             while not stop.is_set():
-                d = server.list_notes(False); seen.add((len(d["live"]), len(d["done"])))
+                try: code, d = self.call("/api/notes")
+                except Exception as e: seen.add(("error", repr(e))); continue  # a reader that fails is seen, not lost
+                seen.add((len(d["live"]), len(d["done"])) if code == 200 else (code, json.dumps(d)))
         ts = [threading.Thread(target=reader) for _ in range(4)]; [t.start() for t in ts]
         for _ in range(3):
             self.post("/api/batch", {"files": names, "action": "kill"}); self.post("/api/undo", {})
         stop.set(); [t.join() for t in ts]
-        self.assertTrue(seen <= {(9, 0), (0, 9)}, seen)
+        self.assertTrue(seen and seen <= {(9, 0), (0, 9)}, seen)
 
     def test_a_note_edited_or_removed_by_hand_while_listing_is_tolerated(self):
         for i in range(30): self.note(f"2026-10-0{i % 9 + 1}-n{i}.md", f"n{i}")
@@ -155,6 +158,16 @@ class GithubActivity(Fixture):
         return out
 
     def run_with(self, answers):
+        """GET /api/activity with gh_graphql answering `answers` in turn (the last repeats; a function of the query is
+        called with it; an Exception is raised). Under TRIAGE_SERVER the fake gh answers `gh api graphql` the same way
+        (fixed answers only) and the calls are the queries in its log."""
+        if self.fake_gh is not None:
+            for i, a in enumerate(answers):
+                once = i < len(answers) - 1
+                if callable(a): raise TypeError("an answer computed from the query can't be scripted for the fake gh")
+                if isinstance(a, Exception): self.fake_gh.answer(graphql="", stderr=str(a), exit=1, once=once)
+                else: self.fake_gh.answer(graphql="", json_out={"data": a}, once=once)
+            return self.get("/api/activity"), LiveList(self.fake_gh.queries)
         calls = []
         def fake(query):
             calls.append(query); a = answers[min(len(calls), len(answers)) - 1]
@@ -194,7 +207,7 @@ class GithubActivity(Fixture):
     def test_activity_is_described_as_commits_not_pushes(self):
         data, _ = self.run_with([self.repos([]),])
         self.assertIn("commit", data["basis"]); self.assertIn("by commit date", data["basis"])
-        page = server.INDEX_HTML.decode()
+        with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/") as r: page = r.read().decode()  # the page the server serves
         for stale in ("pushes this year", "commits pushed this year", "Pushed to GitHub", "you pushed"): self.assertFalse(stale in page, "page still says: " + stale)
 
     def test_concurrent_callers_share_one_fetch_and_nobody_holds_a_lock_while_waiting(self):
